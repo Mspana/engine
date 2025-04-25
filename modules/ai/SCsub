@@ -1,0 +1,20 @@
+#!/usr/bin/env python
+# Imports the main SCons environment.
+Import("env")
+# Imports the environment clone intended for modules (includes GODOT_MODULE define).
+Import("env_modules")
+
+# Clone the module environment for potential local modifications if needed.
+# If we don't need specific flags just for this module, we could use env_modules directly.
+env_ai = env_modules.Clone()
+
+# Define the list of source files for this module.
+sources = [
+    "register_types.cpp",
+    "ai.cpp",
+]
+
+# Add the source files of this module to the global list of module sources.
+# The main /modules/SCsub script will collect these from all enabled modules
+# and build the final libraries (e.g., module_ai.a).
+env_ai.add_source_files(env.modules_sources, sources) 
