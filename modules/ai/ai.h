@@ -14,6 +14,18 @@ protected:
 	// Binds methods to be used in scripting.
 	static void _bind_methods();
 
+	// Helper method for binding validate_command_json to GDScript.
+	Dictionary _validate_command_json_bind(const String &json_str) const;
+
+	// Validates the JSON string; on failure, returns false and populates error_msg.
+    bool validate_command_json(const String &json_str, String &error_msg) const;
+
+private:
+	// Helper to validate a command already parsed into a Dictionary.
+	bool _validate_command_dictionary(const Dictionary &cmd, String &error_msg) const;
+	// Helper to simulate getting a JSON response string from an AI.
+	String _get_simulated_ai_response_json_string(const String &user_prompt) const;
+
 public:
 	// The core method to interact with the AI backend.
 	Array request_actions(const String &prompt);
