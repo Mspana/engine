@@ -7,7 +7,14 @@
 #include "core/variant/dictionary.h" // Required for Dictionary
 #include "core/io/json.h" // Required for JSON parsing
 #include "core/string/ustring.h" // For String utilities
-#include "core/io/json.cpp" // Include JSON implementation
+// #include "core/io/json.cpp" // Generally not good practice to include .cpp files. Assuming JSON is linked.
+
+// Headers for execution logic
+#include "editor/editor_interface.h"
+#include "editor/editor_undo_redo_manager.h" // For editor undo/redo
+#include "core/object/class_db.h"
+#include "scene/main/node.h"
+#include "core/string/node_path.h"
 
 
 // Define and initialize the static singleton pointer.
@@ -49,7 +56,11 @@ bool AI::_validate_command_dictionary(const Dictionary &cmd, String &error_msg) 
             error_msg = "'create_node' requires string 'node_type'.";
             return false;
         }
-        // parent_path optional
+        // parent_path is optional, can be string. If present and not string, it's an issue for get_node.
+        if (args.has("parent_path") && args["parent_path"].get_type() != Variant::STRING) {
+            error_msg = "'create_node' optional 'parent_path' must be a string.";
+            return false;
+        }
     } else if (action == "delete_node") {
         if (!args.has("node_path") || args["node_path"].get_type() != Variant::STRING) {
             error_msg = "'delete_node' requires string 'node_path'.";
@@ -92,11 +103,127 @@ bool AI::validate_command_json(const String &json_str, String &error_msg) const 
 
 // New private method to simulate getting a response from an AI
 String AI::_get_simulated_ai_response_json_string(const String &user_prompt) const {
-    // For now, user_prompt is ignored and we return a hardcoded JSON string.
-    // This simulates the AI returning an array with a single valid create_node action.
+    // Simplified for testing execution
     return "[ \
-        {\"action\": \"create_node\", \"args\": {\"node_name\": \"MySpriteFromAI\", \"node_type\": \"Sprite2D\", \"parent_path\": \"/root/MainScene\"}} \
+        {\"action\": \"create_node\", \"args\": {\"node_name\": \"TestNode\", \"node_type\": \"Sprite2D\", \"parent_path\": \"\"}}, \
+        {\"action\": \"set_property\", \"args\": {\"node_path\": \"TestNode\", \"property_name\": \"position\", \"value\": {\"x\": 50, \"y\": 50}}} \
     ]";
+}
+
+void AI::_execute_create_node(const Dictionary &args) {
+    EditorInterface *ei = EditorInterface::get_singleton();
+    if (!ei) {
+        ERR_PRINT("AI Execute: EditorInterface singleton not found.");
+        return;
+    }
+
+    EditorUndoRedoManager *undo_redo = EditorUndoRedoManager::get_singleton();
+    if (!undo_redo) {
+        ERR_PRINT("AI Execute: EditorUndoRedoManager singleton not found.");
+        return;
+    }
+    
+    Node *edited_scene_root = ei->get_edited_scene_root();
+    if (!edited_scene_root) {
+        ERR_PRINT("AI Execute 'create_node': No edited scene root.");
+        return;
+    }
+
+    String node_name = args["node_name"];
+    String node_type = args["node_type"];
+    String parent_path_str = args.get("parent_path", ""); // Default to empty string if not present
+
+    if (!ClassDB::class_exists(StringName(node_type))) {
+        ERR_PRINT(vformat("AI Execute 'create_node': Node type '%s' does not exist.", node_type));
+        return;
+    }
+
+    Node *parent_node = nullptr;
+    if (parent_path_str.is_empty()) {
+        parent_node = edited_scene_root;
+    } else {
+        parent_node = edited_scene_root->get_node(NodePath(parent_path_str));
+        if (!parent_node) {
+            ERR_PRINT(vformat("AI Execute 'create_node': Could not find parent node at path '%s'. Using scene root instead.", parent_path_str));
+            parent_node = edited_scene_root; // Fallback or error
+        }
+    }
+    if (!parent_node) { // Should be redundant if above fallback works, but as a safeguard.
+        ERR_PRINT("AI Execute 'create_node': Failed to determine parent node.");
+        return;
+    }
+
+
+    Node *new_node = Object::cast_to<Node>(ClassDB::instantiate(StringName(node_type)));
+    if (!new_node) {
+        ERR_PRINT(vformat("AI Execute 'create_node': Failed to instantiate node of type '%s'.", node_type));
+        return;
+    }
+    // new_node->set_name(node_name); // Set name before adding for UndoRedo add_child if it relies on initial name for remove
+
+    undo_redo->create_action("AI Create Node");
+    // Add child first, then set name and owner for 'do'
+    undo_redo->add_do_method(parent_node, "add_child", new_node, true); // force_readable_name = true
+    undo_redo->add_do_method(new_node, "set_name", node_name);
+    if (edited_scene_root != nullptr && new_node->get_owner() != edited_scene_root) { // Set owner if not already set (e.g. by add_child)
+        undo_redo->add_do_method(new_node, "set_owner", edited_scene_root);
+    }
+    // For undo, remove child. The node itself will be freed if it has no other parent.
+    undo_redo->add_undo_method(parent_node, "remove_child", new_node);
+    // If new_node needs explicit freeing, add_undo_method(new_node, "queue_free") but usually remove_child handles this.
+    undo_redo->commit_action();
+    
+    print_line(vformat("AI: Executed create_node. Name: %s, Type: %s, Parent: %s", node_name, node_type, parent_node->get_path()));
+}
+
+void AI::_execute_set_property(const Dictionary &args) {
+    EditorInterface *ei = EditorInterface::get_singleton();
+    if (!ei) {
+        ERR_PRINT("AI Execute: EditorInterface singleton not found.");
+        return;
+    }
+    EditorUndoRedoManager *undo_redo = EditorUndoRedoManager::get_singleton();
+    if (!undo_redo) {
+        ERR_PRINT("AI Execute: EditorUndoRedoManager singleton not found.");
+        return;
+    }
+    Node *edited_scene_root = ei->get_edited_scene_root();
+    if (!edited_scene_root) {
+        ERR_PRINT("AI Execute 'set_property': No edited scene root.");
+        return;
+    }
+
+    String node_path_str = args["node_path"];
+    String property_name = args["property_name"];
+    Variant value = args["value"];
+
+    Node *target_node = edited_scene_root->get_node(NodePath(node_path_str));
+    if (!target_node) {
+        ERR_PRINT(vformat("AI Execute 'set_property': Could not find node at path '%s'.", node_path_str));
+        return;
+    }
+
+    // It's good practice to check if property exists and is settable, though `set` might handle it.
+    // For simplicity as per prompt, directly using set.
+    // bool success = false;
+    // target_node->set(property_name, value, &success);
+    // if(!success) {
+    //     ERR_PRINT(vformat("AI Execute 'set_property': Failed to set property '%s' on node '%s'. It might not exist or be read-only.", property_name, node_path_str));
+    //     return;
+    // }
+
+    Variant current_value = target_node->get(property_name); // Get current value for undo
+
+    undo_redo->create_action("AI Set Property");
+    // Per user request, use target->set for do/undo methods
+    undo_redo->add_do_method(target_node, "set", property_name, value);
+    undo_redo->add_undo_method(target_node, "set", property_name, current_value);
+    // Alternative using property methods:
+    // undo_redo->add_do_property(target_node, property_name, value);
+    // undo_redo->add_undo_property(target_node, property_name, current_value);
+    undo_redo->commit_action();
+
+    print_line(vformat("AI: Executed set_property. Node: %s, Property: %s, Value: %s", node_path_str, property_name, String(value)));
 }
 
 Array AI::request_actions(const String &user_prompt) {
@@ -107,14 +234,13 @@ Array AI::request_actions(const String &user_prompt) {
     Error err = json_parser.parse(ai_json_response);
     if (err != Error::OK) {
         print_error(vformat("AI::request_actions - JSON Parse Error from AI response: %s at line %d. Raw response: %s", json_parser.get_error_message(), json_parser.get_error_line(), ai_json_response));
-        return valid_actions_array; // Return empty array
+        return valid_actions_array;
     }
 
     Variant parsed_data = json_parser.get_data();
 
     if (parsed_data.get_type() == Variant::ARRAY) {
-        Array commands_array = parsed_data; // It must be an array.
-
+        Array commands_array = parsed_data;
         for (int i = 0; i < commands_array.size(); ++i) {
             if (commands_array[i].get_type() == Variant::DICTIONARY) {
                 Dictionary command_dict = commands_array[i];
@@ -135,17 +261,31 @@ Array AI::request_actions(const String &user_prompt) {
         // valid_actions_array is already empty, so we just fall through to return it.
     }
 
-    // Print out the valid actions that would be "taken"
+    // Execute valid actions
     if (!valid_actions_array.is_empty()) {
-        print_line("AI: Processed prompt. Valid actions to take:");
+        print_line(vformat("AI: Found %d valid actions. Executing...", valid_actions_array.size()));
         for (int i = 0; i < valid_actions_array.size(); ++i) {
-            // We know these are Dictionaries because we only added valid ones.
-            Dictionary action_to_take = valid_actions_array[i];
-            print_line(vformat("  - Action %d: %s", i + 1, JSON::stringify(action_to_take)));
+            const Dictionary &action_dict = valid_actions_array[i]; // Assuming it's a Dictionary
+            String action_name = action_dict.get("action", ""); // Default to empty if key missing
+            Variant args_variant = action_dict.get("args", Dictionary()); // Default to empty dict
+
+            if (args_variant.get_type() == Variant::DICTIONARY) {
+                Dictionary action_args = args_variant;
+                print_line(vformat("  - Attempting to execute Action %d: %s", i + 1, JSON::stringify(action_dict)));
+                if (action_name == "create_node") {
+                    _execute_create_node(action_args);
+                } else if (action_name == "set_property") {
+                    _execute_set_property(action_args);
+                } else {
+                    print_line(vformat("    - Action '%s' has no execution logic implemented.", action_name));
+                }
+            } else {
+                WARN_PRINT(vformat("  - Action %d ('%s') has invalid 'args' type. Expected Dictionary, got %s. Skipping execution.", i+1, action_name, Variant::get_type_name(args_variant.get_type())));
+            }
         }
     } else {
         // This case might happen if the AI returns an empty array [] or if all actions in the array were invalid.
-        print_line("AI: Processed prompt. No valid actions to take (or AI returned empty array).");
+        print_line("AI: Processed prompt. No valid actions to execute (or AI returned empty/invalid array).");
     }
 
     return valid_actions_array;
@@ -175,8 +315,10 @@ void AI::initialize_singleton() {
 
 void AI::finalize_singleton() {
     ERR_FAIL_COND_MSG(singleton == nullptr, "AI singleton not initialized or already finalized.");
-    memdelete(singleton);
-    singleton = nullptr;
+    if (singleton) { // Check before memdelete
+        memdelete(singleton);
+        singleton = nullptr;
+    }
 }
 
 AI *AI::get_singleton() {
@@ -184,9 +326,11 @@ AI *AI::get_singleton() {
 }
 
 AI::AI() {
-    ERR_FAIL_COND_MSG(singleton != nullptr && singleton != this, "AI singleton race condition detected.");
+    // ERR_FAIL_COND_MSG(singleton != nullptr && singleton != this, "AI singleton race condition detected.");
+    // Singleton assignment is done in initialize_singleton
 }
 
 AI::~AI() {
-    ERR_FAIL_COND_MSG(singleton != this, "AI singleton pointer mismatch during destruction.");
+    // ERR_FAIL_COND_MSG(singleton != this && singleton != nullptr , "AI singleton pointer mismatch during destruction.");
+    // Singleton clearing is done in finalize_singleton
 }

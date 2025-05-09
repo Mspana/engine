@@ -4,6 +4,7 @@
 #include "core/object/object.h"         // Base class
 #include "core/variant/array.h"         // For Array return type
 #include "core/string/ustring.h"        // For String parameter type
+#include "core/variant/dictionary.h"    // Added for Dictionary type hint
 
 class AI : public Object {
 	GDCLASS(AI, Object); // Godot class macro
@@ -25,6 +26,10 @@ private:
 	bool _validate_command_dictionary(const Dictionary &cmd, String &error_msg) const;
 	// Helper to simulate getting a JSON response string from an AI.
 	String _get_simulated_ai_response_json_string(const String &user_prompt) const;
+
+	// Execution helpers
+	void _execute_create_node(const Dictionary &args);
+	void _execute_set_property(const Dictionary &args);
 
 public:
 	// The core method to interact with the AI backend.
