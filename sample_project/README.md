@@ -2,16 +2,30 @@
 
 This is a minimal Godot 4.4 sample project for testing the AI Helper module functionality.
 
+## Features
+
+- **AI Helper Plugin**: Provides an editor dock to interact with the AI module
+  - Located in the top-right dock area
+  - Enter natural language prompts
+  - AI can modify scripts, create nodes, and more
+- **Platformer Player**: Simple CharacterBody2D with movement and jumping
+- **Headless Testing**: Automated smoke tests for CI/CD
+
 ## Project Structure
 
 ```
 sample_project/
 ├── project.godot              # Main project configuration
 ├── scenes/
-│   ├── main.tscn             # Main scene with Player node
-│   └── player.gd             # Simple player movement script
+│   └── main.tscn             # Main scene with Player node
+├── scripts/
+│   └── PlayerController.gd   # Player movement script (platformer style)
+├── sprites/
+│   └── player.png            # Player sprite (32x32 placeholder)
 └── addons/
     └── ai_helper/
+        ├── plugin.cfg        # AI Helper plugin config
+        ├── plugin.gd         # AI Helper editor UI
         └── headless_smoke_test.gd  # Headless smoke test script
 ```
 

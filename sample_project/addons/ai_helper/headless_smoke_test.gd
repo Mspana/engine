@@ -58,7 +58,7 @@ func _initialize():
 		else:
 			print("SMOKE: WARNING - Player node has no position property")
 		
-		print("SMOKE: Before input, Player position: ", initial_position)
+		print("SMOKE: Found Player at ", initial_position)
 		print("SMOKE: Simulating ui_right input for ", INPUT_END_FRAME - INPUT_START_FRAME, " frames")
 	
 	test_started = true
@@ -90,11 +90,13 @@ func _finalize_test():
 	
 	if player_node != null:
 		var final_position = player_node.position
-		print("SMOKE: After input, Player position: ", final_position)
+		print("SMOKE: After input, Player at ", final_position)
 		
-		var distance_moved = final_position.distance_to(initial_position)
+		var delta = final_position - initial_position
+		var distance_moved = delta.length()
+		print("SMOKE: Delta: ", delta, " [distance: ", distance_moved, " units]")
+		
 		if distance_moved > 0.1:
-			print("SMOKE: Player moved ", distance_moved, " units")
 			print("SMOKE: Test completed successfully ✓")
 		else:
 			print("SMOKE: WARNING - Player did not move (distance: ", distance_moved, ")")
@@ -107,4 +109,7 @@ func _finalize_test():
 	
 	# Clean up input state
 	Input.action_release("ui_right")
+	
+	# Exit cleanly
+	quit(0)
 

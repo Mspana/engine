@@ -13,7 +13,7 @@
 
 AIProvider::AIProvider() {
 	temperature = 0.7f;
-	max_tokens = 2000;
+	max_tokens = 8000;  // Increased to allow full script content in responses
 	model = get_default_model();
 	base_url = get_default_base_url();
 }
