@@ -440,15 +440,12 @@ Array AI::request_actions(const String &user_prompt) {
 		}
 		print_line(vformat("AI: Retrieved %d context snippets for prompt enrichment", context_snippets.size()));
 	}
-	
-	// Construct enriched prompt
-	String enriched_prompt = user_prompt + context_block;
 
 	print_line(vformat("AI: Sending request via %s provider", provider->get_class()));
 	
-	// Ask the provider to send the request with enriched prompt
+	// Ask the provider to send the request with user prompt and context block
 	// The provider will emit the "request_completed" signal when done
-	provider->send_request(enriched_prompt);
+	provider->send_request(user_prompt, context_block);
 	
 	// For async providers (OpenAI, Gemini, XAI), actions will be executed when signal fires
 	// For DummyProvider, the signal fires immediately and actions execute synchronously

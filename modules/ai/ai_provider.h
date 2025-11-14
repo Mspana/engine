@@ -43,7 +43,7 @@ public:
 	// Virtual methods for provider-specific implementation
 	virtual String get_default_base_url() const;
 	virtual String get_default_model() const;
-	virtual Dictionary build_request_body(const String &user_prompt) const;
+	virtual Dictionary build_request_body(const String &user_prompt, const String &context_block = "") const;
 	virtual String parse_response(const Dictionary &response_data) const;
 	virtual PackedStringArray get_request_headers() const;
 	virtual String get_request_url() const;
@@ -52,7 +52,7 @@ public:
 	static String get_system_prompt();
 	
 	// Main method to send request - implemented by subclasses
-	virtual void send_request(const String &user_prompt);
+	virtual void send_request(const String &user_prompt, const String &context_block = "");
 	
 	// Helper to load API key from environment or .env file
 	static String load_api_key_from_env(const String &env_var_name);
@@ -67,18 +67,18 @@ class OpenAIProvider : public AIProvider {
 	GDCLASS(OpenAIProvider, AIProvider);
 
 protected:
-	void _perform_request(const String &user_prompt);
+	void _perform_request(const String &user_prompt, const String &context_block);
 	
 	static void _bind_methods();
 
 public:
 	virtual String get_default_base_url() const override;
 	virtual String get_default_model() const override;
-	virtual Dictionary build_request_body(const String &user_prompt) const override;
+	virtual Dictionary build_request_body(const String &user_prompt, const String &context_block = "") const override;
 	virtual String parse_response(const Dictionary &response_data) const override;
 	virtual PackedStringArray get_request_headers() const override;
 	virtual String get_request_url() const override;
-	virtual void send_request(const String &user_prompt) override;
+	virtual void send_request(const String &user_prompt, const String &context_block = "") override;
 
 	OpenAIProvider();
 	~OpenAIProvider();
@@ -89,18 +89,18 @@ class GeminiProvider : public AIProvider {
 	GDCLASS(GeminiProvider, AIProvider);
 
 protected:
-	void _perform_request(const String &user_prompt);
+	void _perform_request(const String &user_prompt, const String &context_block);
 	
 	static void _bind_methods();
 
 public:
 	virtual String get_default_base_url() const override;
 	virtual String get_default_model() const override;
-	virtual Dictionary build_request_body(const String &user_prompt) const override;
+	virtual Dictionary build_request_body(const String &user_prompt, const String &context_block = "") const override;
 	virtual String parse_response(const Dictionary &response_data) const override;
 	virtual PackedStringArray get_request_headers() const override;
 	virtual String get_request_url() const override;
-	virtual void send_request(const String &user_prompt) override;
+	virtual void send_request(const String &user_prompt, const String &context_block = "") override;
 
 	GeminiProvider();
 	~GeminiProvider();
@@ -111,18 +111,18 @@ class XAIProvider : public AIProvider {
 	GDCLASS(XAIProvider, AIProvider);
 
 protected:
-	void _perform_request(const String &user_prompt);
+	void _perform_request(const String &user_prompt, const String &context_block);
 	
 	static void _bind_methods();
 
 public:
 	virtual String get_default_base_url() const override;
 	virtual String get_default_model() const override;
-	virtual Dictionary build_request_body(const String &user_prompt) const override;
+	virtual Dictionary build_request_body(const String &user_prompt, const String &context_block = "") const override;
 	virtual String parse_response(const Dictionary &response_data) const override;
 	virtual PackedStringArray get_request_headers() const override;
 	virtual String get_request_url() const override;
-	virtual void send_request(const String &user_prompt) override;
+	virtual void send_request(const String &user_prompt, const String &context_block = "") override;
 
 	XAIProvider();
 	~XAIProvider();
@@ -138,11 +138,11 @@ protected:
 public:
 	virtual String get_default_base_url() const override;
 	virtual String get_default_model() const override;
-	virtual Dictionary build_request_body(const String &user_prompt) const override;
+	virtual Dictionary build_request_body(const String &user_prompt, const String &context_block = "") const override;
 	virtual String parse_response(const Dictionary &response_data) const override;
 	virtual PackedStringArray get_request_headers() const override;
 	virtual String get_request_url() const override;
-	virtual void send_request(const String &user_prompt) override;
+	virtual void send_request(const String &user_prompt, const String &context_block = "") override;
 	
 	// Returns simulated response directly (doesn't need HTTP)
 	String get_dummy_response(const String &user_prompt) const;

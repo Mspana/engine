@@ -99,7 +99,7 @@ String AIProvider::get_default_model() const {
 	return "";
 }
 
-Dictionary AIProvider::build_request_body(const String &user_prompt) const {
+Dictionary AIProvider::build_request_body(const String &user_prompt, const String &context_block) const {
 	return Dictionary();
 }
 
@@ -116,7 +116,7 @@ String AIProvider::get_request_url() const {
 	return "";
 }
 
-void AIProvider::send_request(const String &user_prompt) {
+void AIProvider::send_request(const String &user_prompt, const String &context_block) {
 	ERR_PRINT("AIProvider::send_request() - Base class method called. Override in subclass.");
 	emit_signal("request_completed", false, "", "Provider does not implement send_request()");
 }
@@ -189,7 +189,13 @@ String AIProvider::load_from_env_file(const String &key_name, const String &env_
 }
 
 String AIProvider::get_system_prompt() {
-	return "You are an AI assistant for the Godot game engine. Respond ONLY with a JSON array of actions.\n"
+	return "You are a Godot 4 AI helper.\n"
+	       "You are helping kids ages 12–18 build games.\n"
+	       "You MUST always output a JSON array of actions and nothing else.\n"
+	       "Never use Godot 3 APIs.\n"
+	       "Prefer modifying existing scripts rather than generating new ones.\n"
+	       "No explanations, no comments, no prose.\n"
+	       "\n"
 	       "Format: [{\"action\": \"...\", \"args\": {...}}, ...]\n"
 	       "\n"
 	       "Allowed actions:\n"
@@ -200,7 +206,9 @@ String AIProvider::get_system_prompt() {
 	       "- create_script: Create a new script file (GDScript only)\n"
 	       "  Args: {\"file_path\": string (e.g. \"res://scripts/Enemy.gd\"), \"language\": \"GDScript\", \"content\": string}\n"
 	       "- update_script: Update an existing script file with new content\n"
-	       "  Args: {\"file_path\": string, \"patch\": string (full file content)}\n";
+	       "  Args: {\"file_path\": string, \"patch\": string (full file content)}\n"
+	       "- attach_script: Attach a script to a node\n"
+	       "  Args: {\"node_path\": string, \"script_path\": string}";
 }
 
 // ============================================================================
@@ -233,7 +241,7 @@ String OpenAIProvider::get_default_model() const {
 	return "gpt-4o-mini";
 }
 
-Dictionary OpenAIProvider::build_request_body(const String &user_prompt) const {
+Dictionary OpenAIProvider::build_request_body(const String &user_prompt, const String &context_block) const {
 	Dictionary body;
 	body["model"] = model;
 	body["temperature"] = temperature;
@@ -244,7 +252,11 @@ Dictionary OpenAIProvider::build_request_body(const String &user_prompt) const {
 	
 	Dictionary system_msg;
 	system_msg["role"] = "system";
-	system_msg["content"] = get_system_prompt();
+	String system_content = get_system_prompt();
+	if (!context_block.is_empty()) {
+		system_content += context_block;
+	}
+	system_msg["content"] = system_content;
 	messages.push_back(system_msg);
 
 	Dictionary user_msg;
@@ -296,7 +308,7 @@ String OpenAIProvider::get_request_url() const {
 	return base_url + "/v1/chat/completions";
 }
 
-void OpenAIProvider::send_request(const String &user_prompt) {
+void OpenAIProvider::send_request(const String &user_prompt, const String &context_block) {
 	if (api_key.is_empty()) {
 		ERR_PRINT("OpenAIProvider::send_request() - API key is not set");
 		call_deferred("emit_signal", "request_completed", false, "", "API key is not set");
@@ -307,11 +319,11 @@ void OpenAIProvider::send_request(const String &user_prompt) {
 	
 	// Submit task to worker thread pool
 	WorkerThreadPool::get_singleton()->add_task(
-		callable_mp(this, &OpenAIProvider::_perform_request).bind(user_prompt)
+		callable_mp(this, &OpenAIProvider::_perform_request).bind(user_prompt, context_block)
 	);
 }
 
-void OpenAIProvider::_perform_request(const String &user_prompt) {
+void OpenAIProvider::_perform_request(const String &user_prompt, const String &context_block) {
 	HTTPClient *http_client = HTTPClient::create();
 	
 	// Parse URL to extract host and path
@@ -344,7 +356,7 @@ void OpenAIProvider::_perform_request(const String &user_prompt) {
 	}
 	
 	// Build request
-	Dictionary request_body = build_request_body(user_prompt);
+	Dictionary request_body = build_request_body(user_prompt, context_block);
 	String json_body = JSON::stringify(request_body);
 	PackedStringArray headers_array = get_request_headers();
 	
@@ -457,7 +469,7 @@ String GeminiProvider::get_default_model() const {
 	return "gemini-pro";
 }
 
-Dictionary GeminiProvider::build_request_body(const String &user_prompt) const {
+Dictionary GeminiProvider::build_request_body(const String &user_prompt, const String &context_block) const {
 	Dictionary body;
 
 	// Build contents array
@@ -468,7 +480,11 @@ Dictionary GeminiProvider::build_request_body(const String &user_prompt) const {
 	Dictionary text_part;
 	
 	// Combine system prompt and user prompt for Gemini
-	String combined_prompt = get_system_prompt() + "\n\nUser request: " + user_prompt;
+	String system_content = get_system_prompt();
+	if (!context_block.is_empty()) {
+		system_content += context_block;
+	}
+	String combined_prompt = system_content + "\n\nUser request: " + user_prompt;
 	text_part["text"] = combined_prompt;
 	parts.push_back(text_part);
 	
@@ -536,7 +552,7 @@ String GeminiProvider::get_request_url() const {
 	return base_url + "/v1beta/models/" + model + ":generateContent?key=" + api_key;
 }
 
-void GeminiProvider::send_request(const String &user_prompt) {
+void GeminiProvider::send_request(const String &user_prompt, const String &context_block) {
 	if (api_key.is_empty()) {
 		ERR_PRINT("GeminiProvider::send_request() - API key is not set");
 		call_deferred("emit_signal", "request_completed", false, "", "API key is not set");
@@ -547,11 +563,11 @@ void GeminiProvider::send_request(const String &user_prompt) {
 	
 	// Submit task to worker thread pool
 	WorkerThreadPool::get_singleton()->add_task(
-		callable_mp(this, &GeminiProvider::_perform_request).bind(user_prompt)
+		callable_mp(this, &GeminiProvider::_perform_request).bind(user_prompt, context_block)
 	);
 }
 
-void GeminiProvider::_perform_request(const String &user_prompt) {
+void GeminiProvider::_perform_request(const String &user_prompt, const String &context_block) {
 	HTTPClient *http_client = HTTPClient::create();
 	
 	String host = "generativelanguage.googleapis.com";
@@ -582,7 +598,7 @@ void GeminiProvider::_perform_request(const String &user_prompt) {
 	}
 	
 	// Build request
-	Dictionary request_body = build_request_body(user_prompt);
+	Dictionary request_body = build_request_body(user_prompt, context_block);
 	String json_body = JSON::stringify(request_body);
 	PackedStringArray headers_array = get_request_headers();
 	
@@ -698,7 +714,7 @@ String XAIProvider::get_default_model() const {
 	return "grok-4-fast";
 }
 
-Dictionary XAIProvider::build_request_body(const String &user_prompt) const {
+Dictionary XAIProvider::build_request_body(const String &user_prompt, const String &context_block) const {
 	// x.ai uses OpenAI-compatible API
 	Dictionary body;
 	body["model"] = model;
@@ -710,7 +726,11 @@ Dictionary XAIProvider::build_request_body(const String &user_prompt) const {
 	
 	Dictionary system_msg;
 	system_msg["role"] = "system";
-	system_msg["content"] = get_system_prompt();
+	String system_content = get_system_prompt();
+	if (!context_block.is_empty()) {
+		system_content += context_block;
+	}
+	system_msg["content"] = system_content;
 	messages.push_back(system_msg);
 
 	Dictionary user_msg;
@@ -762,7 +782,7 @@ String XAIProvider::get_request_url() const {
 	return base_url + "/v1/chat/completions";
 }
 
-void XAIProvider::send_request(const String &user_prompt) {
+void XAIProvider::send_request(const String &user_prompt, const String &context_block) {
 	if (api_key.is_empty()) {
 		ERR_PRINT("XAIProvider::send_request() - API key is not set");
 		call_deferred("emit_signal", "request_completed", false, "", "API key is not set");
@@ -773,11 +793,11 @@ void XAIProvider::send_request(const String &user_prompt) {
 	
 	// Submit task to worker thread pool
 	WorkerThreadPool::get_singleton()->add_task(
-		callable_mp(this, &XAIProvider::_perform_request).bind(user_prompt)
+		callable_mp(this, &XAIProvider::_perform_request).bind(user_prompt, context_block)
 	);
 }
 
-void XAIProvider::_perform_request(const String &user_prompt) {
+void XAIProvider::_perform_request(const String &user_prompt, const String &context_block) {
 	HTTPClient *http_client = HTTPClient::create();
 	
 	String host = "api.x.ai";
@@ -808,7 +828,7 @@ void XAIProvider::_perform_request(const String &user_prompt) {
 	}
 	
 	// Build request
-	Dictionary request_body = build_request_body(user_prompt);
+	Dictionary request_body = build_request_body(user_prompt, context_block);
 	String json_body = JSON::stringify(request_body);
 	PackedStringArray headers_array = get_request_headers();
 	
@@ -912,10 +932,11 @@ String DummyProvider::get_default_model() const {
 	return "dummy-model";
 }
 
-Dictionary DummyProvider::build_request_body(const String &user_prompt) const {
+Dictionary DummyProvider::build_request_body(const String &user_prompt, const String &context_block) const {
 	// Dummy provider doesn't need to build real requests
 	Dictionary body;
 	body["prompt"] = user_prompt;
+	body["context"] = context_block;
 	return body;
 }
 
@@ -934,7 +955,7 @@ String DummyProvider::get_request_url() const {
 	return "dummy://localhost";
 }
 
-void DummyProvider::send_request(const String &user_prompt) {
+void DummyProvider::send_request(const String &user_prompt, const String &context_block) {
 	// DummyProvider doesn't make real HTTP requests - just immediately return dummy data
 	print_line("DummyProvider: Returning simulated response");
 	String response = get_dummy_response(user_prompt);
