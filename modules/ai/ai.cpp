@@ -18,6 +18,10 @@
 #include "scene/main/node.h"
 #include "core/string/node_path.h"
 
+// Headers for file operations
+#include "core/io/file_access.h"
+#include "core/io/dir_access.h"
+
 
 // Define and initialize the static singleton pointer.
 AI *AI::singleton = nullptr;
@@ -79,6 +83,28 @@ bool AI::_validate_command_dictionary(const Dictionary &cmd, String &error_msg) 
         }
         if (!args.has("value")) {
             error_msg = "'set_property' requires 'value'.";
+            return false;
+        }
+    } else if (action == "create_script") {
+        if (!args.has("file_path") || args["file_path"].get_type() != Variant::STRING) {
+            error_msg = "'create_script' requires string 'file_path'.";
+            return false;
+        }
+        if (!args.has("language") || args["language"].get_type() != Variant::STRING) {
+            error_msg = "'create_script' requires string 'language'.";
+            return false;
+        }
+        if (!args.has("content") || args["content"].get_type() != Variant::STRING) {
+            error_msg = "'create_script' requires string 'content'.";
+            return false;
+        }
+    } else if (action == "update_script") {
+        if (!args.has("file_path") || args["file_path"].get_type() != Variant::STRING) {
+            error_msg = "'update_script' requires string 'file_path'.";
+            return false;
+        }
+        if (!args.has("patch") || args["patch"].get_type() != Variant::STRING) {
+            error_msg = "'update_script' requires string 'patch'.";
             return false;
         }
     }
@@ -219,6 +245,80 @@ void AI::_execute_set_property(const Dictionary &args) {
     print_line(vformat("AI: Executed set_property. Node: %s, Property: %s, Value: %s", node_path_str, property_name, String(value)));
 }
 
+void AI::_execute_create_script(const Dictionary &args) {
+    EditorUndoRedoManager *undo_redo = EditorUndoRedoManager::get_singleton();
+    if (!undo_redo) {
+        ERR_PRINT("AI Execute: EditorUndoRedoManager singleton not found.");
+        return;
+    }
+
+    String file_path = args["file_path"];
+    String language = args["language"];
+    String content = args["content"];
+
+    // Validate language (v0: GDScript only)
+    if (language != "GDScript") {
+        ERR_PRINT(vformat("AI Execute 'create_script': Only 'GDScript' language is supported in v0. Got: '%s'", language));
+        return;
+    }
+
+    // Convert to absolute path if it's a resource path
+    String abs_path = ProjectSettings::get_singleton()->globalize_path(file_path);
+
+    // Check if file already exists
+    if (FileAccess::exists(abs_path)) {
+        WARN_PRINT(vformat("AI Execute 'create_script': File already exists at '%s'. Skipping creation.", abs_path));
+        return;
+    }
+
+    print_verbose(vformat("AI: Creating script at '%s' with %d bytes of content", abs_path, content.length()));
+
+    undo_redo->create_action("AI Create Script");
+    undo_redo->add_do_method(this, "_create_script_file", abs_path, content);
+    undo_redo->add_undo_method(this, "_delete_script_file", abs_path);
+    undo_redo->commit_action();
+
+    print_line(vformat("AI: Executed create_script. File: %s, Language: %s", file_path, language));
+}
+
+void AI::_execute_update_script(const Dictionary &args) {
+    EditorUndoRedoManager *undo_redo = EditorUndoRedoManager::get_singleton();
+    if (!undo_redo) {
+        ERR_PRINT("AI Execute: EditorUndoRedoManager singleton not found.");
+        return;
+    }
+
+    String file_path = args["file_path"];
+    String patch_content = args["patch"];
+
+    // Convert to absolute path if it's a resource path
+    String abs_path = ProjectSettings::get_singleton()->globalize_path(file_path);
+
+    // Check if file exists
+    if (!FileAccess::exists(abs_path)) {
+        ERR_PRINT(vformat("AI Execute 'update_script': File does not exist at '%s'. Cannot update.", abs_path));
+        return;
+    }
+
+    // Read existing content for undo
+    Ref<FileAccess> file = FileAccess::open(abs_path, FileAccess::READ);
+    if (file.is_null()) {
+        ERR_PRINT(vformat("AI Execute 'update_script': Failed to open file for reading at '%s'.", abs_path));
+        return;
+    }
+    String original_content = file->get_as_text();
+    file.unref(); // Close the file
+
+    print_verbose(vformat("AI: Updating script at '%s'. Old size: %d bytes, New size: %d bytes", abs_path, original_content.length(), patch_content.length()));
+
+    undo_redo->create_action("AI Update Script");
+    undo_redo->add_do_method(this, "_write_script_file", abs_path, patch_content);
+    undo_redo->add_undo_method(this, "_write_script_file", abs_path, original_content);
+    undo_redo->commit_action();
+
+    print_line(vformat("AI: Executed update_script. File: %s", file_path));
+}
+
 void AI::_on_provider_request_completed(bool success, const String &response_json, const String &error_message) {
     if (!success) {
         ERR_PRINT(vformat("AI::_on_provider_request_completed - Request failed: %s", error_message));
@@ -276,6 +376,10 @@ void AI::_process_and_execute_actions(const String &ai_json_response) {
                     _execute_create_node(action_args);
                 } else if (action_name == "set_property") {
                     _execute_set_property(action_args);
+                } else if (action_name == "create_script") {
+                    _execute_create_script(action_args);
+                } else if (action_name == "update_script") {
+                    _execute_update_script(action_args);
                 } else {
                     print_line(vformat("    - Action '%s' has no execution logic implemented.", action_name));
                 }
@@ -394,6 +498,11 @@ void AI::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_provider", "provider"), &AI::set_provider);
     ClassDB::bind_method(D_METHOD("get_provider"), &AI::get_provider);
     
+    // File operation helpers for UndoRedo
+    ClassDB::bind_method(D_METHOD("_create_script_file", "abs_path", "content"), &AI::_create_script_file);
+    ClassDB::bind_method(D_METHOD("_write_script_file", "abs_path", "content"), &AI::_write_script_file);
+    ClassDB::bind_method(D_METHOD("_delete_script_file", "abs_path"), &AI::_delete_script_file);
+    
     // Add properties
     ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "provider", PROPERTY_HINT_RESOURCE_TYPE, "AIProvider"), "set_provider", "get_provider");
 }
@@ -413,6 +522,38 @@ void AI::finalize_singleton() {
 
 AI *AI::get_singleton() {
     return singleton;
+}
+
+// File operation helper implementations
+void AI::_create_script_file(const String &abs_path, const String &content) {
+    Ref<FileAccess> file = FileAccess::open(abs_path, FileAccess::WRITE);
+    if (file.is_null()) {
+        ERR_PRINT(vformat("AI: Failed to create file at '%s'.", abs_path));
+        return;
+    }
+    file->store_string(content);
+    file.unref(); // Close the file
+    print_verbose(vformat("AI: Created file at '%s'", abs_path));
+}
+
+void AI::_write_script_file(const String &abs_path, const String &content) {
+    Ref<FileAccess> file = FileAccess::open(abs_path, FileAccess::WRITE);
+    if (file.is_null()) {
+        ERR_PRINT(vformat("AI: Failed to write file at '%s'.", abs_path));
+        return;
+    }
+    file->store_string(content);
+    file.unref(); // Close the file
+    print_verbose(vformat("AI: Wrote file at '%s'", abs_path));
+}
+
+void AI::_delete_script_file(const String &abs_path) {
+    Error err = DirAccess::remove_absolute(abs_path);
+    if (err != OK) {
+        ERR_PRINT(vformat("AI: Failed to delete file at '%s'. Error code: %d", abs_path, err));
+        return;
+    }
+    print_verbose(vformat("AI: Deleted file at '%s'", abs_path));
 }
 
 AI::AI() {

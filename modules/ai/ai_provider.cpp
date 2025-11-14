@@ -191,8 +191,16 @@ String AIProvider::load_from_env_file(const String &key_name, const String &env_
 String AIProvider::get_system_prompt() {
 	return "You are an AI assistant for the Godot game engine. Respond ONLY with a JSON array of actions.\n"
 	       "Format: [{\"action\": \"...\", \"args\": {...}}, ...]\n"
-	       "Allowed actions: create_node, set_property\n"
-	       "Example: [{\"action\": \"create_node\", \"args\": {\"node_name\": \"Player\", \"node_type\": \"CharacterBody2D\", \"parent_path\": \"\"}}]";
+	       "\n"
+	       "Allowed actions:\n"
+	       "- create_node: Create a new node in the scene tree\n"
+	       "  Args: {\"node_name\": string, \"node_type\": string, \"parent_path\": string (optional)}\n"
+	       "- set_property: Set a property on an existing node\n"
+	       "  Args: {\"node_path\": string, \"property_name\": string, \"value\": any}\n"
+	       "- create_script: Create a new script file (GDScript only)\n"
+	       "  Args: {\"file_path\": string (e.g. \"res://scripts/Enemy.gd\"), \"language\": \"GDScript\", \"content\": string}\n"
+	       "- update_script: Update an existing script file with new content\n"
+	       "  Args: {\"file_path\": string, \"patch\": string (full file content)}\n";
 }
 
 // ============================================================================

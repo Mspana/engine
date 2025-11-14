@@ -45,6 +45,13 @@ private:
 	// Execution helpers
 	void _execute_create_node(const Dictionary &args);
 	void _execute_set_property(const Dictionary &args);
+	void _execute_create_script(const Dictionary &args);
+	void _execute_update_script(const Dictionary &args);
+	
+	// File operation helpers for UndoRedo
+	void _create_script_file(const String &abs_path, const String &content);
+	void _write_script_file(const String &abs_path, const String &content);
+	void _delete_script_file(const String &abs_path);
 
 public:
 	// The core method to interact with the AI backend.
