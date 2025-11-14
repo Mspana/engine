@@ -13,6 +13,7 @@ sources = [
     "register_types.cpp",
     "ai.cpp",
     "ai_provider.cpp",
+    "retrieval.cpp",
 ]
 
 # Add the source files of this module to the global list of module sources.

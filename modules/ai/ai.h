@@ -6,6 +6,7 @@
 #include "core/string/ustring.h"        // For String parameter type
 #include "core/variant/dictionary.h"    // Added for Dictionary type hint
 #include "ai_provider.h"                // For AIProvider types
+#include "retrieval.h"                  // For RetrievalIndex
 
 class AI : public Object {
 	GDCLASS(AI, Object); // Godot class macro
@@ -26,6 +27,9 @@ private:
 	// Provider for AI API calls
 	Ref<AIProvider> provider;
 	
+	// Retrieval index for RAG-lite context
+	Ref<RetrievalIndex> retrieval;
+	
 	// Callback for provider request completion
 	void _on_provider_request_completed(bool success, const String &response_json, const String &error_message);
 	
@@ -34,6 +38,9 @@ private:
 	
 	// Helper to validate a command already parsed into a Dictionary.
 	bool _validate_command_dictionary(const Dictionary &cmd, String &error_msg) const;
+
+	// Helper to get active scene path
+	String _get_active_scene_path() const;
 
 	// Execution helpers
 	void _execute_create_node(const Dictionary &args);

@@ -2,6 +2,7 @@
 
 #include "ai.h" // Include the header for the class we are registering
 #include "ai_provider.h" // Include provider classes
+#include "retrieval.h" // Include retrieval class
 
 #include "core/config/engine.h" // Required for Engine singleton
 #include "core/object/class_db.h" // Required for ClassDB
@@ -22,6 +23,9 @@ void initialize_ai_module(ModuleInitializationLevel p_level) {
 	ClassDB::register_class<OpenAIProvider>();
 	ClassDB::register_class<GeminiProvider>();
 	ClassDB::register_class<XAIProvider>();
+	
+	// Register retrieval class
+	ClassDB::register_class<RetrievalIndex>();
 
 	// Create the singleton instance using the class's own method.
 	AI::initialize_singleton();

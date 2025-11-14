@@ -1,6 +1,7 @@
 // modules/ai/ai.cpp
 #include "ai.h"
 #include "ai_provider.h"
+#include "retrieval.h"
 
 #include "core/core_bind.h"     // For ClassDB bindings (D_METHOD)
 #include "core/error/error_macros.h" // For ERR_FAIL_* macros
@@ -8,6 +9,7 @@
 #include "core/variant/dictionary.h" // Required for Dictionary
 #include "core/io/json.h" // Required for JSON parsing
 #include "core/string/ustring.h" // For String utilities
+#include "core/config/project_settings.h" // For ProjectSettings
 
 // Headers for execution logic
 #include "editor/editor_interface.h"
@@ -286,25 +288,68 @@ void AI::_process_and_execute_actions(const String &ai_json_response) {
     }
 }
 
+String AI::_get_active_scene_path() const {
+	EditorInterface *ei = EditorInterface::get_singleton();
+	if (!ei) {
+		return "";
+	}
+	
+	Node *edited_scene_root = ei->get_edited_scene_root();
+	if (!edited_scene_root) {
+		return "";
+	}
+	
+	// Get the scene file path
+	String scene_file_path = edited_scene_root->get_scene_file_path();
+	return scene_file_path;
+}
+
 Array AI::request_actions(const String &user_prompt) {
-    Array result_array;
+	Array result_array;
 
-    // Check if provider is set
-    if (provider.is_null()) {
-        ERR_PRINT("AI::request_actions - No provider set. Use DummyProvider for testing or set a real provider.");
-        return result_array;
-    }
+	// Check if provider is set
+	if (provider.is_null()) {
+		ERR_PRINT("AI::request_actions - No provider set. Use DummyProvider for testing or set a real provider.");
+		return result_array;
+	}
 
-    print_line(vformat("AI: Sending request via %s provider", provider->get_class()));
-    
-    // Ask the provider to send the request
-    // The provider will emit the "request_completed" signal when done
-    provider->send_request(user_prompt);
-    
-    // For async providers (OpenAI, Gemini, XAI), actions will be executed when signal fires
-    // For DummyProvider, the signal fires immediately and actions execute synchronously
-    
-    return result_array;
+	// Get active scene path for context retrieval
+	String active_scene_path = _get_active_scene_path();
+	
+	// Retrieve relevant project context
+	Array context_snippets;
+	if (retrieval.is_valid()) {
+		context_snippets = retrieval->retrieve_context(user_prompt, active_scene_path, 8);
+	}
+	
+	// Build context block from snippets
+	String context_block;
+	if (!context_snippets.is_empty()) {
+		context_block = "\n\nProject context:\n";
+		for (int i = 0; i < context_snippets.size(); i++) {
+			Dictionary snippet = context_snippets[i];
+			String file_path = snippet.get("file_path", "");
+			String text = snippet.get("text", "");
+			real_t score = snippet.get("score", 0.0);
+			
+			context_block += vformat("\n--- File: %s (relevance: %.1f) ---\n%s\n", file_path, score, text);
+		}
+		print_line(vformat("AI: Retrieved %d context snippets for prompt enrichment", context_snippets.size()));
+	}
+	
+	// Construct enriched prompt
+	String enriched_prompt = user_prompt + context_block;
+
+	print_line(vformat("AI: Sending request via %s provider", provider->get_class()));
+	
+	// Ask the provider to send the request with enriched prompt
+	// The provider will emit the "request_completed" signal when done
+	provider->send_request(enriched_prompt);
+	
+	// For async providers (OpenAI, Gemini, XAI), actions will be executed when signal fires
+	// For DummyProvider, the signal fires immediately and actions execute synchronously
+	
+	return result_array;
 }
 
 // Provider management
@@ -371,10 +416,20 @@ AI *AI::get_singleton() {
 }
 
 AI::AI() {
-    // Set default provider to XAIProvider (Grok)
-    Ref<XAIProvider> xai;
-    xai.instantiate();
-    set_provider(xai); // Use setter to connect signal
+	// Set default provider to XAIProvider (Grok)
+	Ref<XAIProvider> xai;
+	xai.instantiate();
+	set_provider(xai); // Use setter to connect signal
+	
+	// Initialize retrieval index
+	retrieval.instantiate();
+	
+	// Set project root from ProjectSettings
+	if (ProjectSettings::get_singleton()) {
+		String project_root = ProjectSettings::get_singleton()->globalize_path("res://");
+		retrieval->set_project_root(project_root);
+		print_line(vformat("AI: Initialized retrieval index with project root: %s", project_root));
+	}
 }
 
 AI::~AI() {
