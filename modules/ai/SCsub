@@ -12,6 +12,7 @@ env_ai = env_modules.Clone()
 sources = [
     "register_types.cpp",
     "ai.cpp",
+    "ai_provider.cpp",
 ]
 
 # Add the source files of this module to the global list of module sources.

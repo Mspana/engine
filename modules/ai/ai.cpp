@@ -1,5 +1,6 @@
 // modules/ai/ai.cpp
 #include "ai.h"
+#include "ai_provider.h"
 
 #include "core/core_bind.h"     // For ClassDB bindings (D_METHOD)
 #include "core/error/error_macros.h" // For ERR_FAIL_* macros
@@ -7,7 +8,6 @@
 #include "core/variant/dictionary.h" // Required for Dictionary
 #include "core/io/json.h" // Required for JSON parsing
 #include "core/string/ustring.h" // For String utilities
-// #include "core/io/json.cpp" // Generally not good practice to include .cpp files. Assuming JSON is linked.
 
 // Headers for execution logic
 #include "editor/editor_interface.h"
@@ -99,15 +99,6 @@ bool AI::validate_command_json(const String &json_str, String &error_msg) const 
     }
     Dictionary cmd = top;
     return _validate_command_dictionary(cmd, error_msg);
-}
-
-// New private method to simulate getting a response from an AI
-String AI::_get_simulated_ai_response_json_string(const String &user_prompt) const {
-    // Simplified for testing execution
-    return "[ \
-        {\"action\": \"create_node\", \"args\": {\"node_name\": \"TestNode\", \"node_type\": \"Sprite2D\", \"parent_path\": \"\"}}, \
-        {\"action\": \"set_property\", \"args\": {\"node_path\": \"TestNode\", \"property_name\": \"position\", \"value\": {\"x\": 50, \"y\": 50}}} \
-    ]";
 }
 
 void AI::_execute_create_node(const Dictionary &args) {
@@ -226,18 +217,27 @@ void AI::_execute_set_property(const Dictionary &args) {
     print_line(vformat("AI: Executed set_property. Node: %s, Property: %s, Value: %s", node_path_str, property_name, String(value)));
 }
 
-Array AI::request_actions(const String &user_prompt) {
-    String ai_json_response = _get_simulated_ai_response_json_string(user_prompt);
+void AI::_on_provider_request_completed(bool success, const String &response_json, const String &error_message) {
+    if (!success) {
+        ERR_PRINT(vformat("AI::_on_provider_request_completed - Request failed: %s", error_message));
+        return;
+    }
+    
+    print_line("AI: Provider request completed successfully");
+    _process_and_execute_actions(response_json);
+}
+
+void AI::_process_and_execute_actions(const String &ai_json_response) {
     Array valid_actions_array;
 
-    JSON json_parser;
-    Error err = json_parser.parse(ai_json_response);
+    JSON action_parser;
+    Error err = action_parser.parse(ai_json_response);
     if (err != Error::OK) {
-        print_error(vformat("AI::request_actions - JSON Parse Error from AI response: %s at line %d. Raw response: %s", json_parser.get_error_message(), json_parser.get_error_line(), ai_json_response));
-        return valid_actions_array;
+        ERR_PRINT(vformat("AI::_process_and_execute_actions - Failed to parse AI action JSON: %s. Response: %s", action_parser.get_error_message(), ai_json_response));
+        return;
     }
 
-    Variant parsed_data = json_parser.get_data();
+    Variant parsed_data = action_parser.get_data();
 
     if (parsed_data.get_type() == Variant::ARRAY) {
         Array commands_array = parsed_data;
@@ -248,30 +248,28 @@ Array AI::request_actions(const String &user_prompt) {
                 if (_validate_command_dictionary(command_dict, validation_error_msg)) {
                     valid_actions_array.push_back(command_dict);
                 } else {
-                    WARN_PRINT(vformat("AI::request_actions - Invalid command in AI response array at index %d: %s. Command: %s", i, validation_error_msg, JSON::stringify(commands_array[i])));
+                    WARN_PRINT(vformat("AI::_process_and_execute_actions - Invalid command at index %d: %s. Command: %s", i, validation_error_msg, JSON::stringify(commands_array[i])));
                 }
             } else {
-                // This element in the array was not a Dictionary.
-                WARN_PRINT(vformat("AI::request_actions - Expected a command Dictionary in AI response array at index %d, got %s.", i, Variant::get_type_name(commands_array[i].get_type())));
+                WARN_PRINT(vformat("AI::_process_and_execute_actions - Expected Dictionary at index %d, got %s.", i, Variant::get_type_name(commands_array[i].get_type())));
             }
         }
     } else {
-        // The AI response was not an array, which violates our assumption.
-        print_error(vformat("AI::request_actions - AI response JSON is not an Array as expected. Got %s. Raw response: %s", Variant::get_type_name(parsed_data.get_type()), ai_json_response));
-        // valid_actions_array is already empty, so we just fall through to return it.
+        ERR_PRINT(vformat("AI::_process_and_execute_actions - AI response is not an Array. Got %s. Response: %s", Variant::get_type_name(parsed_data.get_type()), ai_json_response));
+        return;
     }
 
     // Execute valid actions
     if (!valid_actions_array.is_empty()) {
-        print_line(vformat("AI: Found %d valid actions. Executing...", valid_actions_array.size()));
+        print_line(vformat("AI: Received %d valid actions. Executing...", valid_actions_array.size()));
         for (int i = 0; i < valid_actions_array.size(); ++i) {
-            const Dictionary &action_dict = valid_actions_array[i]; // Assuming it's a Dictionary
-            String action_name = action_dict.get("action", ""); // Default to empty if key missing
-            Variant args_variant = action_dict.get("args", Dictionary()); // Default to empty dict
+            const Dictionary &action_dict = valid_actions_array[i];
+            String action_name = action_dict.get("action", "");
+            Variant args_variant = action_dict.get("args", Dictionary());
 
             if (args_variant.get_type() == Variant::DICTIONARY) {
                 Dictionary action_args = args_variant;
-                print_line(vformat("  - Attempting to execute Action %d: %s", i + 1, JSON::stringify(action_dict)));
+                print_line(vformat("  - Executing Action %d: %s", i + 1, JSON::stringify(action_dict)));
                 if (action_name == "create_node") {
                     _execute_create_node(action_args);
                 } else if (action_name == "set_property") {
@@ -280,15 +278,55 @@ Array AI::request_actions(const String &user_prompt) {
                     print_line(vformat("    - Action '%s' has no execution logic implemented.", action_name));
                 }
             } else {
-                WARN_PRINT(vformat("  - Action %d ('%s') has invalid 'args' type. Expected Dictionary, got %s. Skipping execution.", i+1, action_name, Variant::get_type_name(args_variant.get_type())));
+                WARN_PRINT(vformat("  - Action %d ('%s') has invalid 'args' type. Skipping.", i+1, action_name));
             }
         }
     } else {
-        // This case might happen if the AI returns an empty array [] or if all actions in the array were invalid.
-        print_line("AI: Processed prompt. No valid actions to execute (or AI returned empty/invalid array).");
+        print_line("AI: No valid actions to execute.");
+    }
+}
+
+Array AI::request_actions(const String &user_prompt) {
+    Array result_array;
+
+    // Check if provider is set
+    if (provider.is_null()) {
+        ERR_PRINT("AI::request_actions - No provider set. Use DummyProvider for testing or set a real provider.");
+        return result_array;
     }
 
-    return valid_actions_array;
+    print_line(vformat("AI: Sending request via %s provider", provider->get_class()));
+    
+    // Ask the provider to send the request
+    // The provider will emit the "request_completed" signal when done
+    provider->send_request(user_prompt);
+    
+    // For async providers (OpenAI, Gemini, XAI), actions will be executed when signal fires
+    // For DummyProvider, the signal fires immediately and actions execute synchronously
+    
+    return result_array;
+}
+
+// Provider management
+void AI::set_provider(const Ref<AIProvider> &p_provider) {
+    // Disconnect from old provider if it exists
+    if (provider.is_valid()) {
+        if (provider->is_connected("request_completed", callable_mp(this, &AI::_on_provider_request_completed))) {
+            provider->disconnect("request_completed", callable_mp(this, &AI::_on_provider_request_completed));
+    }
+    }
+    
+    provider = p_provider;
+    
+    // Connect to new provider if it's valid
+    if (provider.is_valid()) {
+        provider->connect("request_completed", callable_mp(this, &AI::_on_provider_request_completed));
+        print_line(vformat("AI: Provider set to %s", provider->get_class()));
+    }
+}
+
+Ref<AIProvider> AI::get_provider() const {
+    return provider;
 }
 
 // Helper method implementation for GDScript binding
@@ -306,6 +344,13 @@ void AI::_bind_methods() {
     ClassDB::bind_method(D_METHOD("request_actions", "user_prompt"), &AI::request_actions);
     // Bind the helper method under the desired name for GDScript
     ClassDB::bind_method(D_METHOD("validate_command_json", "json_str"), &AI::_validate_command_json_bind);
+    
+    // Provider management
+    ClassDB::bind_method(D_METHOD("set_provider", "provider"), &AI::set_provider);
+    ClassDB::bind_method(D_METHOD("get_provider"), &AI::get_provider);
+    
+    // Add properties
+    ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "provider", PROPERTY_HINT_RESOURCE_TYPE, "AIProvider"), "set_provider", "get_provider");
 }
 
 void AI::initialize_singleton() {
@@ -326,11 +371,17 @@ AI *AI::get_singleton() {
 }
 
 AI::AI() {
-    // ERR_FAIL_COND_MSG(singleton != nullptr && singleton != this, "AI singleton race condition detected.");
-    // Singleton assignment is done in initialize_singleton
+    // Set default provider to XAIProvider (Grok)
+    Ref<XAIProvider> xai;
+    xai.instantiate();
+    set_provider(xai); // Use setter to connect signal
 }
 
 AI::~AI() {
-    // ERR_FAIL_COND_MSG(singleton != this && singleton != nullptr , "AI singleton pointer mismatch during destruction.");
-    // Singleton clearing is done in finalize_singleton
+    // Disconnect from provider if connected
+    if (provider.is_valid()) {
+        if (provider->is_connected("request_completed", callable_mp(this, &AI::_on_provider_request_completed))) {
+            provider->disconnect("request_completed", callable_mp(this, &AI::_on_provider_request_completed));
+        }
+    }
 }

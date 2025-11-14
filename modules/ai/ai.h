@@ -5,6 +5,7 @@
 #include "core/variant/array.h"         // For Array return type
 #include "core/string/ustring.h"        // For String parameter type
 #include "core/variant/dictionary.h"    // Added for Dictionary type hint
+#include "ai_provider.h"                // For AIProvider types
 
 class AI : public Object {
 	GDCLASS(AI, Object); // Godot class macro
@@ -22,10 +23,17 @@ protected:
     bool validate_command_json(const String &json_str, String &error_msg) const;
 
 private:
+	// Provider for AI API calls
+	Ref<AIProvider> provider;
+	
+	// Callback for provider request completion
+	void _on_provider_request_completed(bool success, const String &response_json, const String &error_message);
+	
+	// Helper to process and execute actions from JSON response
+	void _process_and_execute_actions(const String &ai_json_response);
+	
 	// Helper to validate a command already parsed into a Dictionary.
 	bool _validate_command_dictionary(const Dictionary &cmd, String &error_msg) const;
-	// Helper to simulate getting a JSON response string from an AI.
-	String _get_simulated_ai_response_json_string(const String &user_prompt) const;
 
 	// Execution helpers
 	void _execute_create_node(const Dictionary &args);
@@ -34,6 +42,10 @@ private:
 public:
 	// The core method to interact with the AI backend.
 	Array request_actions(const String &prompt);
+
+	// Provider management
+	void set_provider(const Ref<AIProvider> &p_provider);
+	Ref<AIProvider> get_provider() const;
 
 	// Static methods for singleton management (called from register_types.cpp)
 	static void initialize_singleton();
