@@ -16,4 +16,12 @@ The AI module now includes an in-process retrieval system that automatically enr
 - Support additional file types (shaders, resources, documentation) and improve filtering of irrelevant files (e.g., generated files, third-party addons)
 - Add caching layer to avoid re-scoring unchanged snippets on similar queries
 
+## AI Helper - Headless Smoke Test
+
+A minimal sample project (`sample_project/`) with a headless smoke test script has been added to validate engine functionality without requiring editor interaction. The test script extends `SceneTree` and can be executed with `--headless --script` parameters to perform automated validation. It loads the main scene from ProjectSettings, dynamically locates a Player node, simulates input actions (`ui_right` for 30 frames), and verifies that the game loop advances correctly by logging position changes. The test runs for 60 frames (~1 second), validates player movement, and exits cleanly with code 0 on success. All output is prefixed with "SMOKE:" for easy grep-filtering in CI/CD pipelines. The implementation is pure GDScript with no engine modifications, demonstrating proper usage of Godot 4's main loop API, input simulation via `Input.action_press()`, and scene tree manipulation for testing purposes.
+
+**Usage:**
+```bash
+bin/godot.windows.editor.x86_64.exe --headless --path sample_project --script res://addons/ai_helper/headless_smoke_test.gd
+```
 
