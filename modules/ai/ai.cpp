@@ -21,6 +21,9 @@
 // Headers for file operations
 #include "core/io/file_access.h"
 #include "core/io/dir_access.h"
+#include "core/io/resource_loader.h"
+#include "core/io/resource_saver.h"
+#include "modules/gdscript/gdscript.h"
 
 
 // Define and initialize the static singleton pointer.
@@ -161,10 +164,15 @@ void AI::_execute_create_node(const Dictionary &args) {
     if (parent_path_str.is_empty()) {
         parent_node = edited_scene_root;
     } else {
-        parent_node = edited_scene_root->get_node(NodePath(parent_path_str));
-        if (!parent_node) {
-            ERR_PRINT(vformat("AI Execute 'create_node': Could not find parent node at path '%s'. Using scene root instead.", parent_path_str));
-            parent_node = edited_scene_root; // Fallback or error
+        // Check if parent_path matches the scene root's name
+        if (parent_path_str == edited_scene_root->get_name()) {
+            parent_node = edited_scene_root;
+        } else {
+            parent_node = edited_scene_root->get_node(NodePath(parent_path_str));
+            if (!parent_node) {
+                ERR_PRINT(vformat("AI Execute 'create_node': Could not find parent node at path '%s'. Using scene root instead.", parent_path_str));
+                parent_node = edited_scene_root;
+            }
         }
     }
     if (!parent_node) { // Should be redundant if above fallback works, but as a safeguard.
@@ -178,19 +186,17 @@ void AI::_execute_create_node(const Dictionary &args) {
         ERR_PRINT(vformat("AI Execute 'create_node': Failed to instantiate node of type '%s'.", node_type));
         return;
     }
-    // new_node->set_name(node_name); // Set name before adding for UndoRedo add_child if it relies on initial name for remove
-
+    
+    new_node->set_name(node_name);
+    
+    // Set up undo/redo - commit_action() will execute do_methods immediately
     undo_redo->create_action("AI Create Node");
-    // Add child first, then set name and owner for 'do'
     undo_redo->add_do_method(parent_node, "add_child", new_node, true); // force_readable_name = true
-    undo_redo->add_do_method(new_node, "set_name", node_name);
-    if (edited_scene_root != nullptr && new_node->get_owner() != edited_scene_root) { // Set owner if not already set (e.g. by add_child)
-        undo_redo->add_do_method(new_node, "set_owner", edited_scene_root);
-    }
-    // For undo, remove child. The node itself will be freed if it has no other parent.
+    undo_redo->add_do_method(new_node, "set_owner", edited_scene_root);
+    undo_redo->add_do_reference(new_node); // Keep reference during undo/redo
     undo_redo->add_undo_method(parent_node, "remove_child", new_node);
-    // If new_node needs explicit freeing, add_undo_method(new_node, "queue_free") but usually remove_child handles this.
-    undo_redo->commit_action();
+    undo_redo->add_undo_method(new_node, "queue_free");
+    undo_redo->commit_action(); // Executes do_methods immediately, making node findable
     
     print_line(vformat("AI: Executed create_node. Name: %s, Type: %s, Parent: %s", node_name, node_type, parent_node->get_path()));
 }
@@ -523,25 +529,35 @@ AI *AI::get_singleton() {
 
 // File operation helper implementations
 void AI::_create_script_file(const String &abs_path, const String &content) {
-    Ref<FileAccess> file = FileAccess::open(abs_path, FileAccess::WRITE);
-    if (file.is_null()) {
-        ERR_PRINT(vformat("AI: Failed to create file at '%s'.", abs_path));
+    Ref<GDScript> gd_script;
+    gd_script.instantiate();
+    gd_script->set_source_code(content);
+    
+    String res_path = ProjectSettings::get_singleton()->localize_path(abs_path);
+    Error err = ResourceSaver::save(gd_script, res_path);
+    if (err != OK) {
+        ERR_PRINT(vformat("AI: Failed to create script at '%s'. Error: %d", abs_path, err));
         return;
     }
-    file->store_string(content);
-    file.unref(); // Close the file
-    print_verbose(vformat("AI: Created file at '%s'", abs_path));
+    print_verbose(vformat("AI: Created script at '%s'", abs_path));
 }
 
 void AI::_write_script_file(const String &abs_path, const String &content) {
-    Ref<FileAccess> file = FileAccess::open(abs_path, FileAccess::WRITE);
-    if (file.is_null()) {
-        ERR_PRINT(vformat("AI: Failed to write file at '%s'.", abs_path));
+    String res_path = ProjectSettings::get_singleton()->localize_path(abs_path);
+    
+    Ref<Script> gd_script = ResourceLoader::load(res_path);
+    if (gd_script.is_null()) {
+        ERR_PRINT(vformat("AI: Failed to load script at '%s' for writing.", abs_path));
         return;
     }
-    file->store_string(content);
-    file.unref(); // Close the file
-    print_verbose(vformat("AI: Wrote file at '%s'", abs_path));
+    
+    gd_script->set_source_code(content);
+    Error err = ResourceSaver::save(gd_script, res_path);
+    if (err != OK) {
+        ERR_PRINT(vformat("AI: Failed to save script at '%s'. Error: %d", abs_path, err));
+        return;
+    }
+    print_verbose(vformat("AI: Updated script at '%s'", abs_path));
 }
 
 void AI::_delete_script_file(const String &abs_path) {
