@@ -181,6 +181,33 @@ func test_validation():
 		print("  ✗ Missing required args incorrectly accepted")
 		all_passed = false
 	
+	# Test valid attach_script command
+	var attach_script_json = '{"action": "attach_script", "args": {"node_path": "Player", "script_path": "res://scripts/PlayerController.gd"}}'
+	result = AI.validate_command_json(attach_script_json)
+	if result["valid"] == true:
+		print("  ✓ Valid attach_script command passed validation")
+	else:
+		print("  ✗ Valid attach_script command failed validation: " + result["error"])
+		all_passed = false
+	
+	# Test attach_script with missing node_path
+	var attach_script_missing_node = '{"action": "attach_script", "args": {"script_path": "res://scripts/Test.gd"}}'
+	result = AI.validate_command_json(attach_script_missing_node)
+	if result["valid"] == false:
+		print("  ✓ attach_script missing node_path correctly rejected")
+	else:
+		print("  ✗ attach_script missing node_path incorrectly accepted")
+		all_passed = false
+	
+	# Test attach_script with missing script_path
+	var attach_script_missing_script = '{"action": "attach_script", "args": {"node_path": "Player"}}'
+	result = AI.validate_command_json(attach_script_missing_script)
+	if result["valid"] == false:
+		print("  ✓ attach_script missing script_path correctly rejected")
+	else:
+		print("  ✗ attach_script missing script_path incorrectly accepted")
+		all_passed = false
+	
 	test_results.append({"name": "Command Validation", "passed": all_passed})
 	print()
 

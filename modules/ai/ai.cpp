@@ -110,6 +110,15 @@ bool AI::_validate_command_dictionary(const Dictionary &cmd, String &error_msg) 
             error_msg = "'update_script' requires string 'patch'.";
             return false;
         }
+    } else if (action == "attach_script") {
+        if (!args.has("node_path") || args["node_path"].get_type() != Variant::STRING) {
+            error_msg = "'attach_script' requires string 'node_path'.";
+            return false;
+        }
+        if (!args.has("script_path") || args["script_path"].get_type() != Variant::STRING) {
+            error_msg = "'attach_script' requires string 'script_path'.";
+            return false;
+        }
     }
     // Additional actions can be validated similarly...
 
@@ -325,6 +334,55 @@ void AI::_execute_update_script(const Dictionary &args) {
     print_line(vformat("AI: Executed update_script. File: %s", file_path));
 }
 
+void AI::_execute_attach_script(const Dictionary &args) {
+    EditorInterface *ei = EditorInterface::get_singleton();
+    if (!ei) {
+        ERR_PRINT("AI Execute: EditorInterface singleton not found.");
+        return;
+    }
+
+    EditorUndoRedoManager *undo_redo = EditorUndoRedoManager::get_singleton();
+    if (!undo_redo) {
+        ERR_PRINT("AI Execute: EditorUndoRedoManager singleton not found.");
+        return;
+    }
+
+    Node *edited_scene_root = ei->get_edited_scene_root();
+    if (!edited_scene_root) {
+        ERR_PRINT("AI Execute 'attach_script': No edited scene root.");
+        return;
+    }
+
+    String node_path_str = args["node_path"];
+    String script_path = args["script_path"];
+
+    // Resolve the target node
+    Node *target_node = edited_scene_root->get_node(NodePath(node_path_str));
+    if (!target_node) {
+        ERR_PRINT(vformat("AI Execute 'attach_script': Could not find node at path '%s'.", node_path_str));
+        return;
+    }
+
+    // Load script resource
+    Ref<Script> scr = ResourceLoader::load(script_path);
+    if (scr.is_null()) {
+        ERR_PRINT(vformat("AI Execute 'attach_script': Could not load script at '%s'.", script_path));
+        return;
+    }
+
+    // Save old script for undo (may be null)
+    Variant old_script = target_node->get("script");
+
+    // Wrap in UndoRedo
+    undo_redo->create_action("AI Attach Script");
+    undo_redo->add_do_method(target_node, "set", "script", scr);
+    undo_redo->add_undo_method(target_node, "set", "script", old_script);
+    undo_redo->commit_action();
+
+    print_verbose(vformat("AIHelper: attach_script to node: %s", node_path_str));
+    print_line(vformat("AI: Executed attach_script. Node: %s, Script: %s", node_path_str, script_path));
+}
+
 void AI::_on_provider_request_completed(bool success, const String &response_json, const String &error_message) {
     if (!success) {
         ERR_PRINT(vformat("AI::_on_provider_request_completed - Request failed: %s", error_message));
@@ -386,6 +444,8 @@ void AI::_process_and_execute_actions(const String &ai_json_response) {
                     _execute_create_script(action_args);
                 } else if (action_name == "update_script") {
                     _execute_update_script(action_args);
+                } else if (action_name == "attach_script") {
+                    _execute_attach_script(action_args);
                 } else {
                     print_line(vformat("    - Action '%s' has no execution logic implemented.", action_name));
                 }
