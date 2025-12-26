@@ -1,0 +1,27 @@
+// modules/ai/actions/node_actions.h
+// Node-related action implementations for the AI module
+
+#ifndef AI_NODE_ACTIONS_H
+#define AI_NODE_ACTIONS_H
+
+#include "core/variant/dictionary.h"
+
+namespace AINodeActions {
+
+// Creates a new node in the scene tree.
+// Required args: node_name (String), node_type (String)
+// Optional args: parent_path (String)
+bool exec_create_node(const Dictionary &args);
+
+// Sets a property on an existing node.
+// Required args: node_path (String), property_name (String), value (Variant)
+bool exec_set_property(const Dictionary &args);
+
+// Renames an existing node.
+// Required args: node_path (String), new_name (String)
+bool exec_rename_node(const Dictionary &args);
+
+} // namespace AINodeActions
+
+#endif // AI_NODE_ACTIONS_H
+

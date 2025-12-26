@@ -3,6 +3,10 @@
 #include "ai_provider.h"
 #include "retrieval.h"
 
+// Action implementations
+#include "actions/node_actions.h"
+#include "actions/script_actions.h"
+
 #include "core/core_bind.h"     // For ClassDB bindings (D_METHOD)
 #include "core/error/error_macros.h" // For ERR_FAIL_* macros
 #include "core/variant/variant.h" // For Variant type
@@ -151,297 +155,6 @@ bool AI::validate_command_json(const String &json_str, String &error_msg) const 
     return _validate_command_dictionary(cmd, error_msg);
 }
 
-void AI::_execute_create_node(const Dictionary &args) {
-    EditorInterface *ei = EditorInterface::get_singleton();
-    if (!ei) {
-        ERR_PRINT("AI Execute: EditorInterface singleton not found.");
-        return;
-    }
-
-    EditorUndoRedoManager *undo_redo = EditorUndoRedoManager::get_singleton();
-    if (!undo_redo) {
-        ERR_PRINT("AI Execute: EditorUndoRedoManager singleton not found.");
-        return;
-    }
-    
-    Node *edited_scene_root = ei->get_edited_scene_root();
-    if (!edited_scene_root) {
-        ERR_PRINT("AI Execute 'create_node': No edited scene root.");
-        return;
-    }
-
-    String node_name = args["node_name"];
-    String node_type = args["node_type"];
-    String parent_path_str = args.get("parent_path", ""); // Default to empty string if not present
-
-    if (!ClassDB::class_exists(StringName(node_type))) {
-        ERR_PRINT(vformat("AI Execute 'create_node': Node type '%s' does not exist.", node_type));
-        return;
-    }
-
-    Node *parent_node = nullptr;
-    if (parent_path_str.is_empty()) {
-        parent_node = edited_scene_root;
-    } else {
-        // Check if parent_path matches the scene root's name
-        if (parent_path_str == edited_scene_root->get_name()) {
-            parent_node = edited_scene_root;
-        } else {
-            parent_node = edited_scene_root->get_node(NodePath(parent_path_str));
-            if (!parent_node) {
-                ERR_PRINT(vformat("AI Execute 'create_node': Could not find parent node at path '%s'. Using scene root instead.", parent_path_str));
-                parent_node = edited_scene_root;
-            }
-        }
-    }
-    if (!parent_node) { // Should be redundant if above fallback works, but as a safeguard.
-        ERR_PRINT("AI Execute 'create_node': Failed to determine parent node.");
-        return;
-    }
-
-
-    Node *new_node = Object::cast_to<Node>(ClassDB::instantiate(StringName(node_type)));
-    if (!new_node) {
-        ERR_PRINT(vformat("AI Execute 'create_node': Failed to instantiate node of type '%s'.", node_type));
-        return;
-    }
-    
-    new_node->set_name(node_name);
-    
-    // Set up undo/redo - commit_action() will execute do_methods immediately
-    undo_redo->create_action("AI Create Node");
-    undo_redo->add_do_method(parent_node, "add_child", new_node, true); // force_readable_name = true
-    undo_redo->add_do_method(new_node, "set_owner", edited_scene_root);
-    undo_redo->add_do_reference(new_node); // Keep reference during undo/redo
-    undo_redo->add_undo_method(parent_node, "remove_child", new_node);
-    undo_redo->add_undo_method(new_node, "queue_free");
-    undo_redo->commit_action(); // Executes do_methods immediately, making node findable
-    
-    print_line(vformat("AI: Executed create_node. Name: %s, Type: %s, Parent: %s", node_name, node_type, parent_node->get_path()));
-}
-
-void AI::_execute_set_property(const Dictionary &args) {
-    EditorInterface *ei = EditorInterface::get_singleton();
-    if (!ei) {
-        ERR_PRINT("AI Execute: EditorInterface singleton not found.");
-        return;
-    }
-    EditorUndoRedoManager *undo_redo = EditorUndoRedoManager::get_singleton();
-    if (!undo_redo) {
-        ERR_PRINT("AI Execute: EditorUndoRedoManager singleton not found.");
-        return;
-    }
-    Node *edited_scene_root = ei->get_edited_scene_root();
-    if (!edited_scene_root) {
-        ERR_PRINT("AI Execute 'set_property': No edited scene root.");
-        return;
-    }
-
-    String node_path_str = args["node_path"];
-    String property_name = args["property_name"];
-    Variant value = args["value"];
-
-    Node *target_node = edited_scene_root->get_node(NodePath(node_path_str));
-    if (!target_node) {
-        ERR_PRINT(vformat("AI Execute 'set_property': Could not find node at path '%s'.", node_path_str));
-        return;
-    }
-
-    // It's good practice to check if property exists and is settable, though `set` might handle it.
-    // For simplicity as per prompt, directly using set.
-    // bool success = false;
-    // target_node->set(property_name, value, &success);
-    // if(!success) {
-    //     ERR_PRINT(vformat("AI Execute 'set_property': Failed to set property '%s' on node '%s'. It might not exist or be read-only.", property_name, node_path_str));
-    //     return;
-    // }
-
-    Variant current_value = target_node->get(property_name); // Get current value for undo
-
-    undo_redo->create_action("AI Set Property");
-    // Per user request, use target->set for do/undo methods
-    undo_redo->add_do_method(target_node, "set", property_name, value);
-    undo_redo->add_undo_method(target_node, "set", property_name, current_value);
-    // Alternative using property methods:
-    // undo_redo->add_do_property(target_node, property_name, value);
-    // undo_redo->add_undo_property(target_node, property_name, current_value);
-    undo_redo->commit_action();
-
-    print_line(vformat("AI: Executed set_property. Node: %s, Property: %s, Value: %s", node_path_str, property_name, String(value)));
-}
-
-void AI::_execute_create_script(const Dictionary &args) {
-    EditorUndoRedoManager *undo_redo = EditorUndoRedoManager::get_singleton();
-    if (!undo_redo) {
-        ERR_PRINT("AI Execute: EditorUndoRedoManager singleton not found.");
-        return;
-    }
-
-    String file_path = args["file_path"];
-    String language = args["language"];
-    String content = args["content"];
-
-    // Validate language (v0: GDScript only)
-    if (language != "GDScript") {
-        ERR_PRINT(vformat("AI Execute 'create_script': Only 'GDScript' language is supported in v0. Got: '%s'", language));
-        return;
-    }
-
-    // Convert to absolute path if it's a resource path
-    String abs_path = ProjectSettings::get_singleton()->globalize_path(file_path);
-
-    // Check if file already exists
-    if (FileAccess::exists(abs_path)) {
-        WARN_PRINT(vformat("AI Execute 'create_script': File already exists at '%s'. Skipping creation.", abs_path));
-        return;
-    }
-
-    print_verbose(vformat("AI: Creating script at '%s' with %d bytes of content", abs_path, content.length()));
-
-    undo_redo->create_action("AI Create Script");
-    undo_redo->add_do_method(this, "_create_script_file", abs_path, content);
-    undo_redo->add_undo_method(this, "_delete_script_file", abs_path);
-    undo_redo->commit_action();
-
-    print_line(vformat("AI: Executed create_script. File: %s, Language: %s", file_path, language));
-}
-
-void AI::_execute_update_script(const Dictionary &args) {
-    EditorUndoRedoManager *undo_redo = EditorUndoRedoManager::get_singleton();
-    if (!undo_redo) {
-        ERR_PRINT("AI Execute: EditorUndoRedoManager singleton not found.");
-        return;
-    }
-
-    String file_path = args["file_path"];
-    String patch_content = args["patch"];
-
-    // Convert to absolute path if it's a resource path
-    String abs_path = ProjectSettings::get_singleton()->globalize_path(file_path);
-
-    // Check if file exists
-    if (!FileAccess::exists(abs_path)) {
-        ERR_PRINT(vformat("AI Execute 'update_script': File does not exist at '%s'. Cannot update.", abs_path));
-        return;
-    }
-
-    // Read existing content for undo
-    Ref<FileAccess> file = FileAccess::open(abs_path, FileAccess::READ);
-    if (file.is_null()) {
-        ERR_PRINT(vformat("AI Execute 'update_script': Failed to open file for reading at '%s'.", abs_path));
-        return;
-    }
-    String original_content = file->get_as_text();
-    file.unref(); // Close the file
-
-    print_verbose(vformat("AI: Updating script at '%s'. Old size: %d bytes, New size: %d bytes", abs_path, original_content.length(), patch_content.length()));
-
-    undo_redo->create_action("AI Update Script");
-    undo_redo->add_do_method(this, "_write_script_file", abs_path, patch_content);
-    undo_redo->add_undo_method(this, "_write_script_file", abs_path, original_content);
-    undo_redo->commit_action();
-
-    print_line(vformat("AI: Executed update_script. File: %s", file_path));
-}
-
-void AI::_execute_attach_script(const Dictionary &args) {
-    EditorInterface *ei = EditorInterface::get_singleton();
-    if (!ei) {
-        ERR_PRINT("AI Execute: EditorInterface singleton not found.");
-        return;
-    }
-
-    EditorUndoRedoManager *undo_redo = EditorUndoRedoManager::get_singleton();
-    if (!undo_redo) {
-        ERR_PRINT("AI Execute: EditorUndoRedoManager singleton not found.");
-        return;
-    }
-
-    Node *edited_scene_root = ei->get_edited_scene_root();
-    if (!edited_scene_root) {
-        ERR_PRINT("AI Execute 'attach_script': No edited scene root.");
-        return;
-    }
-
-    String node_path_str = args["node_path"];
-    String script_path = args["script_path"];
-
-    // Resolve the target node
-    Node *target_node = edited_scene_root->get_node(NodePath(node_path_str));
-    if (!target_node) {
-        ERR_PRINT(vformat("AI Execute 'attach_script': Could not find node at path '%s'.", node_path_str));
-        return;
-    }
-
-    // Load script resource
-    Ref<Script> scr = ResourceLoader::load(script_path);
-    if (scr.is_null()) {
-        ERR_PRINT(vformat("AI Execute 'attach_script': Could not load script at '%s'.", script_path));
-        return;
-    }
-
-    // Save old script for undo (may be null)
-    Variant old_script = target_node->get("script");
-
-    // Wrap in UndoRedo
-    undo_redo->create_action("AI Attach Script");
-    undo_redo->add_do_method(target_node, "set", "script", scr);
-    undo_redo->add_undo_method(target_node, "set", "script", old_script);
-    undo_redo->commit_action();
-
-    print_verbose(vformat("AIHelper: attach_script to node: %s", node_path_str));
-    print_line(vformat("AI: Executed attach_script. Node: %s, Script: %s", node_path_str, script_path));
-}
-
-void AI::_execute_rename_node(const Dictionary &args) {
-    EditorInterface *ei = EditorInterface::get_singleton();
-    if (!ei) {
-        ERR_PRINT("AI Execute: EditorInterface singleton not found.");
-        return;
-    }
-
-    EditorUndoRedoManager *undo_redo = EditorUndoRedoManager::get_singleton();
-    if (!undo_redo) {
-        ERR_PRINT("AI Execute: EditorUndoRedoManager singleton not found.");
-        return;
-    }
-
-    Node *edited_scene_root = ei->get_edited_scene_root();
-    if (!edited_scene_root) {
-        ERR_PRINT("AI Execute 'rename_node': No edited scene root.");
-        return;
-    }
-
-    String node_path_str = args["node_path"];
-    String new_name = args["new_name"];
-
-    // Validate new_name is not empty
-    if (new_name.is_empty()) {
-        ERR_PRINT("AI Execute 'rename_node': new_name cannot be empty.");
-        return;
-    }
-
-    // Resolve the target node
-    Node *target = edited_scene_root->get_node(NodePath(node_path_str));
-    if (!target) {
-        ERR_PRINT(vformat("AI Execute 'rename_node': Could not find node at path '%s'.", node_path_str));
-        return;
-    }
-
-    // Save old name for undo
-    String old_name = target->get_name();
-
-    print_verbose(vformat("AI: Renaming node '%s' from '%s' to '%s'", node_path_str, old_name, new_name));
-
-    // Wrap in UndoRedo
-    undo_redo->create_action("Rename Node");
-    undo_redo->add_do_method(target, "set_name", new_name);
-    undo_redo->add_undo_method(target, "set_name", old_name);
-    undo_redo->commit_action();
-
-    print_line(vformat("AI: Executed rename_node. Path: %s, OldName: %s, NewName: %s", node_path_str, old_name, new_name));
-}
-
 void AI::_on_provider_request_completed(bool success, const String &response_json, const String &error_message) {
     if (!success) {
         ERR_PRINT(vformat("AI::_on_provider_request_completed - Request failed: %s", error_message));
@@ -496,17 +209,17 @@ void AI::_process_and_execute_actions(const String &ai_json_response) {
                 Dictionary action_args = args_variant;
                 print_line(vformat("  - Executing Action %d: %s", i + 1, JSON::stringify(action_dict)));
                 if (action_name == "create_node") {
-                    _execute_create_node(action_args);
+                    AINodeActions::exec_create_node(action_args);
                 } else if (action_name == "set_property") {
-                    _execute_set_property(action_args);
-                } else if (action_name == "create_script") {
-                    _execute_create_script(action_args);
-                } else if (action_name == "update_script") {
-                    _execute_update_script(action_args);
-                } else if (action_name == "attach_script") {
-                    _execute_attach_script(action_args);
+                    AINodeActions::exec_set_property(action_args);
                 } else if (action_name == "rename_node") {
-                    _execute_rename_node(action_args);
+                    AINodeActions::exec_rename_node(action_args);
+                } else if (action_name == "create_script") {
+                    AIScriptActions::exec_create_script(action_args);
+                } else if (action_name == "update_script") {
+                    AIScriptActions::exec_update_script(action_args);
+                } else if (action_name == "attach_script") {
+                    AIScriptActions::exec_attach_script(action_args);
                 } else {
                     print_line(vformat("    - Action '%s' has no execution logic implemented.", action_name));
                 }
@@ -650,6 +363,17 @@ AI *AI::get_singleton() {
 
 // File operation helper implementations
 void AI::_create_script_file(const String &abs_path, const String &content) {
+    // Ensure parent directory exists
+    String dir_path = abs_path.get_base_dir();
+    if (!DirAccess::exists(dir_path)) {
+        Error dir_err = DirAccess::make_dir_recursive_absolute(dir_path);
+        if (dir_err != OK) {
+            ERR_PRINT(vformat("AI: Failed to create directory '%s'. Error: %d", dir_path, dir_err));
+            return;
+        }
+        print_verbose(vformat("AI: Created directory '%s'", dir_path));
+    }
+
     Ref<GDScript> gd_script;
     gd_script.instantiate();
     gd_script->set_source_code(content);
