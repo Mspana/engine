@@ -149,5 +149,92 @@ bool exec_rename_node(const Dictionary &args) {
 	return true;
 }
 
+bool exec_reparent_node(const Dictionary &args) {
+	EditorUndoRedoManager *undo_redo = ai_get_undo_redo();
+	if (!undo_redo) {
+		ai_log_error("Execute 'reparent_node': EditorUndoRedoManager singleton not found.");
+		return false;
+	}
+
+	Node *edited_scene_root = ai_get_edited_scene_root();
+	if (!edited_scene_root) {
+		ai_log_error("Execute 'reparent_node': No edited scene root.");
+		return false;
+	}
+
+	String node_path_str = args["node_path"];
+	String new_parent_path_str = args["new_parent_path"];
+
+	// Resolve node
+	Node *node = edited_scene_root->get_node_or_null(NodePath(node_path_str));
+	if (!node) {
+		ai_log_error(vformat("Execute 'reparent_node': Could not find node at path '%s'.", node_path_str));
+		return false;
+	}
+
+	// Resolve new parent
+	Node *new_parent = nullptr;
+	if (new_parent_path_str.is_empty() || new_parent_path_str == edited_scene_root->get_name()) {
+		new_parent = edited_scene_root;
+	} else {
+		new_parent = edited_scene_root->get_node_or_null(NodePath(new_parent_path_str));
+	}
+	if (!new_parent) {
+		ai_log_error(vformat("Execute 'reparent_node': Could not find new parent at path '%s'.", new_parent_path_str));
+		return false;
+	}
+
+	// Reject if node is the scene root
+	if (ai_is_scene_root(node)) {
+		ai_log_error("Execute 'reparent_node': Cannot reparent the scene root.");
+		return false;
+	}
+
+	// Reject if node has no parent
+	Node *old_parent = node->get_parent();
+	if (!old_parent) {
+		ai_log_error("Execute 'reparent_node': Node has no parent.");
+		return false;
+	}
+
+	// Save old index for undo
+	int old_index = node->get_index();
+
+	// Check if index argument is present
+	bool has_index = args.has("index");
+	int target_index = 0;
+	if (has_index) {
+		target_index = args["index"];
+	}
+
+	ai_log_verbose(vformat("Reparenting node '%s' from '%s' to '%s'", node_path_str, old_parent->get_path(), new_parent->get_path()));
+
+	undo_redo->create_action("AI Reparent Node");
+
+	// DO: remove from old parent, add to new parent
+	undo_redo->add_do_method(old_parent, "remove_child", node);
+	undo_redo->add_do_method(new_parent, "add_child", node, true); // force_readable_name = true
+	undo_redo->add_do_method(node, "set_owner", edited_scene_root);
+
+	// If index is specified, move to that position after adding
+	if (has_index) {
+		// Clamp index to valid range (after add_child, child count will include the node)
+		// We'll clamp in the lambda-like approach, but since we can't use lambdas in undo/redo,
+		// we need to calculate the clamped value. The move_child will handle out-of-bounds gracefully.
+		undo_redo->add_do_method(new_parent, "move_child", node, target_index);
+	}
+
+	// UNDO: remove from new parent, add back to old parent, restore old index
+	undo_redo->add_undo_method(new_parent, "remove_child", node);
+	undo_redo->add_undo_method(old_parent, "add_child", node, true);
+	undo_redo->add_undo_method(node, "set_owner", edited_scene_root);
+	undo_redo->add_undo_method(old_parent, "move_child", node, old_index);
+
+	undo_redo->commit_action();
+
+	print_line(vformat("AI: Executed reparent_node. Node: %s, OldParent: %s, NewParent: %s", node_path_str, old_parent->get_name(), new_parent->get_name()));
+	return true;
+}
+
 } // namespace AINodeActions
 

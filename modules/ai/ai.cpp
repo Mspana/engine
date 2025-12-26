@@ -37,7 +37,7 @@ static const Vector<String> ALLOWED_ACTIONS = {
     "create_node","delete_node","set_property",
     "create_script","update_script","attach_script",
     "connect_signal","run_project","list_nodes","list_files",
-    "rename_node"
+    "rename_node","reparent_node"
 };
 
 // New helper function to validate a command already parsed into a Dictionary
@@ -133,6 +133,16 @@ bool AI::_validate_command_dictionary(const Dictionary &cmd, String &error_msg) 
             error_msg = "'rename_node' requires string 'new_name'.";
             return false;
         }
+    } else if (action == "reparent_node") {
+        if (!args.has("node_path") || args["node_path"].get_type() != Variant::STRING) {
+            error_msg = "'reparent_node' requires string 'node_path'.";
+            return false;
+        }
+        if (!args.has("new_parent_path") || args["new_parent_path"].get_type() != Variant::STRING) {
+            error_msg = "'reparent_node' requires string 'new_parent_path'.";
+            return false;
+        }
+        // index is optional int
     }
     // Additional actions can be validated similarly...
 
@@ -214,6 +224,8 @@ void AI::_process_and_execute_actions(const String &ai_json_response) {
                     AINodeActions::exec_set_property(action_args);
                 } else if (action_name == "rename_node") {
                     AINodeActions::exec_rename_node(action_args);
+                } else if (action_name == "reparent_node") {
+                    AINodeActions::exec_reparent_node(action_args);
                 } else if (action_name == "create_script") {
                     AIScriptActions::exec_create_script(action_args);
                 } else if (action_name == "update_script") {

@@ -63,6 +63,8 @@ Defined in `ai.cpp` as `ALLOWED_ACTIONS`:
 | `create_node` | `node_name`, `node_type`, `parent_path` (optional) | ✅ Implemented |
 | `delete_node` | `node_path` | 🔲 Validation only |
 | `set_property` | `node_path`, `property_name`, `value` | ✅ Implemented |
+| `rename_node` | `node_path`, `new_name` | ✅ Implemented |
+| `reparent_node` | `node_path`, `new_parent_path`, `index` (optional) | ✅ Implemented |
 | `create_script` | `file_path`, `language`, `content` | ✅ Implemented |
 | `update_script` | `file_path`, `patch` | ✅ Implemented |
 | `attach_script` | `node_path`, `script_path` | ✅ Implemented |

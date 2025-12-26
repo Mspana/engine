@@ -18,7 +18,8 @@
         "run_project",
         "list_nodes",
         "list_files",
-        "rename_node"
+        "rename_node",
+        "reparent_node"
       ]
     },
     "args": {
@@ -205,6 +206,24 @@
             "properties": {
               "node_path": { "type": "string", "description": "Path to the node to rename" },
               "new_name": { "type": "string", "description": "New name for the node" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "action": { "const": "reparent_node" } }
+      },
+      "then": {
+        "properties": {
+          "args": {
+            "type": "object",
+            "required": ["node_path", "new_parent_path"],
+            "properties": {
+              "node_path": { "type": "string", "description": "Path to the node to reparent" },
+              "new_parent_path": { "type": "string", "description": "Path to the new parent node" },
+              "index": { "type": "integer", "description": "Optional target child index under new parent" }
             }
           }
         }

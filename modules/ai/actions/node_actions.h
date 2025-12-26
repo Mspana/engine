@@ -21,6 +21,11 @@ bool exec_set_property(const Dictionary &args);
 // Required args: node_path (String), new_name (String)
 bool exec_rename_node(const Dictionary &args);
 
+// Reparents a node to a new parent.
+// Required args: node_path (String), new_parent_path (String)
+// Optional args: index (int)
+bool exec_reparent_node(const Dictionary &args);
+
 } // namespace AINodeActions
 
 #endif // AI_NODE_ACTIONS_H
