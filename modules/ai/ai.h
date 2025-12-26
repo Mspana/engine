@@ -48,6 +48,7 @@ private:
 	void _execute_create_script(const Dictionary &args);
 	void _execute_update_script(const Dictionary &args);
 	void _execute_attach_script(const Dictionary &args);
+	void _execute_rename_node(const Dictionary &args);
 	
 	// File operation helpers for UndoRedo
 	void _create_script_file(const String &abs_path, const String &content);

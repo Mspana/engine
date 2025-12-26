@@ -1,0 +1,215 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AI Action Schema",
+  "description": "Schema for validating AI action commands",
+  "type": "object",
+  "required": ["action", "args"],
+  "properties": {
+    "action": {
+      "type": "string",
+      "enum": [
+        "create_node",
+        "delete_node",
+        "set_property",
+        "create_script",
+        "update_script",
+        "attach_script",
+        "connect_signal",
+        "run_project",
+        "list_nodes",
+        "list_files",
+        "rename_node"
+      ]
+    },
+    "args": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "action": { "const": "create_node" } }
+      },
+      "then": {
+        "properties": {
+          "args": {
+            "type": "object",
+            "required": ["node_name", "node_type"],
+            "properties": {
+              "node_name": { "type": "string", "description": "Name for the new node" },
+              "node_type": { "type": "string", "description": "Godot class type (e.g., Node2D, Sprite2D)" },
+              "parent_path": { "type": "string", "description": "Optional path to parent node" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "action": { "const": "delete_node" } }
+      },
+      "then": {
+        "properties": {
+          "args": {
+            "type": "object",
+            "required": ["node_path"],
+            "properties": {
+              "node_path": { "type": "string", "description": "Path to the node to delete" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "action": { "const": "set_property" } }
+      },
+      "then": {
+        "properties": {
+          "args": {
+            "type": "object",
+            "required": ["node_path", "property_name", "value"],
+            "properties": {
+              "node_path": { "type": "string", "description": "Path to the target node" },
+              "property_name": { "type": "string", "description": "Name of the property to set" },
+              "value": { "description": "Value to set (any JSON type)" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "action": { "const": "create_script" } }
+      },
+      "then": {
+        "properties": {
+          "args": {
+            "type": "object",
+            "required": ["file_path", "language", "content"],
+            "properties": {
+              "file_path": { "type": "string", "description": "Resource path for the script (e.g., res://scripts/my_script.gd)" },
+              "language": { "type": "string", "enum": ["GDScript"], "description": "Script language (currently only GDScript supported)" },
+              "content": { "type": "string", "description": "Full script content" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "action": { "const": "update_script" } }
+      },
+      "then": {
+        "properties": {
+          "args": {
+            "type": "object",
+            "required": ["file_path", "patch"],
+            "properties": {
+              "file_path": { "type": "string", "description": "Resource path to the existing script" },
+              "patch": { "type": "string", "description": "Full replacement content for the script" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "action": { "const": "attach_script" } }
+      },
+      "then": {
+        "properties": {
+          "args": {
+            "type": "object",
+            "required": ["node_path", "script_path"],
+            "properties": {
+              "node_path": { "type": "string", "description": "Path to the target node" },
+              "script_path": { "type": "string", "description": "Resource path to the script to attach" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "action": { "const": "connect_signal" } }
+      },
+      "then": {
+        "properties": {
+          "args": {
+            "type": "object",
+            "required": ["source_path", "signal_name", "target_path", "method_name"],
+            "properties": {
+              "source_path": { "type": "string", "description": "Path to the node emitting the signal" },
+              "signal_name": { "type": "string", "description": "Name of the signal to connect" },
+              "target_path": { "type": "string", "description": "Path to the node receiving the signal" },
+              "method_name": { "type": "string", "description": "Name of the method to call" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "action": { "const": "run_project" } }
+      },
+      "then": {
+        "properties": {
+          "args": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "action": { "const": "list_nodes" } }
+      },
+      "then": {
+        "properties": {
+          "args": {
+            "type": "object",
+            "properties": {
+              "root_path": { "type": "string", "description": "Optional path to start listing from" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "action": { "const": "list_files" } }
+      },
+      "then": {
+        "properties": {
+          "args": {
+            "type": "object",
+            "properties": {
+              "directory": { "type": "string", "description": "Optional directory to list (default: res://)" },
+              "pattern": { "type": "string", "description": "Optional glob pattern to filter files" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "action": { "const": "rename_node" } }
+      },
+      "then": {
+        "properties": {
+          "args": {
+            "type": "object",
+            "required": ["node_path", "new_name"],
+            "properties": {
+              "node_path": { "type": "string", "description": "Path to the node to rename" },
+              "new_name": { "type": "string", "description": "New name for the node" }
+            }
+          }
+        }
+      }
+    }
+  ]
+}
+

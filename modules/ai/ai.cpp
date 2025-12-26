@@ -32,7 +32,8 @@ AI *AI::singleton = nullptr;
 static const Vector<String> ALLOWED_ACTIONS = {
     "create_node","delete_node","set_property",
     "create_script","update_script","attach_script",
-    "connect_signal","run_project","list_nodes","list_files"
+    "connect_signal","run_project","list_nodes","list_files",
+    "rename_node"
 };
 
 // New helper function to validate a command already parsed into a Dictionary
@@ -117,6 +118,15 @@ bool AI::_validate_command_dictionary(const Dictionary &cmd, String &error_msg) 
         }
         if (!args.has("script_path") || args["script_path"].get_type() != Variant::STRING) {
             error_msg = "'attach_script' requires string 'script_path'.";
+            return false;
+        }
+    } else if (action == "rename_node") {
+        if (!args.has("node_path") || args["node_path"].get_type() != Variant::STRING) {
+            error_msg = "'rename_node' requires string 'node_path'.";
+            return false;
+        }
+        if (!args.has("new_name") || args["new_name"].get_type() != Variant::STRING) {
+            error_msg = "'rename_node' requires string 'new_name'.";
             return false;
         }
     }
@@ -383,6 +393,55 @@ void AI::_execute_attach_script(const Dictionary &args) {
     print_line(vformat("AI: Executed attach_script. Node: %s, Script: %s", node_path_str, script_path));
 }
 
+void AI::_execute_rename_node(const Dictionary &args) {
+    EditorInterface *ei = EditorInterface::get_singleton();
+    if (!ei) {
+        ERR_PRINT("AI Execute: EditorInterface singleton not found.");
+        return;
+    }
+
+    EditorUndoRedoManager *undo_redo = EditorUndoRedoManager::get_singleton();
+    if (!undo_redo) {
+        ERR_PRINT("AI Execute: EditorUndoRedoManager singleton not found.");
+        return;
+    }
+
+    Node *edited_scene_root = ei->get_edited_scene_root();
+    if (!edited_scene_root) {
+        ERR_PRINT("AI Execute 'rename_node': No edited scene root.");
+        return;
+    }
+
+    String node_path_str = args["node_path"];
+    String new_name = args["new_name"];
+
+    // Validate new_name is not empty
+    if (new_name.is_empty()) {
+        ERR_PRINT("AI Execute 'rename_node': new_name cannot be empty.");
+        return;
+    }
+
+    // Resolve the target node
+    Node *target = edited_scene_root->get_node(NodePath(node_path_str));
+    if (!target) {
+        ERR_PRINT(vformat("AI Execute 'rename_node': Could not find node at path '%s'.", node_path_str));
+        return;
+    }
+
+    // Save old name for undo
+    String old_name = target->get_name();
+
+    print_verbose(vformat("AI: Renaming node '%s' from '%s' to '%s'", node_path_str, old_name, new_name));
+
+    // Wrap in UndoRedo
+    undo_redo->create_action("Rename Node");
+    undo_redo->add_do_method(target, "set_name", new_name);
+    undo_redo->add_undo_method(target, "set_name", old_name);
+    undo_redo->commit_action();
+
+    print_line(vformat("AI: Executed rename_node. Path: %s, OldName: %s, NewName: %s", node_path_str, old_name, new_name));
+}
+
 void AI::_on_provider_request_completed(bool success, const String &response_json, const String &error_message) {
     if (!success) {
         ERR_PRINT(vformat("AI::_on_provider_request_completed - Request failed: %s", error_message));
@@ -446,6 +505,8 @@ void AI::_process_and_execute_actions(const String &ai_json_response) {
                     _execute_update_script(action_args);
                 } else if (action_name == "attach_script") {
                     _execute_attach_script(action_args);
+                } else if (action_name == "rename_node") {
+                    _execute_rename_node(action_args);
                 } else {
                     print_line(vformat("    - Action '%s' has no execution logic implemented.", action_name));
                 }
