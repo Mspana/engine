@@ -119,7 +119,7 @@ bool exec_attach_script(const Dictionary &args) {
 	String script_path = args["script_path"];
 
 	// Resolve the target node
-	Node *target_node = edited_scene_root->get_node_or_null(NodePath(node_path_str));
+	Node *target_node = ai_get_node_by_path(node_path_str);
 	if (!target_node) {
 		ai_log_error(vformat("Execute 'attach_script': Could not find node at path '%s'.", node_path_str));
 		return false;
@@ -143,6 +143,48 @@ bool exec_attach_script(const Dictionary &args) {
 
 	ai_log_verbose(vformat("attach_script to node: %s", node_path_str));
 	print_line(vformat("AI: Executed attach_script. Node: %s, Script: %s", node_path_str, script_path));
+	return true;
+}
+
+bool exec_detach_script(const Dictionary &args) {
+	EditorUndoRedoManager *undo_redo = ai_get_undo_redo();
+	if (!undo_redo) {
+		ai_log_error("Execute 'detach_script': EditorUndoRedoManager singleton not found.");
+		return false;
+	}
+
+	Node *edited_scene_root = ai_get_edited_scene_root();
+	if (!edited_scene_root) {
+		ai_log_error("Execute 'detach_script': No edited scene root.");
+		return false;
+	}
+
+	String node_path_str = args["node_path"];
+
+	// Resolve the target node
+	Node *target_node = ai_get_node_by_path(node_path_str);
+	if (!target_node) {
+		ai_log_error(vformat("Execute 'detach_script': Could not find node at path '%s'.", node_path_str));
+		return false;
+	}
+
+	// Save old script for undo (may be null)
+	Variant old_script = target_node->get("script");
+
+	// If already detached, return success (no-op)
+	if (old_script.is_null() || old_script.get_type() == Variant::NIL) {
+		ai_log_verbose(vformat("Execute 'detach_script': Node '%s' already has no script attached.", node_path_str));
+		return true;
+	}
+
+	// Wrap in UndoRedo
+	undo_redo->create_action("Detach Script");
+	undo_redo->add_do_method(target_node, "set", "script", Variant());
+	undo_redo->add_undo_method(target_node, "set", "script", old_script);
+	undo_redo->commit_action();
+
+	ai_log_verbose(vformat("detach_script from node: %s", node_path_str));
+	print_line(vformat("AI: Executed detach_script. Node: %s", node_path_str));
 	return true;
 }
 

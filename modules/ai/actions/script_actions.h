@@ -20,6 +20,10 @@ bool exec_update_script(const Dictionary &args);
 // Required args: node_path (String), script_path (String)
 bool exec_attach_script(const Dictionary &args);
 
+// Detaches a script from an existing node.
+// Required args: node_path (String)
+bool exec_detach_script(const Dictionary &args);
+
 } // namespace AIScriptActions
 
 #endif // AI_SCRIPT_ACTIONS_H

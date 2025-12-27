@@ -92,7 +92,7 @@ bool exec_set_property(const Dictionary &args) {
 	String property_name = args["property_name"];
 	Variant value = args["value"];
 
-	Node *target_node = edited_scene_root->get_node_or_null(NodePath(node_path_str));
+	Node *target_node = ai_get_node_by_path(node_path_str);
 	if (!target_node) {
 		ai_log_error(vformat("Execute 'set_property': Could not find node at path '%s'.", node_path_str));
 		return false;
@@ -130,7 +130,7 @@ bool exec_rename_node(const Dictionary &args) {
 		return false;
 	}
 
-	Node *target = edited_scene_root->get_node_or_null(NodePath(node_path_str));
+	Node *target = ai_get_node_by_path(node_path_str);
 	if (!target) {
 		ai_log_error(vformat("Execute 'rename_node': Could not find node at path '%s'.", node_path_str));
 		return false;
@@ -166,19 +166,14 @@ bool exec_reparent_node(const Dictionary &args) {
 	String new_parent_path_str = args["new_parent_path"];
 
 	// Resolve node
-	Node *node = edited_scene_root->get_node_or_null(NodePath(node_path_str));
+	Node *node = ai_get_node_by_path(node_path_str);
 	if (!node) {
 		ai_log_error(vformat("Execute 'reparent_node': Could not find node at path '%s'.", node_path_str));
 		return false;
 	}
 
 	// Resolve new parent
-	Node *new_parent = nullptr;
-	if (new_parent_path_str.is_empty() || new_parent_path_str == edited_scene_root->get_name()) {
-		new_parent = edited_scene_root;
-	} else {
-		new_parent = edited_scene_root->get_node_or_null(NodePath(new_parent_path_str));
-	}
+	Node *new_parent = ai_get_node_by_path(new_parent_path_str);
 	if (!new_parent) {
 		ai_log_error(vformat("Execute 'reparent_node': Could not find new parent at path '%s'.", new_parent_path_str));
 		return false;

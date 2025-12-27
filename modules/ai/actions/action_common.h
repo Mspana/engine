@@ -42,7 +42,13 @@ static inline Node *ai_get_node_by_path(const String &node_path) {
 		return root;
 	}
 	
-	return root->get_node_or_null(NodePath(node_path));
+	// Strip leading slash if present (absolute paths don't work from scene root)
+	String relative_path = node_path;
+	if (relative_path.begins_with("/")) {
+		relative_path = relative_path.substr(1);
+	}
+	
+	return root->get_node_or_null(NodePath(relative_path));
 }
 
 // Returns true if the given node is the edited scene root.

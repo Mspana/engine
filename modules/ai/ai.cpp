@@ -35,7 +35,7 @@ AI *AI::singleton = nullptr;
 
 static const Vector<String> ALLOWED_ACTIONS = {
     "create_node","delete_node","set_property",
-    "create_script","update_script","attach_script",
+    "create_script","update_script","attach_script","detach_script",
     "connect_signal","run_project","list_nodes","list_files",
     "rename_node","reparent_node"
 };
@@ -122,6 +122,11 @@ bool AI::_validate_command_dictionary(const Dictionary &cmd, String &error_msg) 
         }
         if (!args.has("script_path") || args["script_path"].get_type() != Variant::STRING) {
             error_msg = "'attach_script' requires string 'script_path'.";
+            return false;
+        }
+    } else if (action == "detach_script") {
+        if (!args.has("node_path") || args["node_path"].get_type() != Variant::STRING) {
+            error_msg = "'detach_script' requires string 'node_path'.";
             return false;
         }
     } else if (action == "rename_node") {
@@ -232,6 +237,8 @@ void AI::_process_and_execute_actions(const String &ai_json_response) {
                     AIScriptActions::exec_update_script(action_args);
                 } else if (action_name == "attach_script") {
                     AIScriptActions::exec_attach_script(action_args);
+                } else if (action_name == "detach_script") {
+                    AIScriptActions::exec_detach_script(action_args);
                 } else {
                     print_line(vformat("    - Action '%s' has no execution logic implemented.", action_name));
                 }

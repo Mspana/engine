@@ -212,7 +212,9 @@ String AIProvider::get_system_prompt() {
 	       "- update_script: Update an existing script file with new content\n"
 	       "  Args: {\"file_path\": string, \"patch\": string (full file content)}\n"
 	       "- attach_script: Attach a script to a node\n"
-	       "  Args: {\"node_path\": string, \"script_path\": string}";
+	       "  Args: {\"node_path\": string, \"script_path\": string}\n"
+	       "- detach_script: Detach a script from a node\n"
+	       "  Args: {\"node_path\": string}";
 }
 
 // ============================================================================

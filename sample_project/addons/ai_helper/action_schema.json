@@ -14,6 +14,7 @@
         "create_script",
         "update_script",
         "attach_script",
+        "detach_script",
         "connect_signal",
         "run_project",
         "list_nodes",
@@ -126,6 +127,22 @@
             "properties": {
               "node_path": { "type": "string", "description": "Path to the target node" },
               "script_path": { "type": "string", "description": "Resource path to the script to attach" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "action": { "const": "detach_script" } }
+      },
+      "then": {
+        "properties": {
+          "args": {
+            "type": "object",
+            "required": ["node_path"],
+            "properties": {
+              "node_path": { "type": "string", "description": "Path to the target node" }
             }
           }
         }
