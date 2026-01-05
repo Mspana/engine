@@ -30,6 +30,11 @@ bool exec_reparent_node(const Dictionary &args);
 // Required args: node_path (String)
 bool exec_delete_node(const Dictionary &args);
 
+// Duplicates a node in the scene tree.
+// Required args: node_path (String)
+// Optional args: new_name (String)
+bool exec_duplicate_node(const Dictionary &args);
+
 } // namespace AINodeActions
 
 #endif // AI_NODE_ACTIONS_H

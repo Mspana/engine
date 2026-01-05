@@ -203,6 +203,8 @@ String AIProvider::get_system_prompt() {
 	       "  Args: {\"node_name\": string, \"node_type\": string, \"parent_path\": string (optional)}\n"
 	       "- delete_node: Delete a node from the scene tree\n"
 	       "  Args: {\"node_path\": string}\n"
+	       "- duplicate_node: Duplicate a node in the scene tree\n"
+	       "  Args: {\"node_path\": string, \"new_name\": string (optional, defaults to \"<old_name>_copy\")}\n"
 	       "- set_property: Set a property on an existing node\n"
 	       "  Args: {\"node_path\": string, \"property_name\": string, \"value\": any}\n"
 	       "- rename_node: Rename a node (prefer this over set_property for name changes)\n"

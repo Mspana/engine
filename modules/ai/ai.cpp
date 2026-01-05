@@ -34,7 +34,7 @@
 AI *AI::singleton = nullptr;
 
 static const Vector<String> ALLOWED_ACTIONS = {
-    "create_node","delete_node","set_property",
+    "create_node","delete_node","duplicate_node","set_property",
     "create_script","update_script","attach_script","detach_script",
     "connect_signal","run_project","list_nodes","list_files",
     "rename_node","reparent_node"
@@ -78,6 +78,16 @@ bool AI::_validate_command_dictionary(const Dictionary &cmd, String &error_msg) 
     } else if (action == "delete_node") {
         if (!args.has("node_path") || args["node_path"].get_type() != Variant::STRING) {
             error_msg = "'delete_node' requires string 'node_path'.";
+            return false;
+        }
+    } else if (action == "duplicate_node") {
+        if (!args.has("node_path") || args["node_path"].get_type() != Variant::STRING) {
+            error_msg = "'duplicate_node' requires string 'node_path'.";
+            return false;
+        }
+        // new_name is optional string
+        if (args.has("new_name") && args["new_name"].get_type() != Variant::STRING) {
+            error_msg = "'duplicate_node' optional 'new_name' must be a string.";
             return false;
         }
     } else if (action == "set_property") {
@@ -233,6 +243,8 @@ void AI::_process_and_execute_actions(const String &ai_json_response) {
                     AINodeActions::exec_reparent_node(action_args);
                 } else if (action_name == "delete_node") {
                     AINodeActions::exec_delete_node(action_args);
+                } else if (action_name == "duplicate_node") {
+                    AINodeActions::exec_duplicate_node(action_args);
                 } else if (action_name == "create_script") {
                     AIScriptActions::exec_create_script(action_args);
                 } else if (action_name == "update_script") {
