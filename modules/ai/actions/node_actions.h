@@ -26,6 +26,10 @@ bool exec_rename_node(const Dictionary &args);
 // Optional args: index (int)
 bool exec_reparent_node(const Dictionary &args);
 
+// Deletes a node from the scene tree.
+// Required args: node_path (String)
+bool exec_delete_node(const Dictionary &args);
+
 } // namespace AINodeActions
 
 #endif // AI_NODE_ACTIONS_H

@@ -231,5 +231,57 @@ bool exec_reparent_node(const Dictionary &args) {
 	return true;
 }
 
+bool exec_delete_node(const Dictionary &args) {
+	EditorUndoRedoManager *undo_redo = ai_get_undo_redo();
+	if (!undo_redo) {
+		ai_log_error("Execute 'delete_node': EditorUndoRedoManager singleton not found.");
+		return false;
+	}
+
+	Node *edited_scene_root = ai_get_edited_scene_root();
+	if (!edited_scene_root) {
+		ai_log_error("Execute 'delete_node': No edited scene root.");
+		return false;
+	}
+
+	String node_path_str = args["node_path"];
+
+	// Resolve node
+	Node *node = ai_get_node_by_path(node_path_str);
+	if (!node) {
+		ai_log_error(vformat("Execute 'delete_node': Could not find node at path '%s'.", node_path_str));
+		return false;
+	}
+
+	// Reject if node is the scene root
+	if (ai_is_scene_root(node)) {
+		ai_log_error("Execute 'delete_node': Cannot delete the scene root.");
+		return false;
+	}
+
+	// Reject if node has no parent
+	Node *parent = node->get_parent();
+	if (!parent) {
+		ai_log_error("Execute 'delete_node': Node has no parent.");
+		return false;
+	}
+
+	// Save old index for undo
+	int old_index = node->get_index();
+
+	ai_log_verbose(vformat("Deleting node '%s' from parent '%s'", node_path_str, parent->get_path()));
+
+	undo_redo->create_action("Delete Node");
+	undo_redo->add_do_method(parent, "remove_child", node);
+	undo_redo->add_do_reference(node); // Keep reference during undo/redo
+	undo_redo->add_undo_method(parent, "add_child", node, true); // force_readable_name = true
+	undo_redo->add_undo_method(node, "set_owner", edited_scene_root);
+	undo_redo->add_undo_method(parent, "move_child", node, old_index);
+	undo_redo->commit_action();
+
+	print_line(vformat("AI: Executed delete_node. Node: %s, Parent: %s", node_path_str, parent->get_path()));
+	return true;
+}
+
 } // namespace AINodeActions
 

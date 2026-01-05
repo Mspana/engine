@@ -231,6 +231,8 @@ void AI::_process_and_execute_actions(const String &ai_json_response) {
                     AINodeActions::exec_rename_node(action_args);
                 } else if (action_name == "reparent_node") {
                     AINodeActions::exec_reparent_node(action_args);
+                } else if (action_name == "delete_node") {
+                    AINodeActions::exec_delete_node(action_args);
                 } else if (action_name == "create_script") {
                     AIScriptActions::exec_create_script(action_args);
                 } else if (action_name == "update_script") {

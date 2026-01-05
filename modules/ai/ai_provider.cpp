@@ -201,6 +201,8 @@ String AIProvider::get_system_prompt() {
 	       "Allowed actions:\n"
 	       "- create_node: Create a new node in the scene tree\n"
 	       "  Args: {\"node_name\": string, \"node_type\": string, \"parent_path\": string (optional)}\n"
+	       "- delete_node: Delete a node from the scene tree\n"
+	       "  Args: {\"node_path\": string}\n"
 	       "- set_property: Set a property on an existing node\n"
 	       "  Args: {\"node_path\": string, \"property_name\": string, \"value\": any}\n"
 	       "- rename_node: Rename a node (prefer this over set_property for name changes)\n"
