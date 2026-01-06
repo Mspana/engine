@@ -25,6 +25,11 @@ bool exec_create_autoload_singleton(const Dictionary &args);
 // Required args: name (String)
 bool exec_remove_autoload_singleton(const Dictionary &args);
 
+// Imports an asset file from OS path to project path.
+// Required args: source_path (String, absolute OS path), dest_path (String, res://...)
+// Optional args: overwrite (bool, default false)
+bool exec_import_asset(const Dictionary &args);
+
 } // namespace AIProjectActions
 
 #endif // AI_PROJECT_ACTIONS_H

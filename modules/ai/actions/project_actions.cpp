@@ -4,11 +4,15 @@
 #include "project_actions.h"
 #include "action_common.h"
 
+#include "../ai.h" // For AI::get_singleton() and file helper methods
+
 #include "core/config/project_settings.h"
 #include "core/variant/variant.h"
 #include "core/variant/array.h"
 #include "core/object/object.h"
 #include "core/io/resource_loader.h"
+#include "core/io/file_access.h"
+#include "core/io/dir_access.h"
 
 namespace AIProjectActions {
 
@@ -272,6 +276,100 @@ bool exec_remove_autoload_singleton(const Dictionary &args) {
 	return true;
 #else
 	ai_log_error("Execute 'remove_autoload_singleton': Editor API not available in non-editor builds.");
+	return false;
+#endif
+}
+
+bool exec_import_asset(const Dictionary &args) {
+#ifdef TOOLS_ENABLED
+	EditorUndoRedoManager *undo_redo = ai_get_undo_redo();
+	if (!undo_redo) {
+		ai_log_error("Execute 'import_asset': EditorUndoRedoManager singleton not found.");
+		return false;
+	}
+
+	ProjectSettings *ps = ProjectSettings::get_singleton();
+	if (!ps) {
+		ai_log_error("Execute 'import_asset': ProjectSettings singleton not available.");
+		return false;
+	}
+
+	AI *ai_singleton = AI::get_singleton();
+	if (!ai_singleton) {
+		ai_log_error("Execute 'import_asset': AI singleton not found.");
+		return false;
+	}
+
+	if (!args.has("source_path") || args["source_path"].get_type() != Variant::STRING) {
+		ai_log_error("Execute 'import_asset': 'source_path' must be a string.");
+		return false;
+	}
+	if (!args.has("dest_path") || args["dest_path"].get_type() != Variant::STRING) {
+		ai_log_error("Execute 'import_asset': 'dest_path' must be a string.");
+		return false;
+	}
+
+	String source_path = args["source_path"];
+	String dest_path = args["dest_path"];
+	bool overwrite = args.get("overwrite", false);
+
+	// Validate source file exists
+	if (!FileAccess::exists(source_path)) {
+		ai_log_error(vformat("Execute 'import_asset': Source file does not exist at path '%s'.", source_path));
+		return false;
+	}
+
+	// Convert dest_path to absolute OS path
+	String dest_abs_path = ps->globalize_path(dest_path);
+
+	// Check if dest exists
+	bool dest_exists = FileAccess::exists(dest_abs_path);
+	if (dest_exists && !overwrite) {
+		ai_log_error(vformat("Execute 'import_asset': Destination file already exists at '%s' and overwrite is false.", dest_path));
+		return false;
+	}
+
+	// Read source file
+	PackedByteArray source_bytes = FileAccess::get_file_as_bytes(source_path);
+	if (source_bytes.is_empty()) {
+		ai_log_error(vformat("Execute 'import_asset': Source file at '%s' is empty or could not be read.", source_path));
+		return false;
+	}
+
+	// Read old content for undo if dest exists
+	PackedByteArray old_bytes;
+	if (dest_exists) {
+		old_bytes = FileAccess::get_file_as_bytes(dest_abs_path);
+	}
+
+	// Ensure destination directory exists
+	String dest_dir = dest_abs_path.get_base_dir();
+	if (!DirAccess::exists(dest_dir)) {
+		Error dir_err = DirAccess::make_dir_recursive_absolute(dest_dir);
+		if (dir_err != OK) {
+			ai_log_error(vformat("Execute 'import_asset': Failed to create destination directory '%s'. Error: %d", dest_dir, dir_err));
+			return false;
+		}
+	}
+
+	ai_log_verbose(vformat("Importing asset from '%s' to '%s' (overwrite: %s)", source_path, dest_path, overwrite ? "true" : "false"));
+
+	// Wrap in UndoRedo
+	undo_redo->create_action("AI Import Asset");
+	undo_redo->add_do_method(ai_singleton, "_write_binary_file", dest_abs_path, source_bytes);
+	if (dest_exists) {
+		// Restore old content
+		undo_redo->add_undo_method(ai_singleton, "_write_binary_file", dest_abs_path, old_bytes);
+	} else {
+		// Delete file
+		undo_redo->add_undo_method(ai_singleton, "_delete_script_file", dest_abs_path);
+	}
+	undo_redo->commit_action();
+
+	print_line(vformat("AI: Executed import_asset. Source: %s, Dest: %s", source_path, dest_path));
+	return true;
+#else
+	ai_log_error("Execute 'import_asset': Editor API not available in non-editor builds.");
 	return false;
 #endif
 }

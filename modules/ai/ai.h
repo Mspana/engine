@@ -48,6 +48,7 @@ private:
 	void _write_script_file(const String &abs_path, const String &content);
 	void _delete_script_file(const String &abs_path);
 	void _rename_script_file(const String &old_abs_path, const String &new_abs_path);
+	void _write_binary_file(const String &abs_path, const PackedByteArray &bytes);
 
 public:
 	// The core method to interact with the AI backend.

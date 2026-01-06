@@ -43,7 +43,7 @@ static const Vector<String> ALLOWED_ACTIONS = {
     "create_script","update_script","attach_script","detach_script","rename_script","delete_script",
     "connect_signal","disconnect_signal","run_project",
     "rename_node","reparent_node","create_scene","open_scene","save_scene","close_scene","set_main_scene",
-    "get_node_info","find_nodes_by_type","list_nodes","list_files","set_project_setting","get_project_settings","create_autoload_singleton","remove_autoload_singleton",
+    "get_node_info","find_nodes_by_type","list_nodes","list_files","set_project_setting","get_project_settings","create_autoload_singleton","remove_autoload_singleton","import_asset",
 };
 
 // New helper function to validate a command already parsed into a Dictionary
@@ -259,6 +259,20 @@ bool AI::_validate_command_dictionary(const Dictionary &cmd, String &error_msg) 
             error_msg = "'remove_autoload_singleton' requires string 'name'.";
             return false;
         }
+    } else if (action == "import_asset") {
+        if (!args.has("source_path") || args["source_path"].get_type() != Variant::STRING) {
+            error_msg = "'import_asset' requires string 'source_path'.";
+            return false;
+        }
+        if (!args.has("dest_path") || args["dest_path"].get_type() != Variant::STRING) {
+            error_msg = "'import_asset' requires string 'dest_path'.";
+            return false;
+        }
+        // overwrite is optional bool
+        if (args.has("overwrite") && args["overwrite"].get_type() != Variant::BOOL) {
+            error_msg = "'import_asset' optional 'overwrite' must be a bool.";
+            return false;
+        }
     } else if (action == "list_nodes") {
         // root_path is optional string
         if (args.has("root_path") && args["root_path"].get_type() != Variant::STRING) {
@@ -446,6 +460,8 @@ void AI::_process_and_execute_actions(const String &ai_json_response) {
                     AIProjectActions::exec_create_autoload_singleton(action_args);
                 } else if (action_name == "remove_autoload_singleton") {
                     AIProjectActions::exec_remove_autoload_singleton(action_args);
+                } else if (action_name == "import_asset") {
+                    AIProjectActions::exec_import_asset(action_args);
                 } else if (action_name == "list_nodes") {
                     AIReadActions::exec_list_nodes(action_args);
                 } else if (action_name == "get_node_info") {
@@ -574,10 +590,11 @@ void AI::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_provider"), &AI::get_provider);
     
     // File operation helpers for UndoRedo
-    ClassDB::bind_method(D_METHOD("_create_script_file", "abs_path", "content"), &AI::_create_script_file);
-    ClassDB::bind_method(D_METHOD("_write_script_file", "abs_path", "content"), &AI::_write_script_file);
-    ClassDB::bind_method(D_METHOD("_delete_script_file", "abs_path"), &AI::_delete_script_file);
-    ClassDB::bind_method(D_METHOD("_rename_script_file", "old_abs_path", "new_abs_path"), &AI::_rename_script_file);
+	ClassDB::bind_method(D_METHOD("_create_script_file", "abs_path", "content"), &AI::_create_script_file);
+	ClassDB::bind_method(D_METHOD("_write_script_file", "abs_path", "content"), &AI::_write_script_file);
+	ClassDB::bind_method(D_METHOD("_delete_script_file", "abs_path"), &AI::_delete_script_file);
+	ClassDB::bind_method(D_METHOD("_rename_script_file", "old_abs_path", "new_abs_path"), &AI::_rename_script_file);
+	ClassDB::bind_method(D_METHOD("_write_binary_file", "abs_path", "bytes"), &AI::_write_binary_file);
     
     // Add properties
     ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "provider", PROPERTY_HINT_RESOURCE_TYPE, "AIProvider"), "set_provider", "get_provider");
@@ -694,6 +711,22 @@ void AI::_rename_script_file(const String &old_abs_path, const String &new_abs_p
     if (efs) {
         efs->scan_changes();
     }
+}
+
+void AI::_write_binary_file(const String &abs_path, const PackedByteArray &bytes) {
+	Ref<FileAccess> file = FileAccess::open(abs_path, FileAccess::WRITE);
+	if (file.is_null()) {
+		ERR_PRINT(vformat("AI: Failed to open file for writing at '%s'.", abs_path));
+		return;
+	}
+	file->store_buffer(bytes);
+	file.unref();
+	print_verbose(vformat("AI: Wrote binary file at '%s' (%d bytes)", abs_path, bytes.size()));
+	// Notify EditorFileSystem about the change
+	EditorFileSystem *efs = EditorFileSystem::get_singleton();
+	if (efs) {
+		efs->scan_changes();
+	}
 }
 
 AI::AI() {
