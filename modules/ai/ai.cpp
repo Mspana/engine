@@ -21,6 +21,7 @@
 // Headers for execution logic
 #include "editor/editor_interface.h"
 #include "editor/editor_undo_redo_manager.h" // For editor undo/redo
+#include "editor/editor_file_system.h" // For filesystem refresh
 #include "core/object/class_db.h"
 #include "scene/main/node.h"
 #include "core/string/node_path.h"
@@ -38,7 +39,7 @@ AI *AI::singleton = nullptr;
 
 static const Vector<String> ALLOWED_ACTIONS = {
     "create_node","delete_node","duplicate_node","set_property",
-    "create_script","update_script","attach_script","detach_script",
+    "create_script","update_script","attach_script","detach_script","rename_script",
     "connect_signal","disconnect_signal","run_project",
     "rename_node","reparent_node","create_scene","open_scene","save_scene","set_main_scene",
     "get_node_info","find_nodes_by_type","list_nodes","list_files",
@@ -141,6 +142,15 @@ bool AI::_validate_command_dictionary(const Dictionary &cmd, String &error_msg) 
     } else if (action == "detach_script") {
         if (!args.has("node_path") || args["node_path"].get_type() != Variant::STRING) {
             error_msg = "'detach_script' requires string 'node_path'.";
+            return false;
+        }
+    } else if (action == "rename_script") {
+        if (!args.has("old_path") || args["old_path"].get_type() != Variant::STRING) {
+            error_msg = "'rename_script' requires string 'old_path'.";
+            return false;
+        }
+        if (!args.has("new_path") || args["new_path"].get_type() != Variant::STRING) {
+            error_msg = "'rename_script' requires string 'new_path'.";
             return false;
         }
     } else if (action == "rename_node") {
@@ -353,6 +363,8 @@ void AI::_process_and_execute_actions(const String &ai_json_response) {
                     AIScriptActions::exec_attach_script(action_args);
                 } else if (action_name == "detach_script") {
                     AIScriptActions::exec_detach_script(action_args);
+                } else if (action_name == "rename_script") {
+                    AIScriptActions::exec_rename_script(action_args);
                 } else if (action_name == "create_scene") {
                     AISceneActions::exec_create_scene(action_args);
                 } else if (action_name == "open_scene") {
@@ -492,6 +504,7 @@ void AI::_bind_methods() {
     ClassDB::bind_method(D_METHOD("_create_script_file", "abs_path", "content"), &AI::_create_script_file);
     ClassDB::bind_method(D_METHOD("_write_script_file", "abs_path", "content"), &AI::_write_script_file);
     ClassDB::bind_method(D_METHOD("_delete_script_file", "abs_path"), &AI::_delete_script_file);
+    ClassDB::bind_method(D_METHOD("_rename_script_file", "old_abs_path", "new_abs_path"), &AI::_rename_script_file);
     
     // Add properties
     ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "provider", PROPERTY_HINT_RESOURCE_TYPE, "AIProvider"), "set_provider", "get_provider");
@@ -565,6 +578,43 @@ void AI::_delete_script_file(const String &abs_path) {
         return;
     }
     print_verbose(vformat("AI: Deleted file at '%s'", abs_path));
+}
+
+void AI::_rename_script_file(const String &old_abs_path, const String &new_abs_path) {
+    // Ensure new_path directory exists
+    String new_dir_path = new_abs_path.get_base_dir();
+    if (!DirAccess::exists(new_dir_path)) {
+        Error dir_err = DirAccess::make_dir_recursive_absolute(new_dir_path);
+        if (dir_err != OK) {
+            ERR_PRINT(vformat("AI: Failed to create directory '%s'. Error: %d", new_dir_path, dir_err));
+            return;
+        }
+        print_verbose(vformat("AI: Created directory '%s'", new_dir_path));
+    }
+
+    // Use DirAccess to rename/move the file
+    Ref<DirAccess> da = DirAccess::create(DirAccess::ACCESS_RESOURCES);
+    if (da.is_null()) {
+        ERR_PRINT(vformat("AI: Failed to create DirAccess for renaming file."));
+        return;
+    }
+
+    // Convert to resource paths for DirAccess
+    String old_res_path = ProjectSettings::get_singleton()->localize_path(old_abs_path);
+    String new_res_path = ProjectSettings::get_singleton()->localize_path(new_abs_path);
+
+    Error err = da->rename(old_res_path, new_res_path);
+    if (err != OK) {
+        ERR_PRINT(vformat("AI: Failed to rename file from '%s' to '%s'. Error code: %d", old_abs_path, new_abs_path, err));
+        return;
+    }
+    print_verbose(vformat("AI: Renamed file from '%s' to '%s'", old_abs_path, new_abs_path));
+
+    // Notify EditorFileSystem to refresh
+    EditorFileSystem *efs = EditorFileSystem::get_singleton();
+    if (efs) {
+        efs->scan_changes();
+    }
 }
 
 AI::AI() {
