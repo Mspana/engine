@@ -8,6 +8,7 @@
 #include "core/variant/variant.h"
 #include "core/variant/array.h"
 #include "core/object/object.h"
+#include "core/io/resource_loader.h"
 
 namespace AIProjectActions {
 
@@ -148,6 +149,80 @@ bool exec_get_project_settings(const Dictionary &args) {
 	return true;
 #else
 	ai_log_error("Execute 'get_project_settings': Editor API not available in non-editor builds.");
+	return false;
+#endif
+}
+
+bool exec_create_autoload_singleton(const Dictionary &args) {
+#ifdef TOOLS_ENABLED
+	EditorUndoRedoManager *undo_redo = ai_get_undo_redo();
+	if (!undo_redo) {
+		ai_log_error("Execute 'create_autoload_singleton': EditorUndoRedoManager singleton not found.");
+		return false;
+	}
+
+	ProjectSettings *ps = ProjectSettings::get_singleton();
+	if (!ps) {
+		ai_log_error("Execute 'create_autoload_singleton': ProjectSettings singleton not available.");
+		return false;
+	}
+
+	if (!args.has("name") || args["name"].get_type() != Variant::STRING) {
+		ai_log_error("Execute 'create_autoload_singleton': 'name' must be a string.");
+		return false;
+	}
+	if (!args.has("script_path") || args["script_path"].get_type() != Variant::STRING) {
+		ai_log_error("Execute 'create_autoload_singleton': 'script_path' must be a string.");
+		return false;
+	}
+
+	String name = args["name"];
+	String script_path = args["script_path"];
+	bool enabled = args.get("enabled", true);
+
+	// Validate script path exists
+	if (!ResourceLoader::exists(script_path)) {
+		ai_log_error(vformat("Execute 'create_autoload_singleton': Script file does not exist at path '%s'.", script_path));
+		return false;
+	}
+
+	// Format the autoload value: "*<path>" for singleton (enabled), "<path>" for non-singleton (disabled)
+	String autoload_value;
+	if (enabled) {
+		autoload_value = "*" + script_path;
+	} else {
+		autoload_value = script_path;
+	}
+
+	String autoload_key = "autoload/" + name;
+
+	// Get old value for undo
+	Variant old_value;
+	bool had_autoload = ps->has_setting(autoload_key);
+	if (had_autoload) {
+		old_value = ps->get_setting(autoload_key);
+	}
+
+	ai_log_verbose(vformat("Creating autoload singleton '%s' with path '%s' (enabled: %s)", name, script_path, enabled ? "true" : "false"));
+
+	// Wrap in UndoRedo
+	undo_redo->create_action("AI Create Autoload Singleton");
+	undo_redo->add_do_method(ps, "set_setting", autoload_key, autoload_value);
+	undo_redo->add_do_method(ps, "save");
+	if (had_autoload) {
+		// Autoload existed, restore old value on undo
+		undo_redo->add_undo_method(ps, "set_setting", autoload_key, old_value);
+	} else {
+		// Autoload didn't exist, remove it on undo
+		undo_redo->add_undo_method(ps, "clear", autoload_key);
+	}
+	undo_redo->add_undo_method(ps, "save");
+	undo_redo->commit_action();
+
+	print_line(vformat("AI: Executed create_autoload_singleton. Name: %s, Path: %s, Enabled: %s", name, script_path, enabled ? "true" : "false"));
+	return true;
+#else
+	ai_log_error("Execute 'create_autoload_singleton': Editor API not available in non-editor builds.");
 	return false;
 #endif
 }

@@ -241,6 +241,8 @@ String AIProvider::get_system_prompt() {
 	       "  Args: {\"key\": string (e.g. \"display/window/size/viewport_width\"), \"value\": any}\n"
 	       "- get_project_settings: Get project settings (read-only, useful for introspection before mutation)\n"
 	       "  Args: {\"prefix\": string (optional, e.g. \"display/\"), \"keys\": array[string] (optional), \"include_defaults\": bool (optional, default false)}\n"
+	       "- create_autoload_singleton: Create an autoload singleton entry in ProjectSettings\n"
+	       "  Args: {\"name\": string (required), \"script_path\": string (required, e.g. \"res://scripts/GameManager.gd\"), \"enabled\": bool (optional, default true)}\n"
 	       "- list_nodes: List nodes in the current scene tree\n"
 	       "  Args: {\"root_path\": string (optional)}\n"
 	       "- get_node_info: Get detailed information about a single node\n"
