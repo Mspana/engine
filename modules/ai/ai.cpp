@@ -6,6 +6,7 @@
 // Action implementations
 #include "actions/node_actions.h"
 #include "actions/script_actions.h"
+#include "actions/scene_actions.h"
 
 #include "core/core_bind.h"     // For ClassDB bindings (D_METHOD)
 #include "core/error/error_macros.h" // For ERR_FAIL_* macros
@@ -37,7 +38,7 @@ static const Vector<String> ALLOWED_ACTIONS = {
     "create_node","delete_node","duplicate_node","set_property",
     "create_script","update_script","attach_script","detach_script",
     "connect_signal","run_project","list_nodes","list_files",
-    "rename_node","reparent_node"
+    "rename_node","reparent_node","create_scene"
 };
 
 // New helper function to validate a command already parsed into a Dictionary
@@ -158,6 +159,20 @@ bool AI::_validate_command_dictionary(const Dictionary &cmd, String &error_msg) 
             return false;
         }
         // index is optional int
+    } else if (action == "create_scene") {
+        if (!args.has("scene_path") || args["scene_path"].get_type() != Variant::STRING) {
+            error_msg = "'create_scene' requires string 'scene_path'.";
+            return false;
+        }
+        // root_type and root_name are optional strings
+        if (args.has("root_type") && args["root_type"].get_type() != Variant::STRING) {
+            error_msg = "'create_scene' optional 'root_type' must be a string.";
+            return false;
+        }
+        if (args.has("root_name") && args["root_name"].get_type() != Variant::STRING) {
+            error_msg = "'create_scene' optional 'root_name' must be a string.";
+            return false;
+        }
     }
     // Additional actions can be validated similarly...
 
@@ -253,6 +268,8 @@ void AI::_process_and_execute_actions(const String &ai_json_response) {
                     AIScriptActions::exec_attach_script(action_args);
                 } else if (action_name == "detach_script") {
                     AIScriptActions::exec_detach_script(action_args);
+                } else if (action_name == "create_scene") {
+                    AISceneActions::exec_create_scene(action_args);
                 } else {
                     print_line(vformat("    - Action '%s' has no execution logic implemented.", action_name));
                 }

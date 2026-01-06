@@ -218,7 +218,9 @@ String AIProvider::get_system_prompt() {
 	       "- attach_script: Attach a script to a node\n"
 	       "  Args: {\"node_path\": string, \"script_path\": string}\n"
 	       "- detach_script: Detach a script from a node\n"
-	       "  Args: {\"node_path\": string}";
+	       "  Args: {\"node_path\": string}\n"
+	       "- create_scene: Create a new scene file\n"
+	       "  Args: {\"scene_path\": string (e.g. \"res://scenes/Main.tscn\"), \"root_type\": string (optional, default \"Node\"), \"root_name\": string (optional, default \"Main\")}";
 }
 
 // ============================================================================
