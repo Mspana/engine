@@ -38,7 +38,7 @@ static const Vector<String> ALLOWED_ACTIONS = {
     "create_node","delete_node","duplicate_node","set_property",
     "create_script","update_script","attach_script","detach_script",
     "connect_signal","run_project","list_nodes","list_files",
-    "rename_node","reparent_node","create_scene","open_scene","save_scene"
+    "rename_node","reparent_node","create_scene","open_scene","save_scene","set_main_scene"
 };
 
 // New helper function to validate a command already parsed into a Dictionary
@@ -180,6 +180,11 @@ bool AI::_validate_command_dictionary(const Dictionary &cmd, String &error_msg) 
         }
     } else if (action == "save_scene") {
         // No required args; optional scene_path is ignored
+    } else if (action == "set_main_scene") {
+        if (!args.has("scene_path") || args["scene_path"].get_type() != Variant::STRING) {
+            error_msg = "'set_main_scene' requires string 'scene_path'.";
+            return false;
+        }
     }
     // Additional actions can be validated similarly...
 
@@ -281,6 +286,8 @@ void AI::_process_and_execute_actions(const String &ai_json_response) {
                     AISceneActions::exec_open_scene(action_args);
                 } else if (action_name == "save_scene") {
                     AISceneActions::exec_save_scene(action_args);
+                } else if (action_name == "set_main_scene") {
+                    AISceneActions::exec_set_main_scene(action_args);
                 } else {
                     print_line(vformat("    - Action '%s' has no execution logic implemented.", action_name));
                 }

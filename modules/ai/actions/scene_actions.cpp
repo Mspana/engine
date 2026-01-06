@@ -11,6 +11,8 @@
 #include "scene/resources/packed_scene.h"
 #include "core/io/resource_saver.h"
 #include "scene/main/node.h"
+#include "core/config/project_settings.h"
+#include "core/io/resource_loader.h"
 
 namespace AISceneActions {
 
@@ -112,6 +114,43 @@ bool exec_save_scene(const Dictionary &args) {
 	return true;
 #else
 	ai_log_error("Execute 'save_scene': Editor API not available in non-editor builds.");
+	return false;
+#endif
+}
+
+bool exec_set_main_scene(const Dictionary &args) {
+#ifdef TOOLS_ENABLED
+	String scene_path = args.get("scene_path", String());
+	if (scene_path.is_empty()) {
+		ai_log_error("Execute 'set_main_scene': scene_path is empty.");
+		return false;
+	}
+
+	// Validate that the scene resource exists.
+	if (!ResourceLoader::exists(scene_path)) {
+		ai_log_error(vformat("Execute 'set_main_scene': Scene file does not exist at path '%s'.", scene_path));
+		return false;
+	}
+
+	ProjectSettings *ps = ProjectSettings::get_singleton();
+	if (!ps) {
+		ai_log_error("Execute 'set_main_scene': ProjectSettings singleton not available.");
+		return false;
+	}
+
+	const String setting_key = "application/run/main_scene";
+	ps->set_setting(setting_key, scene_path);
+
+	Error err = ps->save();
+	if (err != OK) {
+		ai_log_error(vformat("Execute 'set_main_scene': Failed to save ProjectSettings (project.godot). Error: %d", err));
+		return false;
+	}
+
+	print_line(vformat("AI: Executed set_main_scene. Main scene set to: %s", scene_path));
+	return true;
+#else
+	ai_log_error("Execute 'set_main_scene': Editor API not available in non-editor builds.");
 	return false;
 #endif
 }

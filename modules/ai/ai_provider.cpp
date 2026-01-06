@@ -224,7 +224,9 @@ String AIProvider::get_system_prompt() {
 	       "- open_scene: Open a scene file in the editor\n"
 	       "  Args: {\"scene_path\": string (e.g. \"res://scenes/Main.tscn\")}\n"
 	       "- save_scene: Save the currently edited scene\n"
-	       "  Args: {}";
+	       "  Args: {}\n"
+	       "- set_main_scene: Set the project's main scene in ProjectSettings\n"
+	       "  Args: {\"scene_path\": string (e.g. \"res://scenes/Main.tscn\")}";
 }
 
 // ============================================================================

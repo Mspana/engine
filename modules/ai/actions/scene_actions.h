@@ -21,6 +21,10 @@ bool exec_create_scene(const Dictionary &args);
 // Args: none required (optional scene_path is ignored)
 bool exec_save_scene(const Dictionary &args);
 
+// Sets the project's main scene in ProjectSettings.
+// Required args: scene_path (String)
+bool exec_set_main_scene(const Dictionary &args);
+
 } // namespace AISceneActions
 
 #endif // AI_SCENE_ACTIONS_H
