@@ -6,6 +6,8 @@
 
 #include "core/io/json.h"
 #include "scene/main/node.h"
+#include "scene/2d/node_2d.h"
+#include "scene/main/canvas_item.h"
 
 namespace {
 
@@ -89,6 +91,64 @@ bool exec_list_nodes(const Dictionary &args) {
 	return true;
 #else
 	ai_log_error("Execute 'list_nodes': Editor API not available in non-editor builds.");
+	return false;
+#endif
+}
+
+bool exec_get_node_info(const Dictionary &args) {
+#ifdef TOOLS_ENABLED
+	if (!args.has("node_path") || args["node_path"].get_type() != Variant::STRING) {
+		ai_log_error("Execute 'get_node_info': 'node_path' must be a string.");
+		return false;
+	}
+
+	String node_path = args["node_path"];
+
+	Node *node = ai_get_node_by_path(node_path);
+	if (!node) {
+		ai_log_error(vformat("Execute 'get_node_info': Could not find node at path '%s'.", node_path));
+		return false;
+	}
+
+	Dictionary info;
+	info["path"] = node_path;
+	info["type"] = node->get_class();
+	info["name"] = node->get_name();
+
+	String script_path;
+	Ref<Script> script = node->get_script();
+	if (script.is_valid()) {
+		script_path = script->get_path();
+	}
+	if (!script_path.is_empty()) {
+		info["script"] = script_path;
+	} else {
+		info["script"] = Variant(); // null
+	}
+
+	Dictionary props;
+
+	// Node2D-specific properties.
+	if (Node2D *n2d = Object::cast_to<Node2D>(node)) {
+		props["position"] = n2d->get_position();
+		props["rotation"] = n2d->get_rotation();
+		props["scale"] = n2d->get_scale();
+		props["global_position"] = n2d->get_global_position();
+	}
+
+	// CanvasItem-specific properties.
+	if (CanvasItem *ci = Object::cast_to<CanvasItem>(node)) {
+		props["visible"] = ci->is_visible();
+	}
+
+	info["properties"] = props;
+
+	String json = JSON::stringify(info);
+	print_line("READ/NODE_INFO: " + json);
+
+	return true;
+#else
+	ai_log_error("Execute 'get_node_info': Editor API not available in non-editor builds.");
 	return false;
 #endif
 }

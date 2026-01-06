@@ -13,6 +13,10 @@ namespace AIReadActions {
 // if provided, lists that node's subtree recursively.
 bool exec_list_nodes(const Dictionary &args);
 
+// Gets detailed information about a single node.
+// Required args: node_path (String)
+bool exec_get_node_info(const Dictionary &args);
+
 } // namespace AIReadActions
 
 #endif // AI_READ_ACTIONS_H
