@@ -17,6 +17,10 @@ bool exec_open_scene(const Dictionary &args);
 // Optional args: root_type (String, default "Node"), root_name (String, default "Main")
 bool exec_create_scene(const Dictionary &args);
 
+// Saves the current scene.
+// Args: none required (optional scene_path is ignored)
+bool exec_save_scene(const Dictionary &args);
+
 } // namespace AISceneActions
 
 #endif // AI_SCENE_ACTIONS_H

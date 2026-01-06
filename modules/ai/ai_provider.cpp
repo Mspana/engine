@@ -222,7 +222,9 @@ String AIProvider::get_system_prompt() {
 	       "- create_scene: Create a new scene file\n"
 	       "  Args: {\"scene_path\": string (e.g. \"res://scenes/Main.tscn\"), \"root_type\": string (optional, default \"Node\"), \"root_name\": string (optional, default \"Main\")}\n"
 	       "- open_scene: Open a scene file in the editor\n"
-	       "  Args: {\"scene_path\": string (e.g. \"res://scenes/Main.tscn\")}";
+	       "  Args: {\"scene_path\": string (e.g. \"res://scenes/Main.tscn\")}\n"
+	       "- save_scene: Save the currently edited scene\n"
+	       "  Args: {}";
 }
 
 // ============================================================================

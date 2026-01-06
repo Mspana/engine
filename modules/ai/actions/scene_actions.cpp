@@ -5,6 +5,7 @@
 #include "action_common.h"
 
 #include "editor/editor_interface.h"
+#include "editor/editor_command_palette.h"
 #include "core/string/ustring.h"
 #include "core/object/class_db.h"
 #include "scene/resources/packed_scene.h"
@@ -88,6 +89,29 @@ bool exec_create_scene(const Dictionary &args) {
 	return true;
 #else
 	ai_log_error("Execute 'create_scene': Editor API not available in non-editor builds.");
+	return false;
+#endif
+}
+
+bool exec_save_scene(const Dictionary &args) {
+#ifdef TOOLS_ENABLED
+	EditorInterface *ei = EditorInterface::get_singleton();
+	if (!ei) {
+		ai_log_error("Execute 'save_scene': EditorInterface singleton not found.");
+		return false;
+	}
+
+	EditorCommandPalette *command_palette = ei->get_command_palette();
+	if (!command_palette) {
+		ai_log_error("Execute 'save_scene': EditorCommandPalette not found.");
+		return false;
+	}
+
+	command_palette->execute_command("editor/save_scene");
+	print_line("AI: Executed save_scene.");
+	return true;
+#else
+	ai_log_error("Execute 'save_scene': Editor API not available in non-editor builds.");
 	return false;
 #endif
 }
