@@ -43,7 +43,7 @@ static const Vector<String> ALLOWED_ACTIONS = {
     "create_script","update_script","attach_script","detach_script","rename_script","delete_script",
     "connect_signal","disconnect_signal","run_project",
     "rename_node","reparent_node","create_scene","open_scene","save_scene","close_scene","set_main_scene",
-    "get_node_info","find_nodes_by_type","list_nodes","list_files","set_project_setting","get_project_settings","create_autoload_singleton","remove_autoload_singleton","import_asset",
+    "get_node_info","find_nodes_by_type","list_nodes","list_files","set_project_setting","get_project_settings","create_autoload_singleton","remove_autoload_singleton","import_asset","delete_asset",
 };
 
 // New helper function to validate a command already parsed into a Dictionary
@@ -273,6 +273,11 @@ bool AI::_validate_command_dictionary(const Dictionary &cmd, String &error_msg) 
             error_msg = "'import_asset' optional 'overwrite' must be a bool.";
             return false;
         }
+    } else if (action == "delete_asset") {
+        if (!args.has("asset_path") || args["asset_path"].get_type() != Variant::STRING) {
+            error_msg = "'delete_asset' requires string 'asset_path'.";
+            return false;
+        }
     } else if (action == "list_nodes") {
         // root_path is optional string
         if (args.has("root_path") && args["root_path"].get_type() != Variant::STRING) {
@@ -462,6 +467,8 @@ void AI::_process_and_execute_actions(const String &ai_json_response) {
                     AIProjectActions::exec_remove_autoload_singleton(action_args);
                 } else if (action_name == "import_asset") {
                     AIProjectActions::exec_import_asset(action_args);
+                } else if (action_name == "delete_asset") {
+                    AIProjectActions::exec_delete_asset(action_args);
                 } else if (action_name == "list_nodes") {
                     AIReadActions::exec_list_nodes(action_args);
                 } else if (action_name == "get_node_info") {

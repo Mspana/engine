@@ -247,6 +247,8 @@ String AIProvider::get_system_prompt() {
 	       "  Args: {\"name\": string (required)}\n"
 	       "- import_asset: Import an asset file from OS path to project path (v0: copies bytes, import pipeline runs later)\n"
 	       "  Args: {\"source_path\": string (required, absolute OS path), \"dest_path\": string (required, res://...), \"overwrite\": bool (optional, default false)}\n"
+	       "- delete_asset: Delete an asset file from the project\n"
+	       "  Args: {\"asset_path\": string (required, res://...)}\n"
 	       "- list_nodes: List nodes in the current scene tree\n"
 	       "  Args: {\"root_path\": string (optional)}\n"
 	       "- get_node_info: Get detailed information about a single node\n"

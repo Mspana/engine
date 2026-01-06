@@ -374,5 +374,60 @@ bool exec_import_asset(const Dictionary &args) {
 #endif
 }
 
+bool exec_delete_asset(const Dictionary &args) {
+#ifdef TOOLS_ENABLED
+	EditorUndoRedoManager *undo_redo = ai_get_undo_redo();
+	if (!undo_redo) {
+		ai_log_error("Execute 'delete_asset': EditorUndoRedoManager singleton not found.");
+		return false;
+	}
+
+	ProjectSettings *ps = ProjectSettings::get_singleton();
+	if (!ps) {
+		ai_log_error("Execute 'delete_asset': ProjectSettings singleton not available.");
+		return false;
+	}
+
+	AI *ai_singleton = AI::get_singleton();
+	if (!ai_singleton) {
+		ai_log_error("Execute 'delete_asset': AI singleton not found.");
+		return false;
+	}
+
+	if (!args.has("asset_path") || args["asset_path"].get_type() != Variant::STRING) {
+		ai_log_error("Execute 'delete_asset': 'asset_path' must be a string.");
+		return false;
+	}
+
+	String asset_path = args["asset_path"];
+
+	// Convert asset_path to absolute OS path
+	String asset_abs_path = ps->globalize_path(asset_path);
+
+	// Check if file exists
+	if (!FileAccess::exists(asset_abs_path)) {
+		ai_log_error(vformat("Execute 'delete_asset': Asset file does not exist at path '%s'.", asset_path));
+		return false;
+	}
+
+	// Read old bytes for undo
+	PackedByteArray old_bytes = FileAccess::get_file_as_bytes(asset_abs_path);
+
+	ai_log_verbose(vformat("Deleting asset at '%s'", asset_path));
+
+	// Wrap in UndoRedo
+	undo_redo->create_action("AI Delete Asset");
+	undo_redo->add_do_method(ai_singleton, "_delete_script_file", asset_abs_path);
+	undo_redo->add_undo_method(ai_singleton, "_write_binary_file", asset_abs_path, old_bytes);
+	undo_redo->commit_action();
+
+	print_line(vformat("AI: Executed delete_asset. Path: %s", asset_path));
+	return true;
+#else
+	ai_log_error("Execute 'delete_asset': Editor API not available in non-editor builds.");
+	return false;
+#endif
+}
+
 } // namespace AIProjectActions
 

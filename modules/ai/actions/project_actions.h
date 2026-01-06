@@ -30,6 +30,10 @@ bool exec_remove_autoload_singleton(const Dictionary &args);
 // Optional args: overwrite (bool, default false)
 bool exec_import_asset(const Dictionary &args);
 
+// Deletes an asset file from the project.
+// Required args: asset_path (String, res://...)
+bool exec_delete_asset(const Dictionary &args);
+
 } // namespace AIProjectActions
 
 #endif // AI_PROJECT_ACTIONS_H
