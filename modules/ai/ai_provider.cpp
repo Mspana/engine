@@ -232,7 +232,9 @@ String AIProvider::get_system_prompt() {
 	       "- get_node_info: Get detailed information about a single node\n"
 	       "  Args: {\"node_path\": string}\n"
 	       "- find_nodes_by_type: Find all nodes of a specific type in the scene tree\n"
-	       "  Args: {\"type_name\": string (e.g. \"CharacterBody2D\")}";
+	       "  Args: {\"type_name\": string (e.g. \"CharacterBody2D\")}\n"
+	       "- list_files: List files in a directory\n"
+	       "  Args: {\"directory\": string (e.g. \"res://scripts\"), \"glob\": string (optional, e.g. \"*.gd\")}";
 }
 
 // ============================================================================

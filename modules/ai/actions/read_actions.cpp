@@ -5,6 +5,7 @@
 #include "action_common.h"
 
 #include "core/io/json.h"
+#include "core/io/dir_access.h"
 #include "scene/main/node.h"
 #include "scene/2d/node_2d.h"
 #include "scene/main/canvas_item.h"
@@ -217,6 +218,71 @@ bool exec_find_nodes_by_type(const Dictionary &args) {
 	return true;
 #else
 	ai_log_error("Execute 'find_nodes_by_type': Editor API not available in non-editor builds.");
+	return false;
+#endif
+}
+
+bool exec_list_files(const Dictionary &args) {
+#ifdef TOOLS_ENABLED
+	if (!args.has("directory") || args["directory"].get_type() != Variant::STRING) {
+		ai_log_error("Execute 'list_files': 'directory' must be a string.");
+		return false;
+	}
+
+	String directory = args["directory"];
+
+	// Validate directory starts with "res://"
+	if (!directory.begins_with("res://")) {
+		ai_log_error(vformat("Execute 'list_files': Directory must start with 'res://'. Got: %s", directory));
+		return false;
+	}
+
+	// Open directory
+	Ref<DirAccess> dir = DirAccess::open(directory);
+	if (dir.is_null()) {
+		ai_log_error(vformat("Execute 'list_files': Failed to open directory '%s'.", directory));
+		return false;
+	}
+
+	// Get all files
+	PackedStringArray files = dir->get_files();
+
+	// Extract suffix from glob pattern if provided
+	String suffix_filter;
+	if (args.has("glob") && args["glob"].get_type() == Variant::STRING) {
+		String glob = args["glob"];
+		if (glob.begins_with("*.")) {
+			suffix_filter = glob.substr(1); // Remove "*" prefix, keep ".ext"
+		} else {
+			ai_log_error(vformat("Execute 'list_files': Unsupported glob pattern '%s'. Only patterns like '*.gd' are supported.", glob));
+			return false;
+		}
+	}
+
+	// Filter files by suffix if glob provided
+	PackedStringArray filtered_files;
+	for (int i = 0; i < files.size(); i++) {
+		String file = files[i];
+		if (suffix_filter.is_empty() || file.ends_with(suffix_filter)) {
+			filtered_files.push_back(file);
+		}
+	}
+
+	// Log results
+	int count = filtered_files.size();
+	print_line(vformat("AI: Found %d file(s) in '%s':", count, directory));
+	for (int i = 0; i < count; i++) {
+		String file_path = directory;
+		if (!file_path.ends_with("/")) {
+			file_path += "/";
+		}
+		file_path += filtered_files[i];
+		print_line(vformat("  - %s", file_path));
+	}
+
+	return true;
+#else
+	ai_log_error("Execute 'list_files': Editor API not available in non-editor builds.");
 	return false;
 #endif
 }

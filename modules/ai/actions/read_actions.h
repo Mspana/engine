@@ -21,6 +21,11 @@ bool exec_get_node_info(const Dictionary &args);
 // Required args: type_name (String)
 bool exec_find_nodes_by_type(const Dictionary &args);
 
+// Lists files in a directory.
+// Required args: directory (String)
+// Optional args: glob (String) - e.g. "*.gd" for simple suffix filtering
+bool exec_list_files(const Dictionary &args);
+
 } // namespace AIReadActions
 
 #endif // AI_READ_ACTIONS_H
