@@ -226,7 +226,9 @@ String AIProvider::get_system_prompt() {
 	       "- save_scene: Save the currently edited scene\n"
 	       "  Args: {}\n"
 	       "- set_main_scene: Set the project's main scene in ProjectSettings\n"
-	       "  Args: {\"scene_path\": string (e.g. \"res://scenes/Main.tscn\")}";
+	       "  Args: {\"scene_path\": string (e.g. \"res://scenes/Main.tscn\")}\n"
+	       "- list_nodes: List nodes in the current scene tree\n"
+	       "  Args: {\"root_path\": string (optional)}";
 }
 
 // ============================================================================

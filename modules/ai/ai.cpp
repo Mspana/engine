@@ -7,6 +7,7 @@
 #include "actions/node_actions.h"
 #include "actions/script_actions.h"
 #include "actions/scene_actions.h"
+#include "actions/read_actions.h"
 
 #include "core/core_bind.h"     // For ClassDB bindings (D_METHOD)
 #include "core/error/error_macros.h" // For ERR_FAIL_* macros
@@ -185,6 +186,12 @@ bool AI::_validate_command_dictionary(const Dictionary &cmd, String &error_msg) 
             error_msg = "'set_main_scene' requires string 'scene_path'.";
             return false;
         }
+    } else if (action == "list_nodes") {
+        // root_path is optional string
+        if (args.has("root_path") && args["root_path"].get_type() != Variant::STRING) {
+            error_msg = "'list_nodes' optional 'root_path' must be a string.";
+            return false;
+        }
     }
     // Additional actions can be validated similarly...
 
@@ -288,6 +295,8 @@ void AI::_process_and_execute_actions(const String &ai_json_response) {
                     AISceneActions::exec_save_scene(action_args);
                 } else if (action_name == "set_main_scene") {
                     AISceneActions::exec_set_main_scene(action_args);
+                } else if (action_name == "list_nodes") {
+                    AIReadActions::exec_list_nodes(action_args);
                 } else {
                     print_line(vformat("    - Action '%s' has no execution logic implemented.", action_name));
                 }
