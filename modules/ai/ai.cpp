@@ -43,7 +43,7 @@ static const Vector<String> ALLOWED_ACTIONS = {
     "create_script","update_script","attach_script","detach_script","rename_script","delete_script",
     "connect_signal","disconnect_signal","run_project",
     "rename_node","reparent_node","create_scene","open_scene","save_scene","close_scene","set_main_scene",
-    "get_node_info","find_nodes_by_type","list_nodes","list_files","set_project_setting","get_project_settings","create_autoload_singleton",
+    "get_node_info","find_nodes_by_type","list_nodes","list_files","set_project_setting","get_project_settings","create_autoload_singleton","remove_autoload_singleton",
 };
 
 // New helper function to validate a command already parsed into a Dictionary
@@ -254,6 +254,11 @@ bool AI::_validate_command_dictionary(const Dictionary &cmd, String &error_msg) 
             error_msg = "'create_autoload_singleton' optional 'enabled' must be a bool.";
             return false;
         }
+    } else if (action == "remove_autoload_singleton") {
+        if (!args.has("name") || args["name"].get_type() != Variant::STRING) {
+            error_msg = "'remove_autoload_singleton' requires string 'name'.";
+            return false;
+        }
     } else if (action == "list_nodes") {
         // root_path is optional string
         if (args.has("root_path") && args["root_path"].get_type() != Variant::STRING) {
@@ -439,6 +444,8 @@ void AI::_process_and_execute_actions(const String &ai_json_response) {
                     AIProjectActions::exec_get_project_settings(action_args);
                 } else if (action_name == "create_autoload_singleton") {
                     AIProjectActions::exec_create_autoload_singleton(action_args);
+                } else if (action_name == "remove_autoload_singleton") {
+                    AIProjectActions::exec_remove_autoload_singleton(action_args);
                 } else if (action_name == "list_nodes") {
                     AIReadActions::exec_list_nodes(action_args);
                 } else if (action_name == "get_node_info") {

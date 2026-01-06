@@ -243,6 +243,8 @@ String AIProvider::get_system_prompt() {
 	       "  Args: {\"prefix\": string (optional, e.g. \"display/\"), \"keys\": array[string] (optional), \"include_defaults\": bool (optional, default false)}\n"
 	       "- create_autoload_singleton: Create an autoload singleton entry in ProjectSettings\n"
 	       "  Args: {\"name\": string (required), \"script_path\": string (required, e.g. \"res://scripts/GameManager.gd\"), \"enabled\": bool (optional, default true)}\n"
+	       "- remove_autoload_singleton: Remove an autoload singleton entry from ProjectSettings\n"
+	       "  Args: {\"name\": string (required)}\n"
 	       "- list_nodes: List nodes in the current scene tree\n"
 	       "  Args: {\"root_path\": string (optional)}\n"
 	       "- get_node_info: Get detailed information about a single node\n"

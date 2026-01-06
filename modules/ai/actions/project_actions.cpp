@@ -227,5 +227,54 @@ bool exec_create_autoload_singleton(const Dictionary &args) {
 #endif
 }
 
+bool exec_remove_autoload_singleton(const Dictionary &args) {
+#ifdef TOOLS_ENABLED
+	EditorUndoRedoManager *undo_redo = ai_get_undo_redo();
+	if (!undo_redo) {
+		ai_log_error("Execute 'remove_autoload_singleton': EditorUndoRedoManager singleton not found.");
+		return false;
+	}
+
+	ProjectSettings *ps = ProjectSettings::get_singleton();
+	if (!ps) {
+		ai_log_error("Execute 'remove_autoload_singleton': ProjectSettings singleton not available.");
+		return false;
+	}
+
+	if (!args.has("name") || args["name"].get_type() != Variant::STRING) {
+		ai_log_error("Execute 'remove_autoload_singleton': 'name' must be a string.");
+		return false;
+	}
+
+	String name = args["name"];
+	String autoload_key = "autoload/" + name;
+
+	// Check if autoload exists
+	if (!ps->has_setting(autoload_key)) {
+		ai_log_error(vformat("Execute 'remove_autoload_singleton': Autoload '%s' does not exist.", name));
+		return false;
+	}
+
+	// Get old value for undo
+	Variant old_value = ps->get_setting(autoload_key);
+
+	ai_log_verbose(vformat("Removing autoload singleton '%s'", name));
+
+	// Wrap in UndoRedo
+	undo_redo->create_action("AI Remove Autoload Singleton");
+	undo_redo->add_do_method(ps, "clear", autoload_key);
+	undo_redo->add_do_method(ps, "save");
+	undo_redo->add_undo_method(ps, "set_setting", autoload_key, old_value);
+	undo_redo->add_undo_method(ps, "save");
+	undo_redo->commit_action();
+
+	print_line(vformat("AI: Executed remove_autoload_singleton. Name: %s", name));
+	return true;
+#else
+	ai_log_error("Execute 'remove_autoload_singleton': Editor API not available in non-editor builds.");
+	return false;
+#endif
+}
+
 } // namespace AIProjectActions
 

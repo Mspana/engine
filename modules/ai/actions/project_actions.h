@@ -21,6 +21,10 @@ bool exec_get_project_settings(const Dictionary &args);
 // Optional args: enabled (bool, default true)
 bool exec_create_autoload_singleton(const Dictionary &args);
 
+// Removes an autoload singleton entry.
+// Required args: name (String)
+bool exec_remove_autoload_singleton(const Dictionary &args);
+
 } // namespace AIProjectActions
 
 #endif // AI_PROJECT_ACTIONS_H
