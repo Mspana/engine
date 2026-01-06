@@ -41,7 +41,7 @@ static const Vector<String> ALLOWED_ACTIONS = {
     "create_node","delete_node","duplicate_node","set_property",
     "create_script","update_script","attach_script","detach_script","rename_script","delete_script",
     "connect_signal","disconnect_signal","run_project",
-    "rename_node","reparent_node","create_scene","open_scene","save_scene","set_main_scene",
+    "rename_node","reparent_node","create_scene","open_scene","save_scene","close_scene","set_main_scene",
     "get_node_info","find_nodes_by_type","list_nodes","list_files",
 };
 
@@ -206,6 +206,12 @@ bool AI::_validate_command_dictionary(const Dictionary &cmd, String &error_msg) 
     } else if (action == "set_main_scene") {
         if (!args.has("scene_path") || args["scene_path"].get_type() != Variant::STRING) {
             error_msg = "'set_main_scene' requires string 'scene_path'.";
+            return false;
+        }
+    } else if (action == "close_scene") {
+        // save_if_modified is optional bool
+        if (args.has("save_if_modified") && args["save_if_modified"].get_type() != Variant::BOOL) {
+            error_msg = "'close_scene' optional 'save_if_modified' must be a bool.";
             return false;
         }
     } else if (action == "list_nodes") {
@@ -385,6 +391,8 @@ void AI::_process_and_execute_actions(const String &ai_json_response) {
                     AISceneActions::exec_save_scene(action_args);
                 } else if (action_name == "set_main_scene") {
                     AISceneActions::exec_set_main_scene(action_args);
+                } else if (action_name == "close_scene") {
+                    AISceneActions::exec_close_scene(action_args);
                 } else if (action_name == "list_nodes") {
                     AIReadActions::exec_list_nodes(action_args);
                 } else if (action_name == "get_node_info") {

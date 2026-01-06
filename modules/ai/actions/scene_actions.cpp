@@ -6,6 +6,8 @@
 
 #include "editor/editor_interface.h"
 #include "editor/editor_command_palette.h"
+#include "editor/editor_node.h"
+#include "editor/editor_undo_redo_manager.h"
 #include "core/string/ustring.h"
 #include "core/object/class_db.h"
 #include "scene/resources/packed_scene.h"
@@ -151,6 +153,63 @@ bool exec_set_main_scene(const Dictionary &args) {
 	return true;
 #else
 	ai_log_error("Execute 'set_main_scene': Editor API not available in non-editor builds.");
+	return false;
+#endif
+}
+
+bool exec_close_scene(const Dictionary &args) {
+#ifdef TOOLS_ENABLED
+	EditorInterface *ei = EditorInterface::get_singleton();
+	if (!ei) {
+		ai_log_error("Execute 'close_scene': EditorInterface singleton not found.");
+		return false;
+	}
+
+	EditorNode *editor_node = EditorNode::get_singleton();
+	if (!editor_node) {
+		ai_log_error("Execute 'close_scene': EditorNode singleton not found.");
+		return false;
+	}
+
+	bool save_if_modified = args.get("save_if_modified", true);
+
+	// Check if there's an edited scene
+	Node *edited_scene_root = ai_get_edited_scene_root();
+	if (!edited_scene_root) {
+		ai_log_verbose("Execute 'close_scene': No edited scene to close.");
+		return true; // No scene open, consider it successful
+	}
+
+	// Check if scene has unsaved changes
+	bool has_unsaved_changes = false;
+	EditorUndoRedoManager *undo_redo = EditorUndoRedoManager::get_singleton();
+	if (undo_redo) {
+		EditorData &editor_data = EditorNode::get_editor_data();
+		int current_scene = editor_data.get_edited_scene();
+		int history_id = editor_data.get_scene_history_id(current_scene);
+		has_unsaved_changes = undo_redo->is_history_unsaved(history_id);
+	}
+
+	// If save_if_modified is true and there are unsaved changes, save first
+	if (save_if_modified && has_unsaved_changes) {
+		EditorCommandPalette *command_palette = ei->get_command_palette();
+		if (command_palette) {
+			command_palette->execute_command("editor/save_scene");
+			ai_log_verbose("Execute 'close_scene': Saved scene before closing.");
+		} else {
+			ai_log_error("Execute 'close_scene': EditorCommandPalette not found for saving.");
+			return false;
+		}
+	}
+
+	// Close the scene using EditorNode's menu option
+	// The second parameter (true) means "confirmed" - skip confirmation dialogs
+	editor_node->trigger_menu_option(EditorNode::FILE_CLOSE, true);
+
+	print_line("AI: Executed close_scene.");
+	return true;
+#else
+	ai_log_error("Execute 'close_scene': Editor API not available in non-editor builds.");
 	return false;
 #endif
 }

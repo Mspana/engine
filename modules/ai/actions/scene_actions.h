@@ -25,6 +25,10 @@ bool exec_save_scene(const Dictionary &args);
 // Required args: scene_path (String)
 bool exec_set_main_scene(const Dictionary &args);
 
+// Closes the current scene tab.
+// Optional args: save_if_modified (bool, default true)
+bool exec_close_scene(const Dictionary &args);
+
 } // namespace AISceneActions
 
 #endif // AI_SCENE_ACTIONS_H
