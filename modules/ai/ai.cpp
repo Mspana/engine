@@ -39,7 +39,7 @@ AI *AI::singleton = nullptr;
 
 static const Vector<String> ALLOWED_ACTIONS = {
     "create_node","delete_node","duplicate_node","set_property",
-    "create_script","update_script","attach_script","detach_script","rename_script",
+    "create_script","update_script","attach_script","detach_script","rename_script","delete_script",
     "connect_signal","disconnect_signal","run_project",
     "rename_node","reparent_node","create_scene","open_scene","save_scene","set_main_scene",
     "get_node_info","find_nodes_by_type","list_nodes","list_files",
@@ -151,6 +151,16 @@ bool AI::_validate_command_dictionary(const Dictionary &cmd, String &error_msg) 
         }
         if (!args.has("new_path") || args["new_path"].get_type() != Variant::STRING) {
             error_msg = "'rename_script' requires string 'new_path'.";
+            return false;
+        }
+    } else if (action == "delete_script") {
+        if (!args.has("file_path") || args["file_path"].get_type() != Variant::STRING) {
+            error_msg = "'delete_script' requires string 'file_path'.";
+            return false;
+        }
+        // detach_from_nodes is optional bool
+        if (args.has("detach_from_nodes") && args["detach_from_nodes"].get_type() != Variant::BOOL) {
+            error_msg = "'delete_script' optional 'detach_from_nodes' must be a bool.";
             return false;
         }
     } else if (action == "rename_node") {
@@ -365,6 +375,8 @@ void AI::_process_and_execute_actions(const String &ai_json_response) {
                     AIScriptActions::exec_detach_script(action_args);
                 } else if (action_name == "rename_script") {
                     AIScriptActions::exec_rename_script(action_args);
+                } else if (action_name == "delete_script") {
+                    AIScriptActions::exec_delete_script(action_args);
                 } else if (action_name == "create_scene") {
                     AISceneActions::exec_create_scene(action_args);
                 } else if (action_name == "open_scene") {
@@ -578,6 +590,12 @@ void AI::_delete_script_file(const String &abs_path) {
         return;
     }
     print_verbose(vformat("AI: Deleted file at '%s'", abs_path));
+
+    // Notify EditorFileSystem to refresh
+    EditorFileSystem *efs = EditorFileSystem::get_singleton();
+    if (efs) {
+        efs->scan_changes();
+    }
 }
 
 void AI::_rename_script_file(const String &old_abs_path, const String &new_abs_path) {

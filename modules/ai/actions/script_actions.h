@@ -24,6 +24,15 @@ bool exec_attach_script(const Dictionary &args);
 // Required args: node_path (String)
 bool exec_detach_script(const Dictionary &args);
 
+// Renames/moves a script file.
+// Required args: old_path (String), new_path (String)
+bool exec_rename_script(const Dictionary &args);
+
+// Deletes a script file.
+// Required args: file_path (String)
+// Optional args: detach_from_nodes (bool, default false)
+bool exec_delete_script(const Dictionary &args);
+
 } // namespace AIScriptActions
 
 #endif // AI_SCRIPT_ACTIONS_H

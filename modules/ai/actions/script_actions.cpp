@@ -8,6 +8,7 @@
 
 #include "core/config/project_settings.h"
 #include "core/io/file_access.h"
+#include "core/io/dir_access.h"
 #include "core/io/resource_loader.h"
 #include "core/object/script_language.h"
 #include "scene/main/node.h"
@@ -186,6 +187,158 @@ bool exec_detach_script(const Dictionary &args) {
 	ai_log_verbose(vformat("detach_script from node: %s", node_path_str));
 	print_line(vformat("AI: Executed detach_script. Node: %s", node_path_str));
 	return true;
+}
+
+bool exec_rename_script(const Dictionary &args) {
+#ifdef TOOLS_ENABLED
+	EditorUndoRedoManager *undo_redo = ai_get_undo_redo();
+	if (!undo_redo) {
+		ai_log_error("Execute 'rename_script': EditorUndoRedoManager singleton not found.");
+		return false;
+	}
+
+	AI *ai_singleton = AI::get_singleton();
+	if (!ai_singleton) {
+		ai_log_error("Execute 'rename_script': AI singleton not found.");
+		return false;
+	}
+
+	if (!args.has("old_path") || args["old_path"].get_type() != Variant::STRING) {
+		ai_log_error("Execute 'rename_script': 'old_path' must be a string.");
+		return false;
+	}
+	if (!args.has("new_path") || args["new_path"].get_type() != Variant::STRING) {
+		ai_log_error("Execute 'rename_script': 'new_path' must be a string.");
+		return false;
+	}
+
+	String old_path = args["old_path"];
+	String new_path = args["new_path"];
+
+	// Convert to absolute paths
+	String old_abs_path = ProjectSettings::get_singleton()->globalize_path(old_path);
+	String new_abs_path = ProjectSettings::get_singleton()->globalize_path(new_path);
+
+	// Check if old file exists
+	if (!FileAccess::exists(old_abs_path)) {
+		ai_log_error(vformat("Execute 'rename_script': File does not exist at '%s'.", old_abs_path));
+		return false;
+	}
+
+	// Check if new file already exists
+	if (FileAccess::exists(new_abs_path)) {
+		ai_log_error(vformat("Execute 'rename_script': File already exists at '%s'. Cannot rename.", new_abs_path));
+		return false;
+	}
+
+	ai_log_verbose(vformat("Renaming script from '%s' to '%s'", old_abs_path, new_abs_path));
+
+	// Wrap in UndoRedo
+	undo_redo->create_action("AI Rename Script");
+	undo_redo->add_do_method(ai_singleton, "_rename_script_file", old_abs_path, new_abs_path);
+	undo_redo->add_undo_method(ai_singleton, "_rename_script_file", new_abs_path, old_abs_path);
+	undo_redo->commit_action();
+
+	print_line(vformat("AI: Executed rename_script. Old: %s, New: %s", old_path, new_path));
+	return true;
+#else
+	ai_log_error("Execute 'rename_script': Editor API not available in non-editor builds.");
+	return false;
+#endif
+}
+
+namespace {
+
+// Depth-first traversal to find and detach script from nodes.
+static void ai_detach_script_from_nodes_dfs(Node *root, const String &script_path, EditorUndoRedoManager *undo_redo, Node *edited_scene_root) {
+	if (!root) {
+		return;
+	}
+
+	// Check if this node has the script attached
+	Ref<Script> script = root->get_script();
+	if (script.is_valid() && script->get_path() == script_path) {
+		Variant old_script = root->get("script");
+		undo_redo->add_do_method(root, "set", "script", Variant());
+		undo_redo->add_undo_method(root, "set", "script", old_script);
+	}
+
+	// Recurse into children
+	const int child_count = root->get_child_count();
+	for (int i = 0; i < child_count; i++) {
+		Node *child = root->get_child(i);
+		if (child) {
+			ai_detach_script_from_nodes_dfs(child, script_path, undo_redo, edited_scene_root);
+		}
+	}
+}
+
+} // namespace
+
+bool exec_delete_script(const Dictionary &args) {
+#ifdef TOOLS_ENABLED
+	EditorUndoRedoManager *undo_redo = ai_get_undo_redo();
+	if (!undo_redo) {
+		ai_log_error("Execute 'delete_script': EditorUndoRedoManager singleton not found.");
+		return false;
+	}
+
+	AI *ai_singleton = AI::get_singleton();
+	if (!ai_singleton) {
+		ai_log_error("Execute 'delete_script': AI singleton not found.");
+		return false;
+	}
+
+	if (!args.has("file_path") || args["file_path"].get_type() != Variant::STRING) {
+		ai_log_error("Execute 'delete_script': 'file_path' must be a string.");
+		return false;
+	}
+
+	String file_path = args["file_path"];
+	bool detach_from_nodes = args.get("detach_from_nodes", false);
+
+	// Convert to absolute path
+	String abs_path = ProjectSettings::get_singleton()->globalize_path(file_path);
+
+	// Check if file exists
+	if (!FileAccess::exists(abs_path)) {
+		ai_log_error(vformat("Execute 'delete_script': File does not exist at '%s'.", abs_path));
+		return false;
+	}
+
+	// Read old content for undo
+	Ref<FileAccess> file = FileAccess::open(abs_path, FileAccess::READ);
+	if (file.is_null()) {
+		ai_log_error(vformat("Execute 'delete_script': Failed to open file for reading at '%s'.", abs_path));
+		return false;
+	}
+	String original_content = file->get_as_text();
+	file.unref(); // Close the file
+
+	ai_log_verbose(vformat("Deleting script at '%s'", abs_path));
+
+	// Wrap in UndoRedo
+	undo_redo->create_action("AI Delete Script");
+
+	// If detach_from_nodes is true, detach script from all nodes using it
+	if (detach_from_nodes) {
+		Node *edited_scene_root = ai_get_edited_scene_root();
+		if (edited_scene_root) {
+			ai_detach_script_from_nodes_dfs(edited_scene_root, file_path, undo_redo, edited_scene_root);
+		}
+	}
+
+	// Delete the file
+	undo_redo->add_do_method(ai_singleton, "_delete_script_file", abs_path);
+	undo_redo->add_undo_method(ai_singleton, "_create_script_file", abs_path, original_content);
+	undo_redo->commit_action();
+
+	print_line(vformat("AI: Executed delete_script. File: %s, DetachFromNodes: %s", file_path, detach_from_nodes ? "true" : "false"));
+	return true;
+#else
+	ai_log_error("Execute 'delete_script': Editor API not available in non-editor builds.");
+	return false;
+#endif
 }
 
 } // namespace AIScriptActions
