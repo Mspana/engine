@@ -220,7 +220,9 @@ String AIProvider::get_system_prompt() {
 	       "- detach_script: Detach a script from a node\n"
 	       "  Args: {\"node_path\": string}\n"
 	       "- create_scene: Create a new scene file\n"
-	       "  Args: {\"scene_path\": string (e.g. \"res://scenes/Main.tscn\"), \"root_type\": string (optional, default \"Node\"), \"root_name\": string (optional, default \"Main\")}";
+	       "  Args: {\"scene_path\": string (e.g. \"res://scenes/Main.tscn\"), \"root_type\": string (optional, default \"Node\"), \"root_name\": string (optional, default \"Main\")}\n"
+	       "- open_scene: Open a scene file in the editor\n"
+	       "  Args: {\"scene_path\": string (e.g. \"res://scenes/Main.tscn\")}";
 }
 
 // ============================================================================

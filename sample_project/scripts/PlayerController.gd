@@ -1,10 +1,8 @@
 extends CharacterBody2D
 
 
-
 const SPEED = 200
-const JUMP_VELOCITY = -700
-
+const JUMP_VELOCITY = -900
 
 
 func _physics_process(delta):
