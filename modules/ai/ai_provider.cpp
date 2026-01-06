@@ -239,6 +239,8 @@ String AIProvider::get_system_prompt() {
 	       "  Args: {\"scene_path\": string (e.g. \"res://scenes/Main.tscn\")}\n"
 	       "- set_project_setting: Set a project setting value\n"
 	       "  Args: {\"key\": string (e.g. \"display/window/size/viewport_width\"), \"value\": any}\n"
+	       "- get_project_settings: Get project settings (read-only, useful for introspection before mutation)\n"
+	       "  Args: {\"prefix\": string (optional, e.g. \"display/\"), \"keys\": array[string] (optional), \"include_defaults\": bool (optional, default false)}\n"
 	       "- list_nodes: List nodes in the current scene tree\n"
 	       "  Args: {\"root_path\": string (optional)}\n"
 	       "- get_node_info: Get detailed information about a single node\n"

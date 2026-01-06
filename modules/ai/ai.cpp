@@ -43,7 +43,7 @@ static const Vector<String> ALLOWED_ACTIONS = {
     "create_script","update_script","attach_script","detach_script","rename_script","delete_script",
     "connect_signal","disconnect_signal","run_project",
     "rename_node","reparent_node","create_scene","open_scene","save_scene","close_scene","set_main_scene",
-    "get_node_info","find_nodes_by_type","list_nodes","list_files","set_project_setting",
+    "get_node_info","find_nodes_by_type","list_nodes","list_files","set_project_setting","get_project_settings",
 };
 
 // New helper function to validate a command already parsed into a Dictionary
@@ -222,6 +222,22 @@ bool AI::_validate_command_dictionary(const Dictionary &cmd, String &error_msg) 
         }
         if (!args.has("value")) {
             error_msg = "'set_project_setting' requires 'value'.";
+            return false;
+        }
+    } else if (action == "get_project_settings") {
+        // prefix is optional string
+        if (args.has("prefix") && args["prefix"].get_type() != Variant::STRING) {
+            error_msg = "'get_project_settings' optional 'prefix' must be a string.";
+            return false;
+        }
+        // keys is optional Array
+        if (args.has("keys") && args["keys"].get_type() != Variant::ARRAY) {
+            error_msg = "'get_project_settings' optional 'keys' must be an array.";
+            return false;
+        }
+        // include_defaults is optional bool
+        if (args.has("include_defaults") && args["include_defaults"].get_type() != Variant::BOOL) {
+            error_msg = "'get_project_settings' optional 'include_defaults' must be a bool.";
             return false;
         }
     } else if (action == "list_nodes") {
@@ -405,6 +421,8 @@ void AI::_process_and_execute_actions(const String &ai_json_response) {
                     AISceneActions::exec_close_scene(action_args);
                 } else if (action_name == "set_project_setting") {
                     AIProjectActions::exec_set_project_setting(action_args);
+                } else if (action_name == "get_project_settings") {
+                    AIProjectActions::exec_get_project_settings(action_args);
                 } else if (action_name == "list_nodes") {
                     AIReadActions::exec_list_nodes(action_args);
                 } else if (action_name == "get_node_info") {

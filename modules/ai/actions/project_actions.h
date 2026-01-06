@@ -12,6 +12,10 @@ namespace AIProjectActions {
 // Required args: key (String), value (Variant)
 bool exec_set_project_setting(const Dictionary &args);
 
+// Gets project settings (read-only).
+// Optional args: prefix (String), keys (Array[String]), include_defaults (bool, default false)
+bool exec_get_project_settings(const Dictionary &args);
+
 } // namespace AIProjectActions
 
 #endif // AI_PROJECT_ACTIONS_H
