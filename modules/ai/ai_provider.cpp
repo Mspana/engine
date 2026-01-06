@@ -230,7 +230,9 @@ String AIProvider::get_system_prompt() {
 	       "- list_nodes: List nodes in the current scene tree\n"
 	       "  Args: {\"root_path\": string (optional)}\n"
 	       "- get_node_info: Get detailed information about a single node\n"
-	       "  Args: {\"node_path\": string}";
+	       "  Args: {\"node_path\": string}\n"
+	       "- find_nodes_by_type: Find all nodes of a specific type in the scene tree\n"
+	       "  Args: {\"type_name\": string (e.g. \"CharacterBody2D\")}";
 }
 
 // ============================================================================

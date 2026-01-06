@@ -39,7 +39,7 @@ static const Vector<String> ALLOWED_ACTIONS = {
     "create_node","delete_node","duplicate_node","set_property",
     "create_script","update_script","attach_script","detach_script",
     "connect_signal","run_project","list_nodes","list_files",
-    "rename_node","reparent_node","create_scene","open_scene","save_scene","set_main_scene","get_node_info"
+    "rename_node","reparent_node","create_scene","open_scene","save_scene","set_main_scene","get_node_info","find_nodes_by_type"
 };
 
 // New helper function to validate a command already parsed into a Dictionary
@@ -197,6 +197,11 @@ bool AI::_validate_command_dictionary(const Dictionary &cmd, String &error_msg) 
             error_msg = "'get_node_info' requires string 'node_path'.";
             return false;
         }
+    } else if (action == "find_nodes_by_type") {
+        if (!args.has("type_name") || args["type_name"].get_type() != Variant::STRING) {
+            error_msg = "'find_nodes_by_type' requires string 'type_name'.";
+            return false;
+        }
     }
     // Additional actions can be validated similarly...
 
@@ -304,6 +309,8 @@ void AI::_process_and_execute_actions(const String &ai_json_response) {
                     AIReadActions::exec_list_nodes(action_args);
                 } else if (action_name == "get_node_info") {
                     AIReadActions::exec_get_node_info(action_args);
+                } else if (action_name == "find_nodes_by_type") {
+                    AIReadActions::exec_find_nodes_by_type(action_args);
                 } else {
                     print_line(vformat("    - Action '%s' has no execution logic implemented.", action_name));
                 }

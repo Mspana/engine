@@ -17,6 +17,10 @@ bool exec_list_nodes(const Dictionary &args);
 // Required args: node_path (String)
 bool exec_get_node_info(const Dictionary &args);
 
+// Finds all nodes of a specific type in the scene tree.
+// Required args: type_name (String)
+bool exec_find_nodes_by_type(const Dictionary &args);
+
 } // namespace AIReadActions
 
 #endif // AI_READ_ACTIONS_H
