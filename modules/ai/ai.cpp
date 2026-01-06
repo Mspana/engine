@@ -8,6 +8,7 @@
 #include "actions/script_actions.h"
 #include "actions/scene_actions.h"
 #include "actions/read_actions.h"
+#include "actions/signal_actions.h"
 
 #include "core/core_bind.h"     // For ClassDB bindings (D_METHOD)
 #include "core/error/error_macros.h" // For ERR_FAIL_* macros
@@ -38,7 +39,7 @@ AI *AI::singleton = nullptr;
 static const Vector<String> ALLOWED_ACTIONS = {
     "create_node","delete_node","duplicate_node","set_property",
     "create_script","update_script","attach_script","detach_script",
-    "connect_signal","run_project",
+    "connect_signal","disconnect_signal","run_project",
     "rename_node","reparent_node","create_scene","open_scene","save_scene","set_main_scene",
     "get_node_info","find_nodes_by_type","list_nodes","list_files",
 };
@@ -213,6 +214,50 @@ bool AI::_validate_command_dictionary(const Dictionary &cmd, String &error_msg) 
             error_msg = "'list_files' optional 'glob' must be a string.";
             return false;
         }
+    } else if (action == "connect_signal") {
+        if (!args.has("emitter_path") || args["emitter_path"].get_type() != Variant::STRING) {
+            error_msg = "'connect_signal' requires string 'emitter_path'.";
+            return false;
+        }
+        if (!args.has("signal_name") || args["signal_name"].get_type() != Variant::STRING) {
+            error_msg = "'connect_signal' requires string 'signal_name'.";
+            return false;
+        }
+        if (!args.has("target_path") || args["target_path"].get_type() != Variant::STRING) {
+            error_msg = "'connect_signal' requires string 'target_path'.";
+            return false;
+        }
+        if (!args.has("method_name") || args["method_name"].get_type() != Variant::STRING) {
+            error_msg = "'connect_signal' requires string 'method_name'.";
+            return false;
+        }
+        // binds is optional Array
+        if (args.has("binds") && args["binds"].get_type() != Variant::ARRAY) {
+            error_msg = "'connect_signal' optional 'binds' must be an array.";
+            return false;
+        }
+        // flags is optional int
+        if (args.has("flags") && args["flags"].get_type() != Variant::INT) {
+            error_msg = "'connect_signal' optional 'flags' must be an int.";
+            return false;
+        }
+    } else if (action == "disconnect_signal") {
+        if (!args.has("emitter_path") || args["emitter_path"].get_type() != Variant::STRING) {
+            error_msg = "'disconnect_signal' requires string 'emitter_path'.";
+            return false;
+        }
+        if (!args.has("signal_name") || args["signal_name"].get_type() != Variant::STRING) {
+            error_msg = "'disconnect_signal' requires string 'signal_name'.";
+            return false;
+        }
+        if (!args.has("target_path") || args["target_path"].get_type() != Variant::STRING) {
+            error_msg = "'disconnect_signal' requires string 'target_path'.";
+            return false;
+        }
+        if (!args.has("method_name") || args["method_name"].get_type() != Variant::STRING) {
+            error_msg = "'disconnect_signal' requires string 'method_name'.";
+            return false;
+        }
     }
     // Additional actions can be validated similarly...
 
@@ -324,6 +369,10 @@ void AI::_process_and_execute_actions(const String &ai_json_response) {
                     AIReadActions::exec_find_nodes_by_type(action_args);
                 } else if (action_name == "list_files") {
                     AIReadActions::exec_list_files(action_args);
+                } else if (action_name == "connect_signal") {
+                    AISignalActions::exec_connect_signal(action_args);
+                } else if (action_name == "disconnect_signal") {
+                    AISignalActions::exec_disconnect_signal(action_args);
                 } else {
                     print_line(vformat("    - Action '%s' has no execution logic implemented.", action_name));
                 }
