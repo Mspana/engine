@@ -9,6 +9,7 @@
 #include "actions/scene_actions.h"
 #include "actions/read_actions.h"
 #include "actions/signal_actions.h"
+#include "actions/project_actions.h"
 
 #include "core/core_bind.h"     // For ClassDB bindings (D_METHOD)
 #include "core/error/error_macros.h" // For ERR_FAIL_* macros
@@ -42,7 +43,7 @@ static const Vector<String> ALLOWED_ACTIONS = {
     "create_script","update_script","attach_script","detach_script","rename_script","delete_script",
     "connect_signal","disconnect_signal","run_project",
     "rename_node","reparent_node","create_scene","open_scene","save_scene","close_scene","set_main_scene",
-    "get_node_info","find_nodes_by_type","list_nodes","list_files",
+    "get_node_info","find_nodes_by_type","list_nodes","list_files","set_project_setting",
 };
 
 // New helper function to validate a command already parsed into a Dictionary
@@ -212,6 +213,15 @@ bool AI::_validate_command_dictionary(const Dictionary &cmd, String &error_msg) 
         // save_if_modified is optional bool
         if (args.has("save_if_modified") && args["save_if_modified"].get_type() != Variant::BOOL) {
             error_msg = "'close_scene' optional 'save_if_modified' must be a bool.";
+            return false;
+        }
+    } else if (action == "set_project_setting") {
+        if (!args.has("key") || args["key"].get_type() != Variant::STRING) {
+            error_msg = "'set_project_setting' requires string 'key'.";
+            return false;
+        }
+        if (!args.has("value")) {
+            error_msg = "'set_project_setting' requires 'value'.";
             return false;
         }
     } else if (action == "list_nodes") {
@@ -393,6 +403,8 @@ void AI::_process_and_execute_actions(const String &ai_json_response) {
                     AISceneActions::exec_set_main_scene(action_args);
                 } else if (action_name == "close_scene") {
                     AISceneActions::exec_close_scene(action_args);
+                } else if (action_name == "set_project_setting") {
+                    AIProjectActions::exec_set_project_setting(action_args);
                 } else if (action_name == "list_nodes") {
                     AIReadActions::exec_list_nodes(action_args);
                 } else if (action_name == "get_node_info") {
