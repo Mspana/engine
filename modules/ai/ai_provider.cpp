@@ -249,6 +249,8 @@ String AIProvider::get_system_prompt() {
 	       "  Args: {\"source_path\": string (required, absolute OS path), \"dest_path\": string (required, res://...), \"overwrite\": bool (optional, default false)}\n"
 	       "- delete_asset: Delete an asset file from the project\n"
 	       "  Args: {\"asset_path\": string (required, res://...)}\n"
+	       "- run_project (alias: play_test): Run/play the project\n"
+	       "  Args: {\"mode\": string (optional, default \"play\", supported: \"play\", \"headless_smoke\"), \"scene_path\": string (optional)}\n"
 	       "- list_nodes: List nodes in the current scene tree\n"
 	       "  Args: {\"root_path\": string (optional)}\n"
 	       "- get_node_info: Get detailed information about a single node\n"

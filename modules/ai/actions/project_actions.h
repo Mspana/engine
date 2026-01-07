@@ -34,6 +34,10 @@ bool exec_import_asset(const Dictionary &args);
 // Required args: asset_path (String, res://...)
 bool exec_delete_asset(const Dictionary &args);
 
+// Runs/plays the project.
+// Optional args: mode (String, default "play"), scene_path (String)
+bool exec_run_project(const Dictionary &args);
+
 } // namespace AIProjectActions
 
 #endif // AI_PROJECT_ACTIONS_H

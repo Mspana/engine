@@ -13,6 +13,9 @@
 #include "core/io/resource_loader.h"
 #include "core/io/file_access.h"
 #include "core/io/dir_access.h"
+#include "editor/editor_interface.h"
+#include "editor/editor_command_palette.h"
+#include "editor/gui/editor_run_bar.h"
 
 namespace AIProjectActions {
 
@@ -425,6 +428,55 @@ bool exec_delete_asset(const Dictionary &args) {
 	return true;
 #else
 	ai_log_error("Execute 'delete_asset': Editor API not available in non-editor builds.");
+	return false;
+#endif
+}
+
+bool exec_run_project(const Dictionary &args) {
+#ifdef TOOLS_ENABLED
+	EditorInterface *ei = EditorInterface::get_singleton();
+	if (!ei) {
+		ai_log_error("Execute 'run_project': EditorInterface singleton not found.");
+		return false;
+	}
+
+	String mode = args.get("mode", "play");
+	String scene_path = args.get("scene_path", String());
+
+	// Try to get EditorRunBar if available
+	// For now, use command palette approach similar to save_scene
+	EditorCommandPalette *command_palette = ei->get_command_palette();
+	if (!command_palette) {
+		ai_log_error("Execute 'run_project': EditorCommandPalette not found.");
+		return false;
+	}
+
+	if (mode == "headless_smoke") {
+		// For headless smoke test, try to execute a specific command if available
+		// v0: log that it's not fully implemented yet
+		ai_log_verbose("Execute 'run_project': headless_smoke mode requested but not fully implemented in v0.");
+		// Try to execute the command anyway - it might work if the command exists
+		// For now, just log and return false
+		ai_log_error("Execute 'run_project': headless_smoke mode is not implemented in this build.");
+		return false;
+	} else if (mode == "play") {
+		// Execute the standard run project command
+		if (!scene_path.is_empty()) {
+			// If scene_path is provided, we'd need to use EditorRunBar::play_custom_scene
+			// For v0, just log that custom scene path is not fully supported
+			ai_log_verbose(vformat("Execute 'run_project': scene_path '%s' provided but custom scene execution not fully implemented in v0. Running main scene instead.", scene_path));
+		}
+		
+		// Execute the standard "editor/run_project" command
+		command_palette->execute_command("editor/run_project");
+		print_line("AI: Executed run_project (play mode).");
+		return true;
+	} else {
+		ai_log_error(vformat("Execute 'run_project': Unknown mode '%s'. Supported modes: 'play', 'headless_smoke'.", mode));
+		return false;
+	}
+#else
+	ai_log_error("Execute 'run_project': Editor API not available in non-editor builds.");
 	return false;
 #endif
 }

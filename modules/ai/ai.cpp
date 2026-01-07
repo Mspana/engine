@@ -41,7 +41,7 @@ AI *AI::singleton = nullptr;
 static const Vector<String> ALLOWED_ACTIONS = {
     "create_node","delete_node","duplicate_node","set_property",
     "create_script","update_script","attach_script","detach_script","rename_script","delete_script",
-    "connect_signal","disconnect_signal","run_project",
+    "connect_signal","disconnect_signal","run_project","play_test",
     "rename_node","reparent_node","create_scene","open_scene","save_scene","close_scene","set_main_scene",
     "get_node_info","find_nodes_by_type","list_nodes","list_files","set_project_setting","get_project_settings","create_autoload_singleton","remove_autoload_singleton","import_asset","delete_asset",
 };
@@ -278,6 +278,17 @@ bool AI::_validate_command_dictionary(const Dictionary &cmd, String &error_msg) 
             error_msg = "'delete_asset' requires string 'asset_path'.";
             return false;
         }
+    } else if (action == "run_project" || action == "play_test") {
+        // mode is optional string
+        if (args.has("mode") && args["mode"].get_type() != Variant::STRING) {
+            error_msg = "'run_project' optional 'mode' must be a string.";
+            return false;
+        }
+        // scene_path is optional string
+        if (args.has("scene_path") && args["scene_path"].get_type() != Variant::STRING) {
+            error_msg = "'run_project' optional 'scene_path' must be a string.";
+            return false;
+        }
     } else if (action == "list_nodes") {
         // root_path is optional string
         if (args.has("root_path") && args["root_path"].get_type() != Variant::STRING) {
@@ -469,6 +480,8 @@ void AI::_process_and_execute_actions(const String &ai_json_response) {
                     AIProjectActions::exec_import_asset(action_args);
                 } else if (action_name == "delete_asset") {
                     AIProjectActions::exec_delete_asset(action_args);
+                } else if (action_name == "run_project" || action_name == "play_test") {
+                    AIProjectActions::exec_run_project(action_args);
                 } else if (action_name == "list_nodes") {
                     AIReadActions::exec_list_nodes(action_args);
                 } else if (action_name == "get_node_info") {
