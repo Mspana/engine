@@ -8,6 +8,7 @@
 #include "core/object/class_db.h" // Required for ClassDB
 
 #ifdef TOOLS_ENABLED
+#include "editor/ai_chat_store.h"
 #include "editor/ai_status_indicator.h"
 #include "editor/plugins/editor_plugin.h"
 #endif
@@ -39,6 +40,7 @@ void initialize_ai_module(ModuleInitializationLevel p_level) {
 #ifdef TOOLS_ENABLED
 	if (p_level == MODULE_INITIALIZATION_LEVEL_EDITOR) {
 		// Register editor plugin classes
+		GDREGISTER_CLASS(AIChatStore);
 		GDREGISTER_CLASS(AIStatusIndicator);
 		GDREGISTER_CLASS(AIStatusPanel);
 		GDREGISTER_CLASS(AIStatusIndicatorPlugin);

@@ -32,9 +32,13 @@
 
 #include "../ai.h"
 #include "core/config/engine.h"
+#include "core/io/json.h"
+#include "core/string/ustring.h"
 #include "editor/editor_node.h"
 #include "editor/themes/editor_scale.h"
-#include "scene/gui/label.h"
+#include "scene/gui/rich_text_label.h"
+#include "scene/resources/style_box_flat.h"
+#include "scene/resources/font.h"
 #include "scene/scene_string_names.h"
 
 // ============================================================================
@@ -93,50 +97,290 @@ AIStatusIndicator::AIStatusIndicator() {
 }
 
 // ============================================================================
-// AIStatusPanel - The bottom panel containing UI elements
+// AIStatusPanel - The chat panel containing transcript and input
 // ============================================================================
 
 void AIStatusPanel::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_READY: {
+			// Load transcript and rebuild UI
+			if (chat_store.is_valid()) {
+				chat_store->load_transcript();
+				_rebuild_message_list();
+			}
 			// Initial connectivity check
 			check_api_connectivity();
+
+			// Connect to AI provider signal
+			if (Engine::get_singleton()->has_singleton("AI")) {
+				Object *ai_obj = Engine::get_singleton()->get_singleton_object("AI");
+				AI *ai = Object::cast_to<AI>(ai_obj);
+				if (ai) {
+					Ref<AIProvider> provider = ai->get_provider();
+					if (provider.is_valid()) {
+						if (!provider->is_connected("request_completed", callable_mp(this, &AIStatusPanel::_on_ai_response))) {
+							provider->connect("request_completed", callable_mp(this, &AIStatusPanel::_on_ai_response));
+						}
+					}
+				}
+			}
 		} break;
 
 		case NOTIFICATION_THEME_CHANGED: {
-			// Update button icon if needed
+			// Update button icons if needed
+			_rebuild_message_list();
 		} break;
 	}
 }
 
 void AIStatusPanel::_bind_methods() {
-	ClassDB::bind_method(D_METHOD("_on_request_button_pressed"), &AIStatusPanel::_on_request_button_pressed);
+	ClassDB::bind_method(D_METHOD("_on_send_pressed"), &AIStatusPanel::_on_send_pressed);
+	ClassDB::bind_method(D_METHOD("_on_clear_pressed"), &AIStatusPanel::_on_clear_pressed);
+	ClassDB::bind_method(D_METHOD("_on_prompt_text_changed"), &AIStatusPanel::_on_prompt_text_changed);
+	ClassDB::bind_method(D_METHOD("_on_ai_response", "success", "response", "error"), &AIStatusPanel::_on_ai_response);
 	ClassDB::bind_method(D_METHOD("_on_openai_request_completed", "result", "response_code", "headers", "body"), &AIStatusPanel::_on_openai_request_completed);
 	ClassDB::bind_method(D_METHOD("_on_gemini_request_completed", "result", "response_code", "headers", "body"), &AIStatusPanel::_on_gemini_request_completed);
 	ClassDB::bind_method(D_METHOD("_on_xai_request_completed", "result", "response_code", "headers", "body"), &AIStatusPanel::_on_xai_request_completed);
 	ClassDB::bind_method(D_METHOD("check_api_connectivity"), &AIStatusPanel::check_api_connectivity);
 }
 
-void AIStatusPanel::_on_request_button_pressed() {
-	if (!prompt_edit) {
+void AIStatusPanel::_rebuild_message_list() {
+	if (!message_list) {
 		return;
 	}
 
-	String prompt_text = prompt_edit->get_text();
+	// Clear existing messages
+	while (message_list->get_child_count() > 0) {
+		Node *child = message_list->get_child(0);
+		message_list->remove_child(child);
+		memdelete(child);
+	}
+	pending_message = nullptr;
+
+	// Add all messages from store
+	if (chat_store.is_valid()) {
+		const Vector<ChatMessage> &messages = chat_store->get_messages();
+		for (int i = 0; i < messages.size(); i++) {
+			Control *bubble = _create_message_bubble(messages[i]);
+			if (bubble) {
+				message_list->add_child(bubble);
+			}
+		}
+	}
+
+	// Scroll to bottom after rebuild
+	callable_mp(this, &AIStatusPanel::_scroll_to_bottom).call_deferred();
+}
+
+void AIStatusPanel::_append_message_ui(const ChatMessage &p_message) {
+	if (!message_list) {
+		return;
+	}
+
+	Control *bubble = _create_message_bubble(p_message);
+	if (bubble) {
+		message_list->add_child(bubble);
+		callable_mp(this, &AIStatusPanel::_scroll_to_bottom).call_deferred();
+	}
+}
+
+Control *AIStatusPanel::_create_message_bubble(const ChatMessage &p_message) {
+	// Create container for alignment
+	HBoxContainer *align_container = memnew(HBoxContainer);
+	align_container->set_h_size_flags(SIZE_EXPAND_FILL);
+
+	// Create the bubble panel
+	PanelContainer *bubble = memnew(PanelContainer);
+
+	// Style the bubble based on role
+	Ref<StyleBoxFlat> style;
+	style.instantiate();
+	style->set_corner_radius_all(8 * EDSCALE);
+	style->set_content_margin_all(10 * EDSCALE);
+
+	bool is_user = p_message.role == "user";
+
+	if (is_user) {
+		// User messages: blue tint, right aligned
+		style->set_bg_color(Color(0.2, 0.4, 0.6, 0.8));
+		// Add flexible spacer on left to push bubble right
+		Control *spacer = memnew(Control);
+		spacer->set_h_size_flags(SIZE_EXPAND_FILL);
+		spacer->set_stretch_ratio(0.3); // Take up to 30% of space
+		align_container->add_child(spacer);
+		bubble->set_h_size_flags(SIZE_EXPAND_FILL);
+		bubble->set_stretch_ratio(0.7); // Bubble takes up to 70%
+		align_container->add_child(bubble);
+	} else {
+		// Assistant messages: gray tint, left aligned
+		style->set_bg_color(Color(0.3, 0.3, 0.35, 0.8));
+		bubble->set_h_size_flags(SIZE_EXPAND_FILL);
+		bubble->set_stretch_ratio(0.9); // Bubble takes up to 90%
+		align_container->add_child(bubble);
+		// Add flexible spacer on right
+		Control *spacer = memnew(Control);
+		spacer->set_h_size_flags(SIZE_EXPAND_FILL);
+		spacer->set_stretch_ratio(0.1);
+		align_container->add_child(spacer);
+	}
+
+	bubble->add_theme_style_override("panel", style);
+
+	// Create label for content
+	RichTextLabel *label = memnew(RichTextLabel);
+	label->set_use_bbcode(true);
+	label->set_fit_content(true);
+	label->set_scroll_active(false);
+	label->set_selection_enabled(true);
+
+	// Display content (no longer need to pretty-print JSON since we extract the message)
+	label->add_text(p_message.content);
+
+	bubble->add_child(label);
+
+	return align_container;
+}
+
+void AIStatusPanel::_scroll_to_bottom() {
+	if (transcript_scroll) {
+		transcript_scroll->set_v_scroll(transcript_scroll->get_v_scroll_bar()->get_max());
+	}
+}
+
+void AIStatusPanel::_update_send_button_state() {
+	if (!send_button || !prompt_edit) {
+		return;
+	}
+
+	bool can_send = !is_waiting_for_response && !prompt_edit->get_text().strip_edges().is_empty();
+	send_button->set_disabled(!can_send);
+}
+
+void AIStatusPanel::_on_send_pressed() {
+	if (!prompt_edit || is_waiting_for_response) {
+		return;
+	}
+
+	String prompt_text = prompt_edit->get_text().strip_edges();
 	if (prompt_text.is_empty()) {
 		return;
 	}
 
-	// Get the AI singleton
+	// Append user message
+	if (chat_store.is_valid()) {
+		ChatMessage user_msg = chat_store->append_message("user", prompt_text);
+		_append_message_ui(user_msg);
+	}
+
+	// Clear input
+	prompt_edit->set_text("");
+
+	// Show pending message
+	_show_pending_message();
+
+	// Update state
+	is_waiting_for_response = true;
+	_update_send_button_state();
+
+	// Send to AI
 	if (Engine::get_singleton()->has_singleton("AI")) {
 		Object *ai_obj = Engine::get_singleton()->get_singleton_object("AI");
 		AI *ai = Object::cast_to<AI>(ai_obj);
 		if (ai) {
-			print_line(vformat("AI Status Panel: Sending prompt: '%s'", prompt_text));
+			print_line(vformat("AI Chat Panel: Sending prompt: '%s'", prompt_text));
 			ai->request_actions(prompt_text);
 		}
 	} else {
-		ERR_PRINT("AI Status Panel: AI singleton not found.");
+		ERR_PRINT("AI Chat Panel: AI singleton not found.");
+		_remove_pending_message();
+		is_waiting_for_response = false;
+		_update_send_button_state();
+	}
+}
+
+void AIStatusPanel::_on_clear_pressed() {
+	if (chat_store.is_valid()) {
+		chat_store->clear_transcript();
+	}
+	_rebuild_message_list();
+}
+
+void AIStatusPanel::_on_prompt_text_changed() {
+	_update_send_button_state();
+}
+
+void AIStatusPanel::_on_ai_response(bool p_success, const String &p_response, const String &p_error) {
+	// Remove pending message
+	_remove_pending_message();
+
+	// Append assistant response
+	String content;
+	if (p_success) {
+		// Try to parse the new format: {"message": "...", "actions": [...]}
+		JSON json;
+		Error err = json.parse(p_response);
+		if (err == OK && json.get_data().get_type() == Variant::DICTIONARY) {
+			Dictionary response_dict = json.get_data();
+			String message = response_dict.get("message", "");
+			Array actions = response_dict.get("actions", Array());
+			
+			// Build display content
+			if (!message.is_empty()) {
+				content = message;
+			}
+			
+			// If there are actions, append a summary
+			if (actions.size() > 0) {
+				if (!content.is_empty()) {
+					content += "\n\n";
+				}
+				content += vformat("[%d action(s) executed]", actions.size());
+			}
+			
+			// Fallback if both are empty
+			if (content.is_empty()) {
+				content = "(No response)";
+			}
+		} else {
+			// Legacy format or parse error - show raw response
+			content = p_response;
+		}
+	} else {
+		content = vformat("[Error] %s", p_error);
+	}
+
+	if (chat_store.is_valid()) {
+		ChatMessage assistant_msg = chat_store->append_message("assistant", content);
+		_append_message_ui(assistant_msg);
+	}
+
+	// Update state
+	is_waiting_for_response = false;
+	_update_send_button_state();
+}
+
+void AIStatusPanel::_show_pending_message() {
+	if (!message_list || pending_message) {
+		return;
+	}
+
+	// Create a "thinking" message
+	ChatMessage thinking_msg;
+	thinking_msg.role = "assistant";
+	thinking_msg.content = "Assistant is thinking...";
+
+	pending_message = _create_message_bubble(thinking_msg);
+	if (pending_message) {
+		message_list->add_child(pending_message);
+		callable_mp(this, &AIStatusPanel::_scroll_to_bottom).call_deferred();
+	}
+}
+
+void AIStatusPanel::_remove_pending_message() {
+	if (pending_message && message_list) {
+		message_list->remove_child(pending_message);
+		memdelete(pending_message);
+		pending_message = nullptr;
 	}
 }
 
@@ -150,6 +394,10 @@ void AIStatusPanel::check_api_connectivity() {
 	if (status_indicator) {
 		status_indicator->set_status(AIStatusIndicator::STATUS_CHECKING);
 		status_indicator->set_tooltip_text(TTR("Checking API connectivity..."));
+	}
+
+	if (status_label) {
+		status_label->set_text(TTR("Checking..."));
 	}
 
 	// Send requests to check each provider
@@ -256,42 +504,99 @@ void AIStatusPanel::_update_status_from_results() {
 			print_line("AI Status: No providers reachable");
 		}
 	}
+
+	if (status_label) {
+		if (any_connected) {
+			status_label->set_text(TTR("Connected"));
+		} else {
+			status_label->set_text(TTR("Disconnected"));
+		}
+	}
 }
 
 AIStatusPanel::AIStatusPanel() {
 	set_name("AI");
 
-	// Prompt text edit (fills remaining space)
+	// Initialize chat store
+	chat_store.instantiate();
+
+	// ========================================
+	// Transcript scroll area (top, expandable)
+	// ========================================
+	transcript_scroll = memnew(ScrollContainer);
+	transcript_scroll->set_h_size_flags(SIZE_EXPAND_FILL);
+	transcript_scroll->set_v_size_flags(SIZE_EXPAND_FILL);
+	transcript_scroll->set_horizontal_scroll_mode(ScrollContainer::SCROLL_MODE_DISABLED);
+	add_child(transcript_scroll);
+
+	message_list = memnew(VBoxContainer);
+	message_list->set_h_size_flags(SIZE_EXPAND_FILL);
+	message_list->add_theme_constant_override("separation", 8 * EDSCALE);
+	transcript_scroll->add_child(message_list);
+
+	// ========================================
+	// Separator
+	// ========================================
+	HSeparator *separator = memnew(HSeparator);
+	add_child(separator);
+
+	// ========================================
+	// Input bar (bottom)
+	// ========================================
+	HBoxContainer *input_bar = memnew(HBoxContainer);
+	input_bar->add_theme_constant_override("separation", 4 * EDSCALE);
+	add_child(input_bar);
+
+	// Prompt text edit
 	prompt_edit = memnew(TextEdit);
-	prompt_edit->set_placeholder(TTR("Enter prompt for AI..."));
+	prompt_edit->set_placeholder(TTR("Type a message..."));
 	prompt_edit->set_h_size_flags(SIZE_EXPAND_FILL);
-	prompt_edit->set_v_size_flags(SIZE_EXPAND_FILL);
-	add_child(prompt_edit);
+	prompt_edit->set_custom_minimum_size(Size2(0, 60 * EDSCALE));
+	prompt_edit->set_line_wrapping_mode(TextEdit::LINE_WRAPPING_BOUNDARY);
+	prompt_edit->connect("text_changed", callable_mp(this, &AIStatusPanel::_on_prompt_text_changed));
+	input_bar->add_child(prompt_edit);
 
-	// Create button bar (horizontal container)
-	button_bar = memnew(HBoxContainer);
-	add_child(button_bar);
+	// Button column
+	VBoxContainer *button_column = memnew(VBoxContainer);
+	button_column->add_theme_constant_override("separation", 4 * EDSCALE);
+	input_bar->add_child(button_column);
 
-	// Add spacer to push button to the right
-	button_bar->add_spacer();
+	// Send button
+	send_button = memnew(Button);
+	send_button->set_text(TTR("Send"));
+	send_button->set_disabled(true); // Disabled until text is entered
+	send_button->connect(SceneStringNames::get_singleton()->pressed, callable_mp(this, &AIStatusPanel::_on_send_pressed));
+	button_column->add_child(send_button);
 
-	// Request Actions button with status indicator inside
-	request_button = memnew(Button);
-	request_button->set_text(TTR("Request Actions"));
-	request_button->connect(SceneStringName(pressed), callable_mp(this, &AIStatusPanel::_on_request_button_pressed));
+	// Clear button
+	clear_button = memnew(Button);
+	clear_button->set_text(TTR("Clear"));
+	clear_button->connect(SceneStringNames::get_singleton()->pressed, callable_mp(this, &AIStatusPanel::_on_clear_pressed));
+	button_column->add_child(clear_button);
 
-	// Status indicator (colored circle) - added as icon to the button
+	// ========================================
+	// Status bar (bottom)
+	// ========================================
+	HBoxContainer *status_bar = memnew(HBoxContainer);
+	status_bar->add_theme_constant_override("separation", 4 * EDSCALE);
+	add_child(status_bar);
+
+	// Status indicator (colored circle)
 	status_indicator = memnew(AIStatusIndicator);
 	status_indicator->set_tooltip_text(TTR("API connection status"));
+	status_bar->add_child(status_indicator);
 
-	// Create an HBox to hold indicator + button together tightly
-	HBoxContainer *button_with_status = memnew(HBoxContainer);
-	button_with_status->add_theme_constant_override("separation", 4);
-	button_with_status->add_child(status_indicator);
-	button_with_status->add_child(request_button);
-	button_bar->add_child(button_with_status);
+	// Status label
+	status_label = memnew(Label);
+	status_label->set_text(TTR("Unknown"));
+	status_bar->add_child(status_label);
 
-	// Create HTTP request nodes for connectivity checks
+	// Add spacer to push status to left
+	status_bar->add_spacer();
+
+	// ========================================
+	// HTTP request nodes for connectivity checks
+	// ========================================
 	http_openai = memnew(HTTPRequest);
 	http_openai->set_timeout(10.0); // 10 second timeout
 	add_child(http_openai);
@@ -306,6 +611,22 @@ AIStatusPanel::AIStatusPanel() {
 	http_xai->set_timeout(10.0);
 	add_child(http_xai);
 	http_xai->connect("request_completed", callable_mp(this, &AIStatusPanel::_on_xai_request_completed));
+}
+
+AIStatusPanel::~AIStatusPanel() {
+	// Disconnect from AI provider signal if connected
+	if (Engine::get_singleton()->has_singleton("AI")) {
+		Object *ai_obj = Engine::get_singleton()->get_singleton_object("AI");
+		AI *ai = Object::cast_to<AI>(ai_obj);
+		if (ai) {
+			Ref<AIProvider> provider = ai->get_provider();
+			if (provider.is_valid()) {
+				if (provider->is_connected("request_completed", callable_mp(this, &AIStatusPanel::_on_ai_response))) {
+					provider->disconnect("request_completed", callable_mp(this, &AIStatusPanel::_on_ai_response));
+				}
+			}
+		}
+	}
 }
 
 // ============================================================================
@@ -370,4 +691,3 @@ AIStatusIndicatorPlugin::AIStatusIndicatorPlugin() {
 
 AIStatusIndicatorPlugin::~AIStatusIndicatorPlugin() {
 }
-

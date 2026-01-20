@@ -402,25 +402,48 @@ void AI::_process_and_execute_actions(const String &ai_json_response) {
     }
 
     Variant parsed_data = action_parser.get_data();
+    Array commands_array;
 
-    if (parsed_data.get_type() == Variant::ARRAY) {
-        Array commands_array = parsed_data;
-        for (int i = 0; i < commands_array.size(); ++i) {
-            if (commands_array[i].get_type() == Variant::DICTIONARY) {
-                Dictionary command_dict = commands_array[i];
-                String validation_error_msg;
-                if (_validate_command_dictionary(command_dict, validation_error_msg)) {
-                    valid_actions_array.push_back(command_dict);
-                } else {
-                    WARN_PRINT(vformat("AI::_process_and_execute_actions - Invalid command at index %d: %s. Command: %s", i, validation_error_msg, JSON::stringify(commands_array[i])));
-                }
-            } else {
-                WARN_PRINT(vformat("AI::_process_and_execute_actions - Expected Dictionary at index %d, got %s.", i, Variant::get_type_name(commands_array[i].get_type())));
+    // Handle new format: {"message": "...", "actions": [...]}
+    if (parsed_data.get_type() == Variant::DICTIONARY) {
+        Dictionary response_dict = parsed_data;
+        
+        // Log the message if present
+        if (response_dict.has("message")) {
+            String message = response_dict.get("message", "");
+            if (!message.is_empty()) {
+                print_line(vformat("AI Message: %s", message));
             }
         }
+        
+        // Extract actions array
+        if (response_dict.has("actions") && response_dict["actions"].get_type() == Variant::ARRAY) {
+            commands_array = response_dict["actions"];
+        } else {
+            print_verbose("AI: No actions in response.");
+        }
+    }
+    // Handle legacy format: [{...}, {...}] (array of actions directly)
+    else if (parsed_data.get_type() == Variant::ARRAY) {
+        commands_array = parsed_data;
     } else {
-        ERR_PRINT(vformat("AI::_process_and_execute_actions - AI response is not an Array. Got %s. Response: %s", Variant::get_type_name(parsed_data.get_type()), ai_json_response));
+        ERR_PRINT(vformat("AI::_process_and_execute_actions - AI response is not a Dictionary or Array. Got %s. Response: %s", Variant::get_type_name(parsed_data.get_type()), ai_json_response));
         return;
+    }
+
+    // Validate each action
+    for (int i = 0; i < commands_array.size(); ++i) {
+        if (commands_array[i].get_type() == Variant::DICTIONARY) {
+            Dictionary command_dict = commands_array[i];
+            String validation_error_msg;
+            if (_validate_command_dictionary(command_dict, validation_error_msg)) {
+                valid_actions_array.push_back(command_dict);
+            } else {
+                WARN_PRINT(vformat("AI::_process_and_execute_actions - Invalid command at index %d: %s. Command: %s", i, validation_error_msg, JSON::stringify(commands_array[i])));
+            }
+        } else {
+            WARN_PRINT(vformat("AI::_process_and_execute_actions - Expected Dictionary at index %d, got %s.", i, Variant::get_type_name(commands_array[i].get_type())));
+        }
     }
 
     // Execute valid actions
