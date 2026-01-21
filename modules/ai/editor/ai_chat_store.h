@@ -38,8 +38,8 @@
 // Message data structure for chat transcript
 struct ChatMessage {
 	int64_t id = 0;           // Unix timestamp ms (unique enough for single user)
-	String role;              // "user" | "assistant" | "system"
-	String content;           // Message text
+	String role;              // "user" | "assistant" | "system" | "tool"
+	String content;           // Message text (for "tool" role, this is JSON-stringified tool result)
 	int64_t created_at = 0;   // Unix timestamp ms
 
 	ChatMessage() {}
@@ -73,6 +73,9 @@ public:
 
 	// Append a new message and save. Returns the created message.
 	ChatMessage append_message(const String &p_role, const String &p_content);
+
+	// Append a tool result message (convenience method for agentic tool use)
+	ChatMessage append_tool_result(const Dictionary &p_tool_result);
 
 	// Clear all messages and delete the transcript file
 	void clear_transcript();

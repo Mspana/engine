@@ -7,6 +7,7 @@
 #include "core/variant/dictionary.h"    // Added for Dictionary type hint
 #include "ai_provider.h"                // For AIProvider types
 #include "retrieval.h"                  // For RetrievalIndex
+#include "agentic_orchestrator.h"       // For agentic tool use
 
 class AI : public Object {
 	GDCLASS(AI, Object); // Godot class macro
@@ -26,16 +27,27 @@ protected:
 private:
 	// Provider for AI API calls
 	Ref<AIProvider> provider;
-	
+
 	// Retrieval index for RAG-lite context
 	Ref<RetrievalIndex> retrieval;
-	
+
+	// Agentic orchestrator for multi-turn tool use
+	Ref<AgenticOrchestrator> orchestrator;
+
 	// Callback for provider request completion
 	void _on_provider_request_completed(bool success, const String &response_json, const String &error_message);
-	
+
+	// Agentic callbacks
+	void _on_agentic_tool_result(const Dictionary &p_tool_result);
+	void _on_agentic_progress(const String &p_status, int p_turn);
+	void _on_agentic_complete(bool p_success, const String &p_final_message);
+
 	// Helper to process and execute actions from JSON response
 	void _process_and_execute_actions(const String &ai_json_response);
-	
+
+	// Execute single action and return result (for agentic orchestrator)
+	Dictionary _execute_single_action_internal(const Dictionary &p_action);
+
 	// Helper to validate a command already parsed into a Dictionary.
 	bool _validate_command_dictionary(const Dictionary &cmd, String &error_msg) const;
 
@@ -53,9 +65,15 @@ private:
 public:
 	// The core method to interact with the AI backend (single message, legacy).
 	Array request_actions(const String &prompt);
-	
+
 	// Request with full conversation history
 	Array request_actions_with_history(const Array &p_messages);
+
+	// Execute a single action and return structured result (for orchestrator)
+	Dictionary execute_single_action(const Dictionary &p_action);
+
+	// Get the orchestrator (for UI to access cancel, status, etc.)
+	Ref<AgenticOrchestrator> get_orchestrator() const;
 
 	// Provider management
 	void set_provider(const Ref<AIProvider> &p_provider);

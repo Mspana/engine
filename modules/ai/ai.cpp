@@ -381,12 +381,124 @@ bool AI::validate_command_json(const String &json_str, String &error_msg) const 
     return _validate_command_dictionary(cmd, error_msg);
 }
 
+Dictionary AI::_execute_single_action_internal(const Dictionary &p_action) {
+    // Internal method - just delegates to the public execute_single_action
+    return execute_single_action(p_action);
+}
+
+Dictionary AI::execute_single_action(const Dictionary &p_action) {
+    // Extract action name and args from the action dictionary
+    if (!p_action.has("action") || p_action["action"].get_type() != Variant::STRING) {
+        Dictionary error_result;
+        error_result["status"] = "error";
+        Dictionary error_dict;
+        error_dict["code"] = "invalid_action";
+        error_dict["message"] = "Action dictionary missing 'action' field or it's not a string";
+        error_dict["details"] = Dictionary();
+        error_result["error"] = error_dict;
+        return error_result;
+    }
+
+    if (!p_action.has("args") || p_action["args"].get_type() != Variant::DICTIONARY) {
+        Dictionary error_result;
+        error_result["status"] = "error";
+        Dictionary error_dict;
+        error_dict["code"] = "invalid_action";
+        error_dict["message"] = "Action dictionary missing 'args' field or it's not a dictionary";
+        error_dict["details"] = Dictionary();
+        error_result["error"] = error_dict;
+        return error_result;
+    }
+
+    String action_name = p_action["action"];
+    Dictionary action_args = p_action["args"];
+
+    // Dispatch to appropriate action handler based on action_name
+    if (action_name == "create_node") {
+        return AINodeActions::exec_create_node(action_args);
+    } else if (action_name == "set_property") {
+        return AINodeActions::exec_set_property(action_args);
+    } else if (action_name == "rename_node") {
+        return AINodeActions::exec_rename_node(action_args);
+    } else if (action_name == "reparent_node") {
+        return AINodeActions::exec_reparent_node(action_args);
+    } else if (action_name == "delete_node") {
+        return AINodeActions::exec_delete_node(action_args);
+    } else if (action_name == "duplicate_node") {
+        return AINodeActions::exec_duplicate_node(action_args);
+    } else if (action_name == "create_script") {
+        return AIScriptActions::exec_create_script(action_args);
+    } else if (action_name == "update_script") {
+        return AIScriptActions::exec_update_script(action_args);
+    } else if (action_name == "attach_script") {
+        return AIScriptActions::exec_attach_script(action_args);
+    } else if (action_name == "detach_script") {
+        return AIScriptActions::exec_detach_script(action_args);
+    } else if (action_name == "rename_script") {
+        return AIScriptActions::exec_rename_script(action_args);
+    } else if (action_name == "delete_script") {
+        return AIScriptActions::exec_delete_script(action_args);
+    } else if (action_name == "create_scene") {
+        return AISceneActions::exec_create_scene(action_args);
+    } else if (action_name == "open_scene") {
+        return AISceneActions::exec_open_scene(action_args);
+    } else if (action_name == "save_scene") {
+        return AISceneActions::exec_save_scene(action_args);
+    } else if (action_name == "set_main_scene") {
+        return AISceneActions::exec_set_main_scene(action_args);
+    } else if (action_name == "close_scene") {
+        return AISceneActions::exec_close_scene(action_args);
+    } else if (action_name == "set_project_setting") {
+        return AIProjectActions::exec_set_project_setting(action_args);
+    } else if (action_name == "get_project_settings") {
+        return AIProjectActions::exec_get_project_settings(action_args);
+    } else if (action_name == "create_autoload_singleton") {
+        return AIProjectActions::exec_create_autoload_singleton(action_args);
+    } else if (action_name == "remove_autoload_singleton") {
+        return AIProjectActions::exec_remove_autoload_singleton(action_args);
+    } else if (action_name == "import_asset") {
+        return AIProjectActions::exec_import_asset(action_args);
+    } else if (action_name == "delete_asset") {
+        return AIProjectActions::exec_delete_asset(action_args);
+    } else if (action_name == "run_project" || action_name == "play_test") {
+        return AIProjectActions::exec_run_project(action_args);
+    } else if (action_name == "list_nodes") {
+        return AIReadActions::exec_list_nodes(action_args);
+    } else if (action_name == "get_node_info") {
+        return AIReadActions::exec_get_node_info(action_args);
+    } else if (action_name == "find_nodes_by_type") {
+        return AIReadActions::exec_find_nodes_by_type(action_args);
+    } else if (action_name == "list_files") {
+        return AIReadActions::exec_list_files(action_args);
+    } else if (action_name == "connect_signal") {
+        return AISignalActions::exec_connect_signal(action_args);
+    } else if (action_name == "disconnect_signal") {
+        return AISignalActions::exec_disconnect_signal(action_args);
+    } else {
+        // Unknown action
+        Dictionary error_result;
+        error_result["status"] = "error";
+        Dictionary error_dict;
+        error_dict["code"] = "unknown_action";
+        error_dict["message"] = vformat("Unknown action: %s", action_name);
+        error_dict["details"] = Dictionary();
+        error_result["error"] = error_dict;
+        return error_result;
+    }
+}
+
 void AI::_on_provider_request_completed(bool success, const String &response_json, const String &error_message) {
+    // If orchestrator is running, it handles responses - skip this legacy handler
+    if (orchestrator.is_valid() && orchestrator->is_running()) {
+        print_verbose("AI: Skipping legacy handler - orchestrator is running");
+        return;
+    }
+
     if (!success) {
         ERR_PRINT(vformat("AI::_on_provider_request_completed - Request failed: %s", error_message));
         return;
     }
-    
+
     print_line("AI: Provider request completed successfully");
     _process_and_execute_actions(response_json);
 }
@@ -452,76 +564,20 @@ void AI::_process_and_execute_actions(const String &ai_json_response) {
         for (int i = 0; i < valid_actions_array.size(); ++i) {
             const Dictionary &action_dict = valid_actions_array[i];
             String action_name = action_dict.get("action", "");
-            Variant args_variant = action_dict.get("args", Dictionary());
 
-            if (args_variant.get_type() == Variant::DICTIONARY) {
-                Dictionary action_args = args_variant;
-                print_line(vformat("  - Executing Action %d: %s", i + 1, JSON::stringify(action_dict)));
-                if (action_name == "create_node") {
-                    AINodeActions::exec_create_node(action_args);
-                } else if (action_name == "set_property") {
-                    AINodeActions::exec_set_property(action_args);
-                } else if (action_name == "rename_node") {
-                    AINodeActions::exec_rename_node(action_args);
-                } else if (action_name == "reparent_node") {
-                    AINodeActions::exec_reparent_node(action_args);
-                } else if (action_name == "delete_node") {
-                    AINodeActions::exec_delete_node(action_args);
-                } else if (action_name == "duplicate_node") {
-                    AINodeActions::exec_duplicate_node(action_args);
-                } else if (action_name == "create_script") {
-                    AIScriptActions::exec_create_script(action_args);
-                } else if (action_name == "update_script") {
-                    AIScriptActions::exec_update_script(action_args);
-                } else if (action_name == "attach_script") {
-                    AIScriptActions::exec_attach_script(action_args);
-                } else if (action_name == "detach_script") {
-                    AIScriptActions::exec_detach_script(action_args);
-                } else if (action_name == "rename_script") {
-                    AIScriptActions::exec_rename_script(action_args);
-                } else if (action_name == "delete_script") {
-                    AIScriptActions::exec_delete_script(action_args);
-                } else if (action_name == "create_scene") {
-                    AISceneActions::exec_create_scene(action_args);
-                } else if (action_name == "open_scene") {
-                    AISceneActions::exec_open_scene(action_args);
-                } else if (action_name == "save_scene") {
-                    AISceneActions::exec_save_scene(action_args);
-                } else if (action_name == "set_main_scene") {
-                    AISceneActions::exec_set_main_scene(action_args);
-                } else if (action_name == "close_scene") {
-                    AISceneActions::exec_close_scene(action_args);
-                } else if (action_name == "set_project_setting") {
-                    AIProjectActions::exec_set_project_setting(action_args);
-                } else if (action_name == "get_project_settings") {
-                    AIProjectActions::exec_get_project_settings(action_args);
-                } else if (action_name == "create_autoload_singleton") {
-                    AIProjectActions::exec_create_autoload_singleton(action_args);
-                } else if (action_name == "remove_autoload_singleton") {
-                    AIProjectActions::exec_remove_autoload_singleton(action_args);
-                } else if (action_name == "import_asset") {
-                    AIProjectActions::exec_import_asset(action_args);
-                } else if (action_name == "delete_asset") {
-                    AIProjectActions::exec_delete_asset(action_args);
-                } else if (action_name == "run_project" || action_name == "play_test") {
-                    AIProjectActions::exec_run_project(action_args);
-                } else if (action_name == "list_nodes") {
-                    AIReadActions::exec_list_nodes(action_args);
-                } else if (action_name == "get_node_info") {
-                    AIReadActions::exec_get_node_info(action_args);
-                } else if (action_name == "find_nodes_by_type") {
-                    AIReadActions::exec_find_nodes_by_type(action_args);
-                } else if (action_name == "list_files") {
-                    AIReadActions::exec_list_files(action_args);
-                } else if (action_name == "connect_signal") {
-                    AISignalActions::exec_connect_signal(action_args);
-                } else if (action_name == "disconnect_signal") {
-                    AISignalActions::exec_disconnect_signal(action_args);
-                } else {
-                    print_line(vformat("    - Action '%s' has no execution logic implemented.", action_name));
-                }
-            } else {
-                WARN_PRINT(vformat("  - Action %d ('%s') has invalid 'args' type. Skipping.", i+1, action_name));
+            print_line(vformat("  - Executing Action %d: %s", i + 1, JSON::stringify(action_dict)));
+
+            // Execute action and get result
+            Dictionary result = execute_single_action(action_dict);
+
+            // Log result status
+            String status = result.get("status", "unknown");
+            if (status == "success") {
+                print_verbose(vformat("    - Action '%s' succeeded", action_name));
+            } else if (status == "error") {
+                Dictionary error = result.get("error", Dictionary());
+                String error_msg = error.get("message", "Unknown error");
+                WARN_PRINT(vformat("    - Action '%s' failed: %s", action_name, error_msg));
             }
         }
     } else {
@@ -834,16 +890,26 @@ AI::AI() {
 	Ref<XAIProvider> xai;
 	xai.instantiate();
 	set_provider(xai); // Use setter to connect signal
-	
+
 	// Initialize retrieval index
 	retrieval.instantiate();
-	
+
 	// Set project root from ProjectSettings
 	if (ProjectSettings::get_singleton()) {
 		String project_root = ProjectSettings::get_singleton()->globalize_path("res://");
 		retrieval->set_project_root(project_root);
 		print_line(vformat("AI: Initialized retrieval index with project root: %s", project_root));
 	}
+
+	// Initialize agentic orchestrator
+	orchestrator.instantiate();
+
+	// Connect orchestrator signals to callbacks
+	orchestrator->connect("progress_update", callable_mp(this, &AI::_on_agentic_progress));
+	orchestrator->connect("tool_result_ready", callable_mp(this, &AI::_on_agentic_tool_result));
+	orchestrator->connect("run_complete", callable_mp(this, &AI::_on_agentic_complete));
+
+	print_line("AI: Agentic orchestrator initialized");
 }
 
 AI::~AI() {
@@ -853,4 +919,44 @@ AI::~AI() {
             provider->disconnect("request_completed", callable_mp(this, &AI::_on_provider_request_completed));
         }
     }
+
+    // Disconnect from orchestrator if connected
+    if (orchestrator.is_valid()) {
+        if (orchestrator->is_connected("progress_update", callable_mp(this, &AI::_on_agentic_progress))) {
+            orchestrator->disconnect("progress_update", callable_mp(this, &AI::_on_agentic_progress));
+        }
+        if (orchestrator->is_connected("tool_result_ready", callable_mp(this, &AI::_on_agentic_tool_result))) {
+            orchestrator->disconnect("tool_result_ready", callable_mp(this, &AI::_on_agentic_tool_result));
+        }
+        if (orchestrator->is_connected("run_complete", callable_mp(this, &AI::_on_agentic_complete))) {
+            orchestrator->disconnect("run_complete", callable_mp(this, &AI::_on_agentic_complete));
+        }
+    }
+}
+
+// Agentic callback implementations
+void AI::_on_agentic_tool_result(const Dictionary &p_tool_result) {
+    // Tool result received from orchestrator
+    // In Phase 4, we'll forward this to the UI for display in chat transcript
+    print_verbose(vformat("AI: Tool result received: %s", JSON::stringify(p_tool_result)));
+}
+
+void AI::_on_agentic_progress(const String &p_status, int p_turn) {
+    // Progress update from orchestrator
+    // In Phase 4, we'll forward this to the UI status panel
+    print_line(vformat("AI: Agentic progress (turn %d): %s", p_turn, p_status));
+}
+
+void AI::_on_agentic_complete(bool p_success, const String &p_final_message) {
+    // Agentic run completed
+    // In Phase 4, we'll update the UI with the final message
+    if (p_success) {
+        print_line(vformat("AI: Agentic run completed successfully: %s", p_final_message));
+    } else {
+        print_line(vformat("AI: Agentic run failed or was cancelled: %s", p_final_message));
+    }
+}
+
+Ref<AgenticOrchestrator> AI::get_orchestrator() const {
+    return orchestrator;
 }

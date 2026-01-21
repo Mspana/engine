@@ -93,13 +93,13 @@ static void ai_find_nodes_by_type_dfs(Node *root, Node *relative_root, const Str
 
 namespace AIReadActions {
 
-bool exec_list_nodes(const Dictionary &args) {
+Dictionary exec_list_nodes(const Dictionary &args) {
 #ifdef TOOLS_ENABLED
 	// Resolve root node.
 	Node *edited_scene_root = ai_get_edited_scene_root();
 	if (!edited_scene_root) {
-		ai_log_error("Execute 'list_nodes': No edited scene root.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::NO_ACTIVE_SCENE,
+			"No edited scene root");
 	}
 
 	String root_path = args.get("root_path", String());
@@ -112,8 +112,8 @@ bool exec_list_nodes(const Dictionary &args) {
 	}
 
 	if (!root_node) {
-		ai_log_error(vformat("Execute 'list_nodes': Could not find root node at path '%s'.", root_path));
-		return false;
+		return ai_create_error_result(AIErrorCodes::NODE_NOT_FOUND,
+			vformat("Could not find root node at path '%s'", root_path));
 	}
 
 	Array nodes_info;
@@ -122,26 +122,31 @@ bool exec_list_nodes(const Dictionary &args) {
 	String json = JSON::stringify(nodes_info);
 	print_line("SMOKE/NODES: " + json);
 
-	return true;
+	Dictionary result_data;
+	result_data["nodes"] = nodes_info;
+	result_data["count"] = nodes_info.size();
+	result_data["root_path"] = root_path.is_empty() ? String(edited_scene_root->get_name()) : root_path;
+
+	return ai_create_success_result(result_data);
 #else
-	ai_log_error("Execute 'list_nodes': Editor API not available in non-editor builds.");
-	return false;
+	return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+		"Editor API not available in non-editor builds");
 #endif
 }
 
-bool exec_get_node_info(const Dictionary &args) {
+Dictionary exec_get_node_info(const Dictionary &args) {
 #ifdef TOOLS_ENABLED
 	if (!args.has("node_path") || args["node_path"].get_type() != Variant::STRING) {
-		ai_log_error("Execute 'get_node_info': 'node_path' must be a string.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			"'node_path' must be a string");
 	}
 
 	String node_path = args["node_path"];
 
 	Node *node = ai_get_node_by_path(node_path);
 	if (!node) {
-		ai_log_error(vformat("Execute 'get_node_info': Could not find node at path '%s'.", node_path));
-		return false;
+		return ai_create_error_result(AIErrorCodes::NODE_NOT_FOUND,
+			vformat("Could not find node at path '%s'", node_path));
 	}
 
 	Dictionary info;
@@ -180,24 +185,24 @@ bool exec_get_node_info(const Dictionary &args) {
 	String json = JSON::stringify(info);
 	print_line("READ/NODE_INFO: " + json);
 
-	return true;
+	return ai_create_success_result(info);
 #else
-	ai_log_error("Execute 'get_node_info': Editor API not available in non-editor builds.");
-	return false;
+	return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+		"Editor API not available in non-editor builds");
 #endif
 }
 
-bool exec_find_nodes_by_type(const Dictionary &args) {
+Dictionary exec_find_nodes_by_type(const Dictionary &args) {
 #ifdef TOOLS_ENABLED
 	if (!args.has("type_name") || args["type_name"].get_type() != Variant::STRING) {
-		ai_log_error("Execute 'find_nodes_by_type': 'type_name' must be a string.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			"'type_name' must be a string");
 	}
 
 	Node *edited_scene_root = ai_get_edited_scene_root();
 	if (!edited_scene_root) {
-		ai_log_error("Execute 'find_nodes_by_type': No edited scene root.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::NO_ACTIVE_SCENE,
+			"No edited scene root");
 	}
 
 	String type_name_str = args["type_name"];
@@ -215,33 +220,38 @@ bool exec_find_nodes_by_type(const Dictionary &args) {
 		print_line(vformat("  - Path: %s, Name: %s", path, name));
 	}
 
-	return true;
+	Dictionary result_data;
+	result_data["nodes"] = found_nodes;
+	result_data["count"] = count;
+	result_data["type_name"] = type_name_str;
+
+	return ai_create_success_result(result_data);
 #else
-	ai_log_error("Execute 'find_nodes_by_type': Editor API not available in non-editor builds.");
-	return false;
+	return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+		"Editor API not available in non-editor builds");
 #endif
 }
 
-bool exec_list_files(const Dictionary &args) {
+Dictionary exec_list_files(const Dictionary &args) {
 #ifdef TOOLS_ENABLED
 	if (!args.has("directory") || args["directory"].get_type() != Variant::STRING) {
-		ai_log_error("Execute 'list_files': 'directory' must be a string.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			"'directory' must be a string");
 	}
 
 	String directory = args["directory"];
 
 	// Validate directory starts with "res://"
 	if (!directory.begins_with("res://")) {
-		ai_log_error(vformat("Execute 'list_files': Directory must start with 'res://'. Got: %s", directory));
-		return false;
+		return ai_create_error_result(AIErrorCodes::INVALID_PATH,
+			vformat("Directory must start with 'res://'. Got: %s", directory));
 	}
 
 	// Open directory
 	Ref<DirAccess> dir = DirAccess::open(directory);
 	if (dir.is_null()) {
-		ai_log_error(vformat("Execute 'list_files': Failed to open directory '%s'.", directory));
-		return false;
+		return ai_create_error_result(AIErrorCodes::FILE_NOT_FOUND,
+			vformat("Failed to open directory '%s'", directory));
 	}
 
 	// Get all files
@@ -254,8 +264,8 @@ bool exec_list_files(const Dictionary &args) {
 		if (glob.begins_with("*.")) {
 			suffix_filter = glob.substr(1); // Remove "*" prefix, keep ".ext"
 		} else {
-			ai_log_error(vformat("Execute 'list_files': Unsupported glob pattern '%s'. Only patterns like '*.gd' are supported.", glob));
-			return false;
+			return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+				vformat("Unsupported glob pattern '%s'. Only patterns like '*.gd' are supported", glob));
 		}
 	}
 
@@ -268,7 +278,8 @@ bool exec_list_files(const Dictionary &args) {
 		}
 	}
 
-	// Log results
+	// Build full paths array for result
+	Array full_paths;
 	int count = filtered_files.size();
 	print_line(vformat("AI: Found %d file(s) in '%s':", count, directory));
 	for (int i = 0; i < count; i++) {
@@ -277,13 +288,22 @@ bool exec_list_files(const Dictionary &args) {
 			file_path += "/";
 		}
 		file_path += filtered_files[i];
+		full_paths.push_back(file_path);
 		print_line(vformat("  - %s", file_path));
 	}
 
-	return true;
+	Dictionary result_data;
+	result_data["files"] = full_paths;
+	result_data["count"] = count;
+	result_data["directory"] = directory;
+	if (!suffix_filter.is_empty()) {
+		result_data["filter"] = suffix_filter;
+	}
+
+	return ai_create_success_result(result_data);
 #else
-	ai_log_error("Execute 'list_files': Editor API not available in non-editor builds.");
-	return false;
+	return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+		"Editor API not available in non-editor builds");
 #endif
 }
 

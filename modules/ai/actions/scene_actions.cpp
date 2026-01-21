@@ -18,41 +18,45 @@
 
 namespace AISceneActions {
 
-bool exec_open_scene(const Dictionary &args) {
+Dictionary exec_open_scene(const Dictionary &args) {
 #ifdef TOOLS_ENABLED
 	EditorInterface *ei = EditorInterface::get_singleton();
 	if (!ei) {
-		ai_log_error("Execute 'open_scene': EditorInterface singleton not found.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INTERNAL_ERROR,
+			"EditorInterface singleton not found");
 	}
 
 	String scene_path = args["scene_path"];
 	if (scene_path.is_empty()) {
-		ai_log_error("Execute 'open_scene': scene_path is empty.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			"scene_path is empty");
 	}
 
 	ei->open_scene_from_path(scene_path);
+
+	Dictionary result_data;
+	result_data["scene_path"] = scene_path;
+
 	print_line(vformat("AI: Executed open_scene. Path: %s", scene_path));
-	return true;
+	return ai_create_success_result(result_data);
 #else
-	ai_log_error("Execute 'open_scene': Editor API not available in non-editor builds.");
-	return false;
+	return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+		"Editor API not available in non-editor builds");
 #endif
 }
 
-bool exec_create_scene(const Dictionary &args) {
+Dictionary exec_create_scene(const Dictionary &args) {
 #ifdef TOOLS_ENABLED
 	EditorInterface *ei = EditorInterface::get_singleton();
 	if (!ei) {
-		ai_log_error("Execute 'create_scene': EditorInterface singleton not found.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INTERNAL_ERROR,
+			"EditorInterface singleton not found");
 	}
 
 	String scene_path = args["scene_path"];
 	if (scene_path.is_empty()) {
-		ai_log_error("Execute 'create_scene': scene_path is empty.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			"scene_path is empty");
 	}
 
 	String root_type = args.get("root_type", "Node");
@@ -67,8 +71,8 @@ bool exec_create_scene(const Dictionary &args) {
 	// Create root node instance
 	Node *root_node = Object::cast_to<Node>(ClassDB::instantiate(StringName(root_type)));
 	if (!root_node) {
-		ai_log_error(vformat("Execute 'create_scene': Failed to instantiate node of type '%s'.", root_type));
-		return false;
+		return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+			vformat("Failed to instantiate node of type '%s'", root_type));
 	}
 
 	root_node->set_name(root_name);
@@ -81,103 +85,122 @@ bool exec_create_scene(const Dictionary &args) {
 	// Save to scene_path
 	Error err = ResourceSaver::save(packed_scene, scene_path);
 	if (err != OK) {
-		ai_log_error(vformat("Execute 'create_scene': Failed to save scene to '%s'. Error: %d", scene_path, err));
 		root_node->queue_free();
-		return false;
+		return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+			vformat("Failed to save scene to '%s'. Error: %d", scene_path, err));
 	}
 
 	// Open the scene in the editor
 	ei->open_scene_from_path(scene_path);
 
+	Dictionary result_data;
+	result_data["scene_path"] = scene_path;
+	result_data["root_type"] = root_type;
+	result_data["root_name"] = root_name;
+
 	print_line(vformat("AI: Executed create_scene. Path: %s, RootType: %s, RootName: %s", scene_path, root_type, root_name));
-	return true;
+	return ai_create_success_result(result_data);
 #else
-	ai_log_error("Execute 'create_scene': Editor API not available in non-editor builds.");
-	return false;
+	return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+		"Editor API not available in non-editor builds");
 #endif
 }
 
-bool exec_save_scene(const Dictionary &args) {
+Dictionary exec_save_scene(const Dictionary &args) {
 #ifdef TOOLS_ENABLED
 	EditorInterface *ei = EditorInterface::get_singleton();
 	if (!ei) {
-		ai_log_error("Execute 'save_scene': EditorInterface singleton not found.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INTERNAL_ERROR,
+			"EditorInterface singleton not found");
 	}
 
 	EditorCommandPalette *command_palette = ei->get_command_palette();
 	if (!command_palette) {
-		ai_log_error("Execute 'save_scene': EditorCommandPalette not found.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INTERNAL_ERROR,
+			"EditorCommandPalette not found");
 	}
 
 	command_palette->execute_command("editor/save_scene");
+
+	Dictionary result_data;
+	// Note: We don't have direct access to the saved scene path here,
+	// but the command executes successfully
+
 	print_line("AI: Executed save_scene.");
-	return true;
+	return ai_create_success_result(result_data);
 #else
-	ai_log_error("Execute 'save_scene': Editor API not available in non-editor builds.");
-	return false;
+	return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+		"Editor API not available in non-editor builds");
 #endif
 }
 
-bool exec_set_main_scene(const Dictionary &args) {
+Dictionary exec_set_main_scene(const Dictionary &args) {
 #ifdef TOOLS_ENABLED
 	String scene_path = args.get("scene_path", String());
 	if (scene_path.is_empty()) {
-		ai_log_error("Execute 'set_main_scene': scene_path is empty.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			"scene_path is empty");
 	}
 
 	// Validate that the scene resource exists.
 	if (!ResourceLoader::exists(scene_path)) {
-		ai_log_error(vformat("Execute 'set_main_scene': Scene file does not exist at path '%s'.", scene_path));
-		return false;
+		return ai_create_error_result(AIErrorCodes::FILE_NOT_FOUND,
+			vformat("Scene file does not exist at path '%s'", scene_path));
 	}
 
 	ProjectSettings *ps = ProjectSettings::get_singleton();
 	if (!ps) {
-		ai_log_error("Execute 'set_main_scene': ProjectSettings singleton not available.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INTERNAL_ERROR,
+			"ProjectSettings singleton not available");
 	}
 
 	const String setting_key = "application/run/main_scene";
+	String old_main_scene = ps->get_setting(setting_key, String());
 	ps->set_setting(setting_key, scene_path);
 
 	Error err = ps->save();
 	if (err != OK) {
-		ai_log_error(vformat("Execute 'set_main_scene': Failed to save ProjectSettings (project.godot). Error: %d", err));
-		return false;
+		return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+			vformat("Failed to save ProjectSettings (project.godot). Error: %d", err));
 	}
 
+	Dictionary result_data;
+	result_data["scene_path"] = scene_path;
+	result_data["previous_main_scene"] = old_main_scene;
+
 	print_line(vformat("AI: Executed set_main_scene. Main scene set to: %s", scene_path));
-	return true;
+	return ai_create_success_result(result_data);
 #else
-	ai_log_error("Execute 'set_main_scene': Editor API not available in non-editor builds.");
-	return false;
+	return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+		"Editor API not available in non-editor builds");
 #endif
 }
 
-bool exec_close_scene(const Dictionary &args) {
+Dictionary exec_close_scene(const Dictionary &args) {
 #ifdef TOOLS_ENABLED
 	EditorInterface *ei = EditorInterface::get_singleton();
 	if (!ei) {
-		ai_log_error("Execute 'close_scene': EditorInterface singleton not found.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INTERNAL_ERROR,
+			"EditorInterface singleton not found");
 	}
 
 	EditorNode *editor_node = EditorNode::get_singleton();
 	if (!editor_node) {
-		ai_log_error("Execute 'close_scene': EditorNode singleton not found.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INTERNAL_ERROR,
+			"EditorNode singleton not found");
 	}
 
 	bool save_if_modified = args.get("save_if_modified", true);
 
 	// Check if there's an edited scene
 	Node *edited_scene_root = ai_get_edited_scene_root();
+	Dictionary result_data;
+	result_data["save_if_modified"] = save_if_modified;
+
 	if (!edited_scene_root) {
 		ai_log_verbose("Execute 'close_scene': No edited scene to close.");
-		return true; // No scene open, consider it successful
+		result_data["was_no_op"] = true;
+		return ai_create_success_result(result_data); // No scene open, consider it successful
 	}
 
 	// Check if scene has unsaved changes
@@ -190,16 +213,22 @@ bool exec_close_scene(const Dictionary &args) {
 		has_unsaved_changes = undo_redo->is_history_unsaved(history_id);
 	}
 
+	result_data["had_unsaved_changes"] = has_unsaved_changes;
+	result_data["was_no_op"] = false;
+
 	// If save_if_modified is true and there are unsaved changes, save first
 	if (save_if_modified && has_unsaved_changes) {
 		EditorCommandPalette *command_palette = ei->get_command_palette();
 		if (command_palette) {
 			command_palette->execute_command("editor/save_scene");
 			ai_log_verbose("Execute 'close_scene': Saved scene before closing.");
+			result_data["saved_before_close"] = true;
 		} else {
-			ai_log_error("Execute 'close_scene': EditorCommandPalette not found for saving.");
-			return false;
+			return ai_create_error_result(AIErrorCodes::INTERNAL_ERROR,
+				"EditorCommandPalette not found for saving");
 		}
+	} else {
+		result_data["saved_before_close"] = false;
 	}
 
 	// Close the scene using EditorNode's menu option
@@ -207,10 +236,10 @@ bool exec_close_scene(const Dictionary &args) {
 	editor_node->trigger_menu_option(EditorNode::FILE_CLOSE, true);
 
 	print_line("AI: Executed close_scene.");
-	return true;
+	return ai_create_success_result(result_data);
 #else
-	ai_log_error("Execute 'close_scene': Editor API not available in non-editor builds.");
-	return false;
+	return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+		"Editor API not available in non-editor builds");
 #endif
 }
 

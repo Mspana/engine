@@ -187,6 +187,12 @@ ChatMessage AIChatStore::append_message(const String &p_role, const String &p_co
 	return msg;
 }
 
+ChatMessage AIChatStore::append_tool_result(const Dictionary &p_tool_result) {
+	// Convert tool result dictionary to JSON string
+	String content = JSON::stringify(p_tool_result);
+	return append_message("tool", content);
+}
+
 void AIChatStore::clear_transcript() {
 	messages.clear();
 

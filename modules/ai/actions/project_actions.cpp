@@ -19,27 +19,27 @@
 
 namespace AIProjectActions {
 
-bool exec_set_project_setting(const Dictionary &args) {
+Dictionary exec_set_project_setting(const Dictionary &args) {
 #ifdef TOOLS_ENABLED
 	EditorUndoRedoManager *undo_redo = ai_get_undo_redo();
 	if (!undo_redo) {
-		ai_log_error("Execute 'set_project_setting': EditorUndoRedoManager singleton not found.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::NO_UNDO_REDO,
+			"EditorUndoRedoManager singleton not found");
 	}
 
 	ProjectSettings *ps = ProjectSettings::get_singleton();
 	if (!ps) {
-		ai_log_error("Execute 'set_project_setting': ProjectSettings singleton not available.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INTERNAL_ERROR,
+			"ProjectSettings singleton not available");
 	}
 
 	if (!args.has("key") || args["key"].get_type() != Variant::STRING) {
-		ai_log_error("Execute 'set_project_setting': 'key' must be a string.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			"'key' must be a string");
 	}
 	if (!args.has("value")) {
-		ai_log_error("Execute 'set_project_setting': 'value' is required.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			"'value' is required");
 	}
 
 	String key = args["key"];
@@ -68,20 +68,28 @@ bool exec_set_project_setting(const Dictionary &args) {
 	undo_redo->add_undo_method(ps, "save");
 	undo_redo->commit_action();
 
+	Dictionary result_data;
+	result_data["key"] = key;
+	result_data["value"] = value;
+	result_data["had_previous_value"] = setting_existed;
+	if (setting_existed) {
+		result_data["previous_value"] = old_value;
+	}
+
 	print_line(vformat("AI: Executed set_project_setting. Key: %s", key));
-	return true;
+	return ai_create_success_result(result_data);
 #else
-	ai_log_error("Execute 'set_project_setting': Editor API not available in non-editor builds.");
-	return false;
+	return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+		"Editor API not available in non-editor builds");
 #endif
 }
 
-bool exec_get_project_settings(const Dictionary &args) {
+Dictionary exec_get_project_settings(const Dictionary &args) {
 #ifdef TOOLS_ENABLED
 	ProjectSettings *ps = ProjectSettings::get_singleton();
 	if (!ps) {
-		ai_log_error("Execute 'get_project_settings': ProjectSettings singleton not available.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INTERNAL_ERROR,
+			"ProjectSettings singleton not available");
 	}
 
 	String prefix = args.get("prefix", String());
@@ -91,7 +99,7 @@ bool exec_get_project_settings(const Dictionary &args) {
 	}
 	bool include_defaults = args.get("include_defaults", false);
 
-	int found_count = 0;
+	Dictionary settings_dict;
 
 	if (!keys_array.is_empty()) {
 		// Query specific keys
@@ -100,22 +108,22 @@ bool exec_get_project_settings(const Dictionary &args) {
 				continue;
 			}
 			String key = keys_array[i];
-			
+
 			if (!ps->has_setting(key)) {
 				if (include_defaults) {
 					// Try to get default value (may return Variant() if not found)
 					Variant value = ps->get_setting(key);
 					if (value.get_type() != Variant::NIL) {
+						settings_dict[key] = value;
 						print_line(vformat("%s = %s", key, value));
-						found_count++;
 					}
 				}
 				continue;
 			}
 
 			Variant value = ps->get_setting(key);
+			settings_dict[key] = value;
 			print_line(vformat("%s = %s", key, value));
-			found_count++;
 		}
 	} else {
 		// Iterate over all settings using get_property_list
@@ -135,52 +143,55 @@ bool exec_get_project_settings(const Dictionary &args) {
 				if (include_defaults) {
 					Variant value = ps->get_setting(key);
 					if (value.get_type() != Variant::NIL) {
+						settings_dict[key] = value;
 						print_line(vformat("%s = %s", key, value));
-						found_count++;
 					}
 				}
 				continue;
 			}
 
 			Variant value = ps->get_setting(key);
+			settings_dict[key] = value;
 			print_line(vformat("%s = %s", key, value));
-			found_count++;
 		}
 	}
 
-	if (found_count == 0) {
+	Dictionary result_data;
+	result_data["settings"] = settings_dict;
+	result_data["count"] = settings_dict.size();
+
+	if (settings_dict.is_empty()) {
 		ai_log_verbose("Execute 'get_project_settings': No settings found matching criteria.");
-		return false;
 	}
 
-	return true;
+	return ai_create_success_result(result_data);
 #else
-	ai_log_error("Execute 'get_project_settings': Editor API not available in non-editor builds.");
-	return false;
+	return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+		"Editor API not available in non-editor builds");
 #endif
 }
 
-bool exec_create_autoload_singleton(const Dictionary &args) {
+Dictionary exec_create_autoload_singleton(const Dictionary &args) {
 #ifdef TOOLS_ENABLED
 	EditorUndoRedoManager *undo_redo = ai_get_undo_redo();
 	if (!undo_redo) {
-		ai_log_error("Execute 'create_autoload_singleton': EditorUndoRedoManager singleton not found.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::NO_UNDO_REDO,
+			"EditorUndoRedoManager singleton not found");
 	}
 
 	ProjectSettings *ps = ProjectSettings::get_singleton();
 	if (!ps) {
-		ai_log_error("Execute 'create_autoload_singleton': ProjectSettings singleton not available.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INTERNAL_ERROR,
+			"ProjectSettings singleton not available");
 	}
 
 	if (!args.has("name") || args["name"].get_type() != Variant::STRING) {
-		ai_log_error("Execute 'create_autoload_singleton': 'name' must be a string.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			"'name' must be a string");
 	}
 	if (!args.has("script_path") || args["script_path"].get_type() != Variant::STRING) {
-		ai_log_error("Execute 'create_autoload_singleton': 'script_path' must be a string.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			"'script_path' must be a string");
 	}
 
 	String name = args["name"];
@@ -189,8 +200,8 @@ bool exec_create_autoload_singleton(const Dictionary &args) {
 
 	// Validate script path exists
 	if (!ResourceLoader::exists(script_path)) {
-		ai_log_error(vformat("Execute 'create_autoload_singleton': Script file does not exist at path '%s'.", script_path));
-		return false;
+		return ai_create_error_result(AIErrorCodes::FILE_NOT_FOUND,
+			vformat("Script file does not exist at path '%s'", script_path));
 	}
 
 	// Format the autoload value: "*<path>" for singleton (enabled), "<path>" for non-singleton (disabled)
@@ -226,31 +237,37 @@ bool exec_create_autoload_singleton(const Dictionary &args) {
 	undo_redo->add_undo_method(ps, "save");
 	undo_redo->commit_action();
 
+	Dictionary result_data;
+	result_data["name"] = name;
+	result_data["script_path"] = script_path;
+	result_data["enabled"] = enabled;
+	result_data["had_previous_autoload"] = had_autoload;
+
 	print_line(vformat("AI: Executed create_autoload_singleton. Name: %s, Path: %s, Enabled: %s", name, script_path, enabled ? "true" : "false"));
-	return true;
+	return ai_create_success_result(result_data);
 #else
-	ai_log_error("Execute 'create_autoload_singleton': Editor API not available in non-editor builds.");
-	return false;
+	return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+		"Editor API not available in non-editor builds");
 #endif
 }
 
-bool exec_remove_autoload_singleton(const Dictionary &args) {
+Dictionary exec_remove_autoload_singleton(const Dictionary &args) {
 #ifdef TOOLS_ENABLED
 	EditorUndoRedoManager *undo_redo = ai_get_undo_redo();
 	if (!undo_redo) {
-		ai_log_error("Execute 'remove_autoload_singleton': EditorUndoRedoManager singleton not found.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::NO_UNDO_REDO,
+			"EditorUndoRedoManager singleton not found");
 	}
 
 	ProjectSettings *ps = ProjectSettings::get_singleton();
 	if (!ps) {
-		ai_log_error("Execute 'remove_autoload_singleton': ProjectSettings singleton not available.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INTERNAL_ERROR,
+			"ProjectSettings singleton not available");
 	}
 
 	if (!args.has("name") || args["name"].get_type() != Variant::STRING) {
-		ai_log_error("Execute 'remove_autoload_singleton': 'name' must be a string.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			"'name' must be a string");
 	}
 
 	String name = args["name"];
@@ -258,8 +275,8 @@ bool exec_remove_autoload_singleton(const Dictionary &args) {
 
 	// Check if autoload exists
 	if (!ps->has_setting(autoload_key)) {
-		ai_log_error(vformat("Execute 'remove_autoload_singleton': Autoload '%s' does not exist.", name));
-		return false;
+		return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+			vformat("Autoload '%s' does not exist", name));
 	}
 
 	// Get old value for undo
@@ -275,41 +292,45 @@ bool exec_remove_autoload_singleton(const Dictionary &args) {
 	undo_redo->add_undo_method(ps, "save");
 	undo_redo->commit_action();
 
+	Dictionary result_data;
+	result_data["name"] = name;
+	result_data["previous_value"] = old_value;
+
 	print_line(vformat("AI: Executed remove_autoload_singleton. Name: %s", name));
-	return true;
+	return ai_create_success_result(result_data);
 #else
-	ai_log_error("Execute 'remove_autoload_singleton': Editor API not available in non-editor builds.");
-	return false;
+	return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+		"Editor API not available in non-editor builds");
 #endif
 }
 
-bool exec_import_asset(const Dictionary &args) {
+Dictionary exec_import_asset(const Dictionary &args) {
 #ifdef TOOLS_ENABLED
 	EditorUndoRedoManager *undo_redo = ai_get_undo_redo();
 	if (!undo_redo) {
-		ai_log_error("Execute 'import_asset': EditorUndoRedoManager singleton not found.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::NO_UNDO_REDO,
+			"EditorUndoRedoManager singleton not found");
 	}
 
 	ProjectSettings *ps = ProjectSettings::get_singleton();
 	if (!ps) {
-		ai_log_error("Execute 'import_asset': ProjectSettings singleton not available.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INTERNAL_ERROR,
+			"ProjectSettings singleton not available");
 	}
 
 	AI *ai_singleton = AI::get_singleton();
 	if (!ai_singleton) {
-		ai_log_error("Execute 'import_asset': AI singleton not found.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INTERNAL_ERROR,
+			"AI singleton not found");
 	}
 
 	if (!args.has("source_path") || args["source_path"].get_type() != Variant::STRING) {
-		ai_log_error("Execute 'import_asset': 'source_path' must be a string.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			"'source_path' must be a string");
 	}
 	if (!args.has("dest_path") || args["dest_path"].get_type() != Variant::STRING) {
-		ai_log_error("Execute 'import_asset': 'dest_path' must be a string.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			"'dest_path' must be a string");
 	}
 
 	String source_path = args["source_path"];
@@ -318,8 +339,8 @@ bool exec_import_asset(const Dictionary &args) {
 
 	// Validate source file exists
 	if (!FileAccess::exists(source_path)) {
-		ai_log_error(vformat("Execute 'import_asset': Source file does not exist at path '%s'.", source_path));
-		return false;
+		return ai_create_error_result(AIErrorCodes::FILE_NOT_FOUND,
+			vformat("Source file does not exist at path '%s'", source_path));
 	}
 
 	// Convert dest_path to absolute OS path
@@ -328,15 +349,15 @@ bool exec_import_asset(const Dictionary &args) {
 	// Check if dest exists
 	bool dest_exists = FileAccess::exists(dest_abs_path);
 	if (dest_exists && !overwrite) {
-		ai_log_error(vformat("Execute 'import_asset': Destination file already exists at '%s' and overwrite is false.", dest_path));
-		return false;
+		return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+			vformat("Destination file already exists at '%s' and overwrite is false", dest_path));
 	}
 
 	// Read source file
 	PackedByteArray source_bytes = FileAccess::get_file_as_bytes(source_path);
 	if (source_bytes.is_empty()) {
-		ai_log_error(vformat("Execute 'import_asset': Source file at '%s' is empty or could not be read.", source_path));
-		return false;
+		return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+			vformat("Source file at '%s' is empty or could not be read", source_path));
 	}
 
 	// Read old content for undo if dest exists
@@ -350,8 +371,8 @@ bool exec_import_asset(const Dictionary &args) {
 	if (!DirAccess::exists(dest_dir)) {
 		Error dir_err = DirAccess::make_dir_recursive_absolute(dest_dir);
 		if (dir_err != OK) {
-			ai_log_error(vformat("Execute 'import_asset': Failed to create destination directory '%s'. Error: %d", dest_dir, dir_err));
-			return false;
+			return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+				vformat("Failed to create destination directory '%s'. Error: %d", dest_dir, dir_err));
 		}
 	}
 
@@ -369,37 +390,44 @@ bool exec_import_asset(const Dictionary &args) {
 	}
 	undo_redo->commit_action();
 
+	Dictionary result_data;
+	result_data["source_path"] = source_path;
+	result_data["dest_path"] = dest_path;
+	result_data["overwrite"] = overwrite;
+	result_data["overwrote_existing"] = dest_exists;
+	result_data["size"] = source_bytes.size();
+
 	print_line(vformat("AI: Executed import_asset. Source: %s, Dest: %s", source_path, dest_path));
-	return true;
+	return ai_create_success_result(result_data);
 #else
-	ai_log_error("Execute 'import_asset': Editor API not available in non-editor builds.");
-	return false;
+	return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+		"Editor API not available in non-editor builds");
 #endif
 }
 
-bool exec_delete_asset(const Dictionary &args) {
+Dictionary exec_delete_asset(const Dictionary &args) {
 #ifdef TOOLS_ENABLED
 	EditorUndoRedoManager *undo_redo = ai_get_undo_redo();
 	if (!undo_redo) {
-		ai_log_error("Execute 'delete_asset': EditorUndoRedoManager singleton not found.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::NO_UNDO_REDO,
+			"EditorUndoRedoManager singleton not found");
 	}
 
 	ProjectSettings *ps = ProjectSettings::get_singleton();
 	if (!ps) {
-		ai_log_error("Execute 'delete_asset': ProjectSettings singleton not available.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INTERNAL_ERROR,
+			"ProjectSettings singleton not available");
 	}
 
 	AI *ai_singleton = AI::get_singleton();
 	if (!ai_singleton) {
-		ai_log_error("Execute 'delete_asset': AI singleton not found.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INTERNAL_ERROR,
+			"AI singleton not found");
 	}
 
 	if (!args.has("asset_path") || args["asset_path"].get_type() != Variant::STRING) {
-		ai_log_error("Execute 'delete_asset': 'asset_path' must be a string.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			"'asset_path' must be a string");
 	}
 
 	String asset_path = args["asset_path"];
@@ -409,8 +437,8 @@ bool exec_delete_asset(const Dictionary &args) {
 
 	// Check if file exists
 	if (!FileAccess::exists(asset_abs_path)) {
-		ai_log_error(vformat("Execute 'delete_asset': Asset file does not exist at path '%s'.", asset_path));
-		return false;
+		return ai_create_error_result(AIErrorCodes::FILE_NOT_FOUND,
+			vformat("Asset file does not exist at path '%s'", asset_path));
 	}
 
 	// Read old bytes for undo
@@ -424,20 +452,24 @@ bool exec_delete_asset(const Dictionary &args) {
 	undo_redo->add_undo_method(ai_singleton, "_write_binary_file", asset_abs_path, old_bytes);
 	undo_redo->commit_action();
 
+	Dictionary result_data;
+	result_data["asset_path"] = asset_path;
+	result_data["size"] = old_bytes.size();
+
 	print_line(vformat("AI: Executed delete_asset. Path: %s", asset_path));
-	return true;
+	return ai_create_success_result(result_data);
 #else
-	ai_log_error("Execute 'delete_asset': Editor API not available in non-editor builds.");
-	return false;
+	return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+		"Editor API not available in non-editor builds");
 #endif
 }
 
-bool exec_run_project(const Dictionary &args) {
+Dictionary exec_run_project(const Dictionary &args) {
 #ifdef TOOLS_ENABLED
 	EditorInterface *ei = EditorInterface::get_singleton();
 	if (!ei) {
-		ai_log_error("Execute 'run_project': EditorInterface singleton not found.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INTERNAL_ERROR,
+			"EditorInterface singleton not found");
 	}
 
 	String mode = args.get("mode", "play");
@@ -447,8 +479,8 @@ bool exec_run_project(const Dictionary &args) {
 	// For now, use command palette approach similar to save_scene
 	EditorCommandPalette *command_palette = ei->get_command_palette();
 	if (!command_palette) {
-		ai_log_error("Execute 'run_project': EditorCommandPalette not found.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INTERNAL_ERROR,
+			"EditorCommandPalette not found");
 	}
 
 	if (mode == "headless_smoke") {
@@ -456,9 +488,9 @@ bool exec_run_project(const Dictionary &args) {
 		// v0: log that it's not fully implemented yet
 		ai_log_verbose("Execute 'run_project': headless_smoke mode requested but not fully implemented in v0.");
 		// Try to execute the command anyway - it might work if the command exists
-		// For now, just log and return false
-		ai_log_error("Execute 'run_project': headless_smoke mode is not implemented in this build.");
-		return false;
+		// For now, just log and return error
+		return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+			"headless_smoke mode is not implemented in this build");
 	} else if (mode == "play") {
 		// Execute the standard run project command
 		if (!scene_path.is_empty()) {
@@ -466,18 +498,26 @@ bool exec_run_project(const Dictionary &args) {
 			// For v0, just log that custom scene path is not fully supported
 			ai_log_verbose(vformat("Execute 'run_project': scene_path '%s' provided but custom scene execution not fully implemented in v0. Running main scene instead.", scene_path));
 		}
-		
+
 		// Execute the standard "editor/run_project" command
 		command_palette->execute_command("editor/run_project");
+
+		Dictionary result_data;
+		result_data["mode"] = mode;
+		if (!scene_path.is_empty()) {
+			result_data["requested_scene_path"] = scene_path;
+			result_data["note"] = "Custom scene path not fully supported, ran main scene instead";
+		}
+
 		print_line("AI: Executed run_project (play mode).");
-		return true;
+		return ai_create_success_result(result_data);
 	} else {
-		ai_log_error(vformat("Execute 'run_project': Unknown mode '%s'. Supported modes: 'play', 'headless_smoke'.", mode));
-		return false;
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			vformat("Unknown mode '%s'. Supported modes: 'play', 'headless_smoke'", mode));
 	}
 #else
-	ai_log_error("Execute 'run_project': Editor API not available in non-editor builds.");
-	return false;
+	return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+		"Editor API not available in non-editor builds");
 #endif
 }
 

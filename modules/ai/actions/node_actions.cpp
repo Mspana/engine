@@ -11,17 +11,17 @@
 
 namespace AINodeActions {
 
-bool exec_create_node(const Dictionary &args) {
+Dictionary exec_create_node(const Dictionary &args) {
 	EditorUndoRedoManager *undo_redo = ai_get_undo_redo();
 	if (!undo_redo) {
-		ai_log_error("Execute 'create_node': EditorUndoRedoManager singleton not found.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::NO_UNDO_REDO,
+			"EditorUndoRedoManager singleton not found");
 	}
 
 	Node *edited_scene_root = ai_get_edited_scene_root();
 	if (!edited_scene_root) {
-		ai_log_error("Execute 'create_node': No edited scene root.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::NO_ACTIVE_SCENE,
+			"No edited scene root");
 	}
 
 	String node_name = args["node_name"];
@@ -29,8 +29,8 @@ bool exec_create_node(const Dictionary &args) {
 	String parent_path_str = args.get("parent_path", "");
 
 	if (!ClassDB::class_exists(StringName(node_type))) {
-		ai_log_error(vformat("Execute 'create_node': Node type '%s' does not exist.", node_type));
-		return false;
+		return ai_create_error_result(AIErrorCodes::INVALID_TYPE,
+			vformat("Node type '%s' does not exist", node_type));
 	}
 
 	Node *parent_node = nullptr;
@@ -43,21 +43,21 @@ bool exec_create_node(const Dictionary &args) {
 		} else {
 			parent_node = edited_scene_root->get_node_or_null(NodePath(parent_path_str));
 			if (!parent_node) {
-				ai_log_error(vformat("Execute 'create_node': Could not find parent node at path '%s'. Using scene root instead.", parent_path_str));
-				parent_node = edited_scene_root;
+				return ai_create_error_result(AIErrorCodes::NODE_NOT_FOUND,
+					vformat("Could not find parent node at path '%s'", parent_path_str));
 			}
 		}
 	}
 
 	if (!parent_node) {
-		ai_log_error("Execute 'create_node': Failed to determine parent node.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INTERNAL_ERROR,
+			"Failed to determine parent node");
 	}
 
 	Node *new_node = Object::cast_to<Node>(ClassDB::instantiate(StringName(node_type)));
 	if (!new_node) {
-		ai_log_error(vformat("Execute 'create_node': Failed to instantiate node of type '%s'.", node_type));
-		return false;
+		return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+			vformat("Failed to instantiate node of type '%s'", node_type));
 	}
 
 	new_node->set_name(node_name);
@@ -71,21 +71,28 @@ bool exec_create_node(const Dictionary &args) {
 	undo_redo->add_undo_method(new_node, "queue_free");
 	undo_redo->commit_action();
 
+	// Return success with details
+	Dictionary result_data;
+	result_data["node_name"] = node_name;
+	result_data["node_type"] = node_type;
+	result_data["parent_path"] = parent_node->get_path();
+	result_data["node_path"] = new_node->get_path();
+
 	print_line(vformat("AI: Executed create_node. Name: %s, Type: %s, Parent: %s", node_name, node_type, parent_node->get_path()));
-	return true;
+	return ai_create_success_result(result_data);
 }
 
-bool exec_set_property(const Dictionary &args) {
+Dictionary exec_set_property(const Dictionary &args) {
 	EditorUndoRedoManager *undo_redo = ai_get_undo_redo();
 	if (!undo_redo) {
-		ai_log_error("Execute 'set_property': EditorUndoRedoManager singleton not found.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::NO_UNDO_REDO,
+			"EditorUndoRedoManager singleton not found");
 	}
 
 	Node *edited_scene_root = ai_get_edited_scene_root();
 	if (!edited_scene_root) {
-		ai_log_error("Execute 'set_property': No edited scene root.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::NO_ACTIVE_SCENE,
+			"No edited scene root");
 	}
 
 	String node_path_str = args["node_path"];
@@ -94,8 +101,8 @@ bool exec_set_property(const Dictionary &args) {
 
 	Node *target_node = ai_get_node_by_path(node_path_str);
 	if (!target_node) {
-		ai_log_error(vformat("Execute 'set_property': Could not find node at path '%s'.", node_path_str));
-		return false;
+		return ai_create_error_result(AIErrorCodes::NODE_NOT_FOUND,
+			vformat("Could not find node at path '%s'", node_path_str));
 	}
 
 	Variant current_value = target_node->get(property_name);
@@ -105,35 +112,42 @@ bool exec_set_property(const Dictionary &args) {
 	undo_redo->add_undo_method(target_node, "set", property_name, current_value);
 	undo_redo->commit_action();
 
+	// Return success with details
+	Dictionary result_data;
+	result_data["node_path"] = node_path_str;
+	result_data["property_name"] = property_name;
+	result_data["old_value"] = current_value;
+	result_data["new_value"] = value;
+
 	print_line(vformat("AI: Executed set_property. Node: %s, Property: %s, Value: %s", node_path_str, property_name, String(value)));
-	return true;
+	return ai_create_success_result(result_data);
 }
 
-bool exec_rename_node(const Dictionary &args) {
+Dictionary exec_rename_node(const Dictionary &args) {
 	EditorUndoRedoManager *undo_redo = ai_get_undo_redo();
 	if (!undo_redo) {
-		ai_log_error("Execute 'rename_node': EditorUndoRedoManager singleton not found.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::NO_UNDO_REDO,
+			"EditorUndoRedoManager singleton not found");
 	}
 
 	Node *edited_scene_root = ai_get_edited_scene_root();
 	if (!edited_scene_root) {
-		ai_log_error("Execute 'rename_node': No edited scene root.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::NO_ACTIVE_SCENE,
+			"No edited scene root");
 	}
 
 	String node_path_str = args["node_path"];
 	String new_name = args["new_name"];
 
 	if (new_name.is_empty()) {
-		ai_log_error("Execute 'rename_node': new_name cannot be empty.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			"new_name cannot be empty");
 	}
 
 	Node *target = ai_get_node_by_path(node_path_str);
 	if (!target) {
-		ai_log_error(vformat("Execute 'rename_node': Could not find node at path '%s'.", node_path_str));
-		return false;
+		return ai_create_error_result(AIErrorCodes::NODE_NOT_FOUND,
+			vformat("Could not find node at path '%s'", node_path_str));
 	}
 
 	String old_name = target->get_name();
@@ -145,21 +159,27 @@ bool exec_rename_node(const Dictionary &args) {
 	undo_redo->add_undo_method(target, "set_name", old_name);
 	undo_redo->commit_action();
 
+	// Return success with details
+	Dictionary result_data;
+	result_data["node_path"] = node_path_str;
+	result_data["old_name"] = old_name;
+	result_data["new_name"] = new_name;
+
 	print_line(vformat("AI: Executed rename_node. Path: %s, OldName: %s, NewName: %s", node_path_str, old_name, new_name));
-	return true;
+	return ai_create_success_result(result_data);
 }
 
-bool exec_reparent_node(const Dictionary &args) {
+Dictionary exec_reparent_node(const Dictionary &args) {
 	EditorUndoRedoManager *undo_redo = ai_get_undo_redo();
 	if (!undo_redo) {
-		ai_log_error("Execute 'reparent_node': EditorUndoRedoManager singleton not found.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::NO_UNDO_REDO,
+			"EditorUndoRedoManager singleton not found");
 	}
 
 	Node *edited_scene_root = ai_get_edited_scene_root();
 	if (!edited_scene_root) {
-		ai_log_error("Execute 'reparent_node': No edited scene root.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::NO_ACTIVE_SCENE,
+			"No edited scene root");
 	}
 
 	String node_path_str = args["node_path"];
@@ -168,28 +188,28 @@ bool exec_reparent_node(const Dictionary &args) {
 	// Resolve node
 	Node *node = ai_get_node_by_path(node_path_str);
 	if (!node) {
-		ai_log_error(vformat("Execute 'reparent_node': Could not find node at path '%s'.", node_path_str));
-		return false;
+		return ai_create_error_result(AIErrorCodes::NODE_NOT_FOUND,
+			vformat("Could not find node at path '%s'", node_path_str));
 	}
 
 	// Resolve new parent
 	Node *new_parent = ai_get_node_by_path(new_parent_path_str);
 	if (!new_parent) {
-		ai_log_error(vformat("Execute 'reparent_node': Could not find new parent at path '%s'.", new_parent_path_str));
-		return false;
+		return ai_create_error_result(AIErrorCodes::NODE_NOT_FOUND,
+			vformat("Could not find new parent at path '%s'", new_parent_path_str));
 	}
 
 	// Reject if node is the scene root
 	if (ai_is_scene_root(node)) {
-		ai_log_error("Execute 'reparent_node': Cannot reparent the scene root.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			"Cannot reparent the scene root");
 	}
 
 	// Reject if node has no parent
 	Node *old_parent = node->get_parent();
 	if (!old_parent) {
-		ai_log_error("Execute 'reparent_node': Node has no parent.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			"Node has no parent");
 	}
 
 	// Save old index for undo
@@ -213,9 +233,6 @@ bool exec_reparent_node(const Dictionary &args) {
 
 	// If index is specified, move to that position after adding
 	if (has_index) {
-		// Clamp index to valid range (after add_child, child count will include the node)
-		// We'll clamp in the lambda-like approach, but since we can't use lambdas in undo/redo,
-		// we need to calculate the clamped value. The move_child will handle out-of-bounds gracefully.
 		undo_redo->add_do_method(new_parent, "move_child", node, target_index);
 	}
 
@@ -227,21 +244,31 @@ bool exec_reparent_node(const Dictionary &args) {
 
 	undo_redo->commit_action();
 
+	// Return success with details
+	Dictionary result_data;
+	result_data["node_path"] = node_path_str;
+	result_data["old_parent_path"] = old_parent->get_path();
+	result_data["new_parent_path"] = new_parent->get_path();
+	result_data["old_index"] = old_index;
+	if (has_index) {
+		result_data["new_index"] = target_index;
+	}
+
 	print_line(vformat("AI: Executed reparent_node. Node: %s, OldParent: %s, NewParent: %s", node_path_str, old_parent->get_name(), new_parent->get_name()));
-	return true;
+	return ai_create_success_result(result_data);
 }
 
-bool exec_delete_node(const Dictionary &args) {
+Dictionary exec_delete_node(const Dictionary &args) {
 	EditorUndoRedoManager *undo_redo = ai_get_undo_redo();
 	if (!undo_redo) {
-		ai_log_error("Execute 'delete_node': EditorUndoRedoManager singleton not found.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::NO_UNDO_REDO,
+			"EditorUndoRedoManager singleton not found");
 	}
 
 	Node *edited_scene_root = ai_get_edited_scene_root();
 	if (!edited_scene_root) {
-		ai_log_error("Execute 'delete_node': No edited scene root.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::NO_ACTIVE_SCENE,
+			"No edited scene root");
 	}
 
 	String node_path_str = args["node_path"];
@@ -249,25 +276,26 @@ bool exec_delete_node(const Dictionary &args) {
 	// Resolve node
 	Node *node = ai_get_node_by_path(node_path_str);
 	if (!node) {
-		ai_log_error(vformat("Execute 'delete_node': Could not find node at path '%s'.", node_path_str));
-		return false;
+		return ai_create_error_result(AIErrorCodes::NODE_NOT_FOUND,
+			vformat("Could not find node at path '%s'", node_path_str));
 	}
 
 	// Reject if node is the scene root
 	if (ai_is_scene_root(node)) {
-		ai_log_error("Execute 'delete_node': Cannot delete the scene root.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			"Cannot delete the scene root");
 	}
 
 	// Reject if node has no parent
 	Node *parent = node->get_parent();
 	if (!parent) {
-		ai_log_error("Execute 'delete_node': Node has no parent.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			"Node has no parent");
 	}
 
 	// Save old index for undo
 	int old_index = node->get_index();
+	String node_name = node->get_name();
 
 	ai_log_verbose(vformat("Deleting node '%s' from parent '%s'", node_path_str, parent->get_path()));
 
@@ -279,21 +307,27 @@ bool exec_delete_node(const Dictionary &args) {
 	undo_redo->add_undo_method(parent, "move_child", node, old_index);
 	undo_redo->commit_action();
 
+	// Return success with details
+	Dictionary result_data;
+	result_data["node_path"] = node_path_str;
+	result_data["node_name"] = node_name;
+	result_data["parent_path"] = parent->get_path();
+
 	print_line(vformat("AI: Executed delete_node. Node: %s, Parent: %s", node_path_str, parent->get_path()));
-	return true;
+	return ai_create_success_result(result_data);
 }
 
-bool exec_duplicate_node(const Dictionary &args) {
+Dictionary exec_duplicate_node(const Dictionary &args) {
 	EditorUndoRedoManager *undo_redo = ai_get_undo_redo();
 	if (!undo_redo) {
-		ai_log_error("Execute 'duplicate_node': EditorUndoRedoManager singleton not found.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::NO_UNDO_REDO,
+			"EditorUndoRedoManager singleton not found");
 	}
 
 	Node *edited_scene_root = ai_get_edited_scene_root();
 	if (!edited_scene_root) {
-		ai_log_error("Execute 'duplicate_node': No edited scene root.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::NO_ACTIVE_SCENE,
+			"No edited scene root");
 	}
 
 	String node_path_str = args["node_path"];
@@ -301,28 +335,28 @@ bool exec_duplicate_node(const Dictionary &args) {
 	// Resolve node
 	Node *node = ai_get_node_by_path(node_path_str);
 	if (!node) {
-		ai_log_error(vformat("Execute 'duplicate_node': Could not find node at path '%s'.", node_path_str));
-		return false;
+		return ai_create_error_result(AIErrorCodes::NODE_NOT_FOUND,
+			vformat("Could not find node at path '%s'", node_path_str));
 	}
 
 	// Reject if node is the scene root
 	if (ai_is_scene_root(node)) {
-		ai_log_error("Execute 'duplicate_node': Cannot duplicate the scene root.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			"Cannot duplicate the scene root");
 	}
 
 	// Reject if node has no parent
 	Node *parent = node->get_parent();
 	if (!parent) {
-		ai_log_error("Execute 'duplicate_node': Node has no parent.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			"Node has no parent");
 	}
 
 	// Duplicate the node
 	Node *dup = Object::cast_to<Node>(node->duplicate());
 	if (!dup) {
-		ai_log_error(vformat("Execute 'duplicate_node': Failed to duplicate node at path '%s'.", node_path_str));
-		return false;
+		return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+			vformat("Failed to duplicate node at path '%s'", node_path_str));
 	}
 
 	// Determine final name
@@ -349,9 +383,15 @@ bool exec_duplicate_node(const Dictionary &args) {
 	undo_redo->add_undo_method(dup, "queue_free");
 	undo_redo->commit_action();
 
+	// Return success with details
+	Dictionary result_data;
+	result_data["original_node_path"] = node_path_str;
+	result_data["duplicate_name"] = final_name;
+	result_data["parent_path"] = parent->get_path();
+	result_data["duplicate_path"] = dup->get_path();
+
 	print_line(vformat("AI: Executed duplicate_node. Node: %s, Duplicate: %s, Parent: %s", node_path_str, final_name, parent->get_path()));
-	return true;
+	return ai_create_success_result(result_data);
 }
 
 } // namespace AINodeActions
-

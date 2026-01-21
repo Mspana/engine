@@ -15,17 +15,17 @@
 
 namespace AIScriptActions {
 
-bool exec_create_script(const Dictionary &args) {
+Dictionary exec_create_script(const Dictionary &args) {
 	EditorUndoRedoManager *undo_redo = ai_get_undo_redo();
 	if (!undo_redo) {
-		ai_log_error("Execute 'create_script': EditorUndoRedoManager singleton not found.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::NO_UNDO_REDO,
+			"EditorUndoRedoManager singleton not found");
 	}
 
 	AI *ai_singleton = AI::get_singleton();
 	if (!ai_singleton) {
-		ai_log_error("Execute 'create_script': AI singleton not found.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INTERNAL_ERROR,
+			"AI singleton not found");
 	}
 
 	String file_path = args["file_path"];
@@ -34,8 +34,8 @@ bool exec_create_script(const Dictionary &args) {
 
 	// Validate language (v0: GDScript only)
 	if (language != "GDScript") {
-		ai_log_error(vformat("Execute 'create_script': Only 'GDScript' language is supported in v0. Got: '%s'", language));
-		return false;
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			vformat("Only 'GDScript' language is supported in v0. Got: '%s'", language));
 	}
 
 	// Convert to absolute path if it's a resource path
@@ -44,7 +44,8 @@ bool exec_create_script(const Dictionary &args) {
 	// Check if file already exists
 	if (FileAccess::exists(abs_path)) {
 		WARN_PRINT(vformat("AI Execute 'create_script': File already exists at '%s'. Skipping creation.", abs_path));
-		return false;
+		return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+			vformat("File already exists at '%s'", file_path));
 	}
 
 	ai_log_verbose(vformat("Creating script at '%s' with %d bytes of content", abs_path, content.length()));
@@ -54,21 +55,26 @@ bool exec_create_script(const Dictionary &args) {
 	undo_redo->add_undo_method(ai_singleton, "_delete_script_file", abs_path);
 	undo_redo->commit_action();
 
+	Dictionary result_data;
+	result_data["file_path"] = file_path;
+	result_data["language"] = language;
+	result_data["size"] = content.length();
+
 	print_line(vformat("AI: Executed create_script. File: %s, Language: %s", file_path, language));
-	return true;
+	return ai_create_success_result(result_data);
 }
 
-bool exec_update_script(const Dictionary &args) {
+Dictionary exec_update_script(const Dictionary &args) {
 	EditorUndoRedoManager *undo_redo = ai_get_undo_redo();
 	if (!undo_redo) {
-		ai_log_error("Execute 'update_script': EditorUndoRedoManager singleton not found.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::NO_UNDO_REDO,
+			"EditorUndoRedoManager singleton not found");
 	}
 
 	AI *ai_singleton = AI::get_singleton();
 	if (!ai_singleton) {
-		ai_log_error("Execute 'update_script': AI singleton not found.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INTERNAL_ERROR,
+			"AI singleton not found");
 	}
 
 	String file_path = args["file_path"];
@@ -79,15 +85,15 @@ bool exec_update_script(const Dictionary &args) {
 
 	// Check if file exists
 	if (!FileAccess::exists(abs_path)) {
-		ai_log_error(vformat("Execute 'update_script': File does not exist at '%s'. Cannot update.", abs_path));
-		return false;
+		return ai_create_error_result(AIErrorCodes::FILE_NOT_FOUND,
+			vformat("File does not exist at '%s'", file_path));
 	}
 
 	// Read existing content for undo
 	Ref<FileAccess> file = FileAccess::open(abs_path, FileAccess::READ);
 	if (file.is_null()) {
-		ai_log_error(vformat("Execute 'update_script': Failed to open file for reading at '%s'.", abs_path));
-		return false;
+		return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+			vformat("Failed to open file for reading at '%s'", file_path));
 	}
 	String original_content = file->get_as_text();
 	file.unref(); // Close the file
@@ -99,21 +105,26 @@ bool exec_update_script(const Dictionary &args) {
 	undo_redo->add_undo_method(ai_singleton, "_write_script_file", abs_path, original_content);
 	undo_redo->commit_action();
 
+	Dictionary result_data;
+	result_data["file_path"] = file_path;
+	result_data["old_size"] = original_content.length();
+	result_data["new_size"] = patch_content.length();
+
 	print_line(vformat("AI: Executed update_script. File: %s", file_path));
-	return true;
+	return ai_create_success_result(result_data);
 }
 
-bool exec_attach_script(const Dictionary &args) {
+Dictionary exec_attach_script(const Dictionary &args) {
 	EditorUndoRedoManager *undo_redo = ai_get_undo_redo();
 	if (!undo_redo) {
-		ai_log_error("Execute 'attach_script': EditorUndoRedoManager singleton not found.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::NO_UNDO_REDO,
+			"EditorUndoRedoManager singleton not found");
 	}
 
 	Node *edited_scene_root = ai_get_edited_scene_root();
 	if (!edited_scene_root) {
-		ai_log_error("Execute 'attach_script': No edited scene root.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::NO_ACTIVE_SCENE,
+			"No edited scene root");
 	}
 
 	String node_path_str = args["node_path"];
@@ -122,15 +133,15 @@ bool exec_attach_script(const Dictionary &args) {
 	// Resolve the target node
 	Node *target_node = ai_get_node_by_path(node_path_str);
 	if (!target_node) {
-		ai_log_error(vformat("Execute 'attach_script': Could not find node at path '%s'.", node_path_str));
-		return false;
+		return ai_create_error_result(AIErrorCodes::NODE_NOT_FOUND,
+			vformat("Could not find node at path '%s'", node_path_str));
 	}
 
 	// Load script resource
 	Ref<Script> scr = ResourceLoader::load(script_path);
 	if (scr.is_null()) {
-		ai_log_error(vformat("Execute 'attach_script': Could not load script at '%s'.", script_path));
-		return false;
+		return ai_create_error_result(AIErrorCodes::FILE_NOT_FOUND,
+			vformat("Could not load script at '%s'", script_path));
 	}
 
 	// Save old script for undo (may be null)
@@ -142,22 +153,27 @@ bool exec_attach_script(const Dictionary &args) {
 	undo_redo->add_undo_method(target_node, "set", "script", old_script);
 	undo_redo->commit_action();
 
+	Dictionary result_data;
+	result_data["node_path"] = node_path_str;
+	result_data["script_path"] = script_path;
+	result_data["had_previous_script"] = !old_script.is_null() && old_script.get_type() != Variant::NIL;
+
 	ai_log_verbose(vformat("attach_script to node: %s", node_path_str));
 	print_line(vformat("AI: Executed attach_script. Node: %s, Script: %s", node_path_str, script_path));
-	return true;
+	return ai_create_success_result(result_data);
 }
 
-bool exec_detach_script(const Dictionary &args) {
+Dictionary exec_detach_script(const Dictionary &args) {
 	EditorUndoRedoManager *undo_redo = ai_get_undo_redo();
 	if (!undo_redo) {
-		ai_log_error("Execute 'detach_script': EditorUndoRedoManager singleton not found.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::NO_UNDO_REDO,
+			"EditorUndoRedoManager singleton not found");
 	}
 
 	Node *edited_scene_root = ai_get_edited_scene_root();
 	if (!edited_scene_root) {
-		ai_log_error("Execute 'detach_script': No edited scene root.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::NO_ACTIVE_SCENE,
+			"No edited scene root");
 	}
 
 	String node_path_str = args["node_path"];
@@ -165,17 +181,21 @@ bool exec_detach_script(const Dictionary &args) {
 	// Resolve the target node
 	Node *target_node = ai_get_node_by_path(node_path_str);
 	if (!target_node) {
-		ai_log_error(vformat("Execute 'detach_script': Could not find node at path '%s'.", node_path_str));
-		return false;
+		return ai_create_error_result(AIErrorCodes::NODE_NOT_FOUND,
+			vformat("Could not find node at path '%s'", node_path_str));
 	}
 
 	// Save old script for undo (may be null)
 	Variant old_script = target_node->get("script");
 
+	Dictionary result_data;
+	result_data["node_path"] = node_path_str;
+
 	// If already detached, return success (no-op)
 	if (old_script.is_null() || old_script.get_type() == Variant::NIL) {
 		ai_log_verbose(vformat("Execute 'detach_script': Node '%s' already has no script attached.", node_path_str));
-		return true;
+		result_data["was_no_op"] = true;
+		return ai_create_success_result(result_data);
 	}
 
 	// Wrap in UndoRedo
@@ -184,32 +204,34 @@ bool exec_detach_script(const Dictionary &args) {
 	undo_redo->add_undo_method(target_node, "set", "script", old_script);
 	undo_redo->commit_action();
 
+	result_data["was_no_op"] = false;
+
 	ai_log_verbose(vformat("detach_script from node: %s", node_path_str));
 	print_line(vformat("AI: Executed detach_script. Node: %s", node_path_str));
-	return true;
+	return ai_create_success_result(result_data);
 }
 
-bool exec_rename_script(const Dictionary &args) {
+Dictionary exec_rename_script(const Dictionary &args) {
 #ifdef TOOLS_ENABLED
 	EditorUndoRedoManager *undo_redo = ai_get_undo_redo();
 	if (!undo_redo) {
-		ai_log_error("Execute 'rename_script': EditorUndoRedoManager singleton not found.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::NO_UNDO_REDO,
+			"EditorUndoRedoManager singleton not found");
 	}
 
 	AI *ai_singleton = AI::get_singleton();
 	if (!ai_singleton) {
-		ai_log_error("Execute 'rename_script': AI singleton not found.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INTERNAL_ERROR,
+			"AI singleton not found");
 	}
 
 	if (!args.has("old_path") || args["old_path"].get_type() != Variant::STRING) {
-		ai_log_error("Execute 'rename_script': 'old_path' must be a string.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			"'old_path' must be a string");
 	}
 	if (!args.has("new_path") || args["new_path"].get_type() != Variant::STRING) {
-		ai_log_error("Execute 'rename_script': 'new_path' must be a string.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			"'new_path' must be a string");
 	}
 
 	String old_path = args["old_path"];
@@ -221,14 +243,14 @@ bool exec_rename_script(const Dictionary &args) {
 
 	// Check if old file exists
 	if (!FileAccess::exists(old_abs_path)) {
-		ai_log_error(vformat("Execute 'rename_script': File does not exist at '%s'.", old_abs_path));
-		return false;
+		return ai_create_error_result(AIErrorCodes::FILE_NOT_FOUND,
+			vformat("File does not exist at '%s'", old_path));
 	}
 
 	// Check if new file already exists
 	if (FileAccess::exists(new_abs_path)) {
-		ai_log_error(vformat("Execute 'rename_script': File already exists at '%s'. Cannot rename.", new_abs_path));
-		return false;
+		return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+			vformat("File already exists at '%s'. Cannot rename", new_path));
 	}
 
 	ai_log_verbose(vformat("Renaming script from '%s' to '%s'", old_abs_path, new_abs_path));
@@ -239,11 +261,15 @@ bool exec_rename_script(const Dictionary &args) {
 	undo_redo->add_undo_method(ai_singleton, "_rename_script_file", new_abs_path, old_abs_path);
 	undo_redo->commit_action();
 
+	Dictionary result_data;
+	result_data["old_path"] = old_path;
+	result_data["new_path"] = new_path;
+
 	print_line(vformat("AI: Executed rename_script. Old: %s, New: %s", old_path, new_path));
-	return true;
+	return ai_create_success_result(result_data);
 #else
-	ai_log_error("Execute 'rename_script': Editor API not available in non-editor builds.");
-	return false;
+	return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+		"Editor API not available in non-editor builds");
 #endif
 }
 
@@ -275,23 +301,23 @@ static void ai_detach_script_from_nodes_dfs(Node *root, const String &script_pat
 
 } // namespace
 
-bool exec_delete_script(const Dictionary &args) {
+Dictionary exec_delete_script(const Dictionary &args) {
 #ifdef TOOLS_ENABLED
 	EditorUndoRedoManager *undo_redo = ai_get_undo_redo();
 	if (!undo_redo) {
-		ai_log_error("Execute 'delete_script': EditorUndoRedoManager singleton not found.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::NO_UNDO_REDO,
+			"EditorUndoRedoManager singleton not found");
 	}
 
 	AI *ai_singleton = AI::get_singleton();
 	if (!ai_singleton) {
-		ai_log_error("Execute 'delete_script': AI singleton not found.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INTERNAL_ERROR,
+			"AI singleton not found");
 	}
 
 	if (!args.has("file_path") || args["file_path"].get_type() != Variant::STRING) {
-		ai_log_error("Execute 'delete_script': 'file_path' must be a string.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			"'file_path' must be a string");
 	}
 
 	String file_path = args["file_path"];
@@ -302,15 +328,15 @@ bool exec_delete_script(const Dictionary &args) {
 
 	// Check if file exists
 	if (!FileAccess::exists(abs_path)) {
-		ai_log_error(vformat("Execute 'delete_script': File does not exist at '%s'.", abs_path));
-		return false;
+		return ai_create_error_result(AIErrorCodes::FILE_NOT_FOUND,
+			vformat("File does not exist at '%s'", file_path));
 	}
 
 	// Read old content for undo
 	Ref<FileAccess> file = FileAccess::open(abs_path, FileAccess::READ);
 	if (file.is_null()) {
-		ai_log_error(vformat("Execute 'delete_script': Failed to open file for reading at '%s'.", abs_path));
-		return false;
+		return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+			vformat("Failed to open file for reading at '%s'", file_path));
 	}
 	String original_content = file->get_as_text();
 	file.unref(); // Close the file
@@ -333,11 +359,15 @@ bool exec_delete_script(const Dictionary &args) {
 	undo_redo->add_undo_method(ai_singleton, "_create_script_file", abs_path, original_content);
 	undo_redo->commit_action();
 
+	Dictionary result_data;
+	result_data["file_path"] = file_path;
+	result_data["detach_from_nodes"] = detach_from_nodes;
+
 	print_line(vformat("AI: Executed delete_script. File: %s, DetachFromNodes: %s", file_path, detach_from_nodes ? "true" : "false"));
-	return true;
+	return ai_create_success_result(result_data);
 #else
-	ai_log_error("Execute 'delete_script': Editor API not available in non-editor builds.");
-	return false;
+	return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+		"Editor API not available in non-editor builds");
 #endif
 }
 

@@ -126,6 +126,20 @@ void AIStatusPanel::_notification(int p_what) {
 							provider->connect("request_completed", callable_mp(this, &AIStatusPanel::_on_ai_response));
 						}
 					}
+
+					// Connect to orchestrator signals for agentic tool use
+					Ref<AgenticOrchestrator> orchestrator = ai->get_orchestrator();
+					if (orchestrator.is_valid()) {
+						if (!orchestrator->is_connected("progress_update", callable_mp(this, &AIStatusPanel::_on_orchestrator_progress))) {
+							orchestrator->connect("progress_update", callable_mp(this, &AIStatusPanel::_on_orchestrator_progress));
+						}
+						if (!orchestrator->is_connected("tool_result_ready", callable_mp(this, &AIStatusPanel::_on_orchestrator_tool_result))) {
+							orchestrator->connect("tool_result_ready", callable_mp(this, &AIStatusPanel::_on_orchestrator_tool_result));
+						}
+						if (!orchestrator->is_connected("run_complete", callable_mp(this, &AIStatusPanel::_on_orchestrator_complete))) {
+							orchestrator->connect("run_complete", callable_mp(this, &AIStatusPanel::_on_orchestrator_complete));
+						}
+					}
 				}
 			}
 		} break;
@@ -139,9 +153,13 @@ void AIStatusPanel::_notification(int p_what) {
 
 void AIStatusPanel::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("_on_send_pressed"), &AIStatusPanel::_on_send_pressed);
+	ClassDB::bind_method(D_METHOD("_on_cancel_pressed"), &AIStatusPanel::_on_cancel_pressed);
 	ClassDB::bind_method(D_METHOD("_on_clear_pressed"), &AIStatusPanel::_on_clear_pressed);
 	ClassDB::bind_method(D_METHOD("_on_prompt_text_changed"), &AIStatusPanel::_on_prompt_text_changed);
 	ClassDB::bind_method(D_METHOD("_on_ai_response", "success", "response", "error"), &AIStatusPanel::_on_ai_response);
+	ClassDB::bind_method(D_METHOD("_on_orchestrator_progress", "status", "turn"), &AIStatusPanel::_on_orchestrator_progress);
+	ClassDB::bind_method(D_METHOD("_on_orchestrator_tool_result", "tool_result"), &AIStatusPanel::_on_orchestrator_tool_result);
+	ClassDB::bind_method(D_METHOD("_on_orchestrator_complete", "success", "final_message"), &AIStatusPanel::_on_orchestrator_complete);
 	ClassDB::bind_method(D_METHOD("_on_openai_request_completed", "result", "response_code", "headers", "body"), &AIStatusPanel::_on_openai_request_completed);
 	ClassDB::bind_method(D_METHOD("_on_gemini_request_completed", "result", "response_code", "headers", "body"), &AIStatusPanel::_on_gemini_request_completed);
 	ClassDB::bind_method(D_METHOD("_on_xai_request_completed", "result", "response_code", "headers", "body"), &AIStatusPanel::_on_xai_request_completed);
@@ -245,6 +263,75 @@ Control *AIStatusPanel::_create_message_bubble(const ChatMessage &p_message) {
 	return align_container;
 }
 
+Control *AIStatusPanel::_create_tool_result_ui(const Dictionary &p_tool_result) {
+	// Create container for alignment (tool results are always left-aligned)
+	HBoxContainer *align_container = memnew(HBoxContainer);
+	align_container->set_h_size_flags(SIZE_EXPAND_FILL);
+
+	// Create panel for the tool result bubble
+	PanelContainer *bubble = memnew(PanelContainer);
+	bubble->set_h_size_flags(SIZE_EXPAND_FILL);
+	align_container->add_child(bubble);
+
+	// Add spacer for right alignment
+	align_container->add_spacer();
+
+	// Style the bubble (using a distinct color for tool results)
+	Ref<StyleBoxFlat> style;
+	style.instantiate();
+	style->set_bg_color(Color(0.25, 0.3, 0.35)); // Darker grayish color for tool results
+	style->set_content_margin_all(8 * EDSCALE);
+	style->set_corner_radius_all(4 * EDSCALE);
+	bubble->add_theme_style_override("panel", style);
+
+	// Create label for content
+	RichTextLabel *label = memnew(RichTextLabel);
+	label->set_use_bbcode(true);
+	label->set_fit_content(true);
+	label->set_scroll_active(false);
+	label->set_selection_enabled(true);
+
+	// Format tool result for display
+	String action_type = p_tool_result.get("type", "unknown");
+	String status = p_tool_result.get("status", "unknown");
+
+	String display_text = vformat("[b][Tool][/b] %s\n", action_type);
+
+	if (status == "success") {
+		display_text += "[color=green]✓ Success[/color]";
+		if (p_tool_result.has("result")) {
+			Dictionary result = p_tool_result["result"];
+			if (!result.is_empty()) {
+				display_text += vformat("\n%s", JSON::stringify(result, "  ", false));
+			}
+		}
+	} else if (status == "error") {
+		display_text += "[color=red]✗ Error[/color]";
+		if (p_tool_result.has("error")) {
+			Dictionary error = p_tool_result["error"];
+			String error_msg = error.get("message", "Unknown error");
+			display_text += vformat("\n%s", error_msg);
+		}
+	}
+
+	label->add_text(display_text);
+	bubble->add_child(label);
+
+	return align_container;
+}
+
+void AIStatusPanel::_append_tool_result_ui(const Dictionary &p_tool_result) {
+	if (!message_list) {
+		return;
+	}
+
+	Control *tool_result_ui = _create_tool_result_ui(p_tool_result);
+	if (tool_result_ui) {
+		message_list->add_child(tool_result_ui);
+		callable_mp(this, &AIStatusPanel::_scroll_to_bottom).call_deferred();
+	}
+}
+
 void AIStatusPanel::_scroll_to_bottom() {
 	if (transcript_scroll) {
 		transcript_scroll->set_v_scroll(transcript_scroll->get_v_scroll_bar()->get_max());
@@ -258,6 +345,25 @@ void AIStatusPanel::_update_send_button_state() {
 
 	bool can_send = !is_waiting_for_response && !prompt_edit->get_text().strip_edges().is_empty();
 	send_button->set_disabled(!can_send);
+}
+
+void AIStatusPanel::_update_cancel_button_state() {
+	if (!cancel_button) {
+		return;
+	}
+
+	// Cancel button is enabled when there's an active agentic run
+	bool can_cancel = false;
+	if (Engine::get_singleton()->has_singleton("AI")) {
+		Object *ai_obj = Engine::get_singleton()->get_singleton_object("AI");
+		AI *ai = Object::cast_to<AI>(ai_obj);
+		if (ai) {
+			Ref<AgenticOrchestrator> orchestrator = ai->get_orchestrator();
+			can_cancel = orchestrator.is_valid() && orchestrator->is_running();
+		}
+	}
+
+	cancel_button->set_disabled(!can_cancel);
 }
 
 Array AIStatusPanel::_build_model_messages() {
@@ -336,23 +442,36 @@ void AIStatusPanel::_on_send_pressed() {
 	// Update state
 	is_waiting_for_response = true;
 	_update_send_button_state();
+	_update_cancel_button_state();
 
 	// Build full message history for context
 	Array messages = _build_model_messages();
 
-	// Send to AI with full conversation history
+	// Send to AI via agentic orchestrator for multi-turn tool use
 	if (Engine::get_singleton()->has_singleton("AI")) {
 		Object *ai_obj = Engine::get_singleton()->get_singleton_object("AI");
 		AI *ai = Object::cast_to<AI>(ai_obj);
 		if (ai) {
-			print_line(vformat("AI Chat Panel: Sending %d messages to AI", messages.size()));
-			ai->request_actions_with_history(messages);
+			Ref<AIProvider> provider = ai->get_provider();
+			Ref<AgenticOrchestrator> orchestrator = ai->get_orchestrator();
+
+			if (orchestrator.is_valid() && provider.is_valid()) {
+				print_line(vformat("AI Chat Panel: Starting agentic run with %d messages", messages.size()));
+				orchestrator->run_agentic_loop(messages, provider);
+			} else {
+				ERR_PRINT("AI Chat Panel: Orchestrator or provider not available.");
+				_remove_pending_message();
+				is_waiting_for_response = false;
+				_update_send_button_state();
+				_update_cancel_button_state();
+			}
 		}
 	} else {
 		ERR_PRINT("AI Chat Panel: AI singleton not found.");
 		_remove_pending_message();
 		is_waiting_for_response = false;
 		_update_send_button_state();
+		_update_cancel_button_state();
 	}
 }
 
@@ -368,6 +487,19 @@ void AIStatusPanel::_on_prompt_text_changed() {
 }
 
 void AIStatusPanel::_on_ai_response(bool p_success, const String &p_response, const String &p_error) {
+	// If orchestrator is running, it handles responses via its own callbacks - skip this legacy handler
+	if (Engine::get_singleton()->has_singleton("AI")) {
+		Object *ai_obj = Engine::get_singleton()->get_singleton_object("AI");
+		AI *ai = Object::cast_to<AI>(ai_obj);
+		if (ai) {
+			Ref<AgenticOrchestrator> orchestrator = ai->get_orchestrator();
+			if (orchestrator.is_valid() && orchestrator->is_running()) {
+				print_verbose("AIStatusPanel: Skipping legacy _on_ai_response - orchestrator is running");
+				return;
+			}
+		}
+	}
+
 	// Remove pending message
 	_remove_pending_message();
 
@@ -415,6 +547,71 @@ void AIStatusPanel::_on_ai_response(bool p_success, const String &p_response, co
 	// Update state
 	is_waiting_for_response = false;
 	_update_send_button_state();
+	_update_cancel_button_state();
+}
+
+void AIStatusPanel::_on_cancel_pressed() {
+	// Cancel the current agentic run
+	if (Engine::get_singleton()->has_singleton("AI")) {
+		Object *ai_obj = Engine::get_singleton()->get_singleton_object("AI");
+		AI *ai = Object::cast_to<AI>(ai_obj);
+		if (ai) {
+			Ref<AgenticOrchestrator> orchestrator = ai->get_orchestrator();
+			if (orchestrator.is_valid() && orchestrator->is_running()) {
+				print_line("AI Chat Panel: Cancelling agentic run");
+				orchestrator->cancel_run();
+				// UI will update when _on_orchestrator_complete is called
+			}
+		}
+	}
+}
+
+void AIStatusPanel::_on_orchestrator_progress(const String &p_status, int p_turn) {
+	// Update status label with progress
+	if (status_label) {
+		status_label->set_text(vformat("Turn %d: %s", p_turn, p_status));
+	}
+	print_verbose(vformat("AI Chat Panel: Agentic progress (turn %d): %s", p_turn, p_status));
+}
+
+void AIStatusPanel::_on_orchestrator_tool_result(const Dictionary &p_tool_result) {
+	print_line(vformat("AIStatusPanel: _on_orchestrator_tool_result called - type=%s, status=%s",
+		String(p_tool_result.get("type", "unknown")), String(p_tool_result.get("status", "unknown"))));
+
+	// Append tool result to chat transcript
+	_append_tool_result_ui(p_tool_result);
+
+	// Also append to chat store for persistence
+	if (chat_store.is_valid()) {
+		chat_store->append_tool_result(p_tool_result);
+	}
+}
+
+void AIStatusPanel::_on_orchestrator_complete(bool p_success, const String &p_final_message) {
+	print_line(vformat("AIStatusPanel: _on_orchestrator_complete called - success=%s, message_length=%d", p_success ? "true" : "false", p_final_message.length()));
+
+	// Remove pending message
+	_remove_pending_message();
+
+	// Append final message to chat
+	if (chat_store.is_valid() && !p_final_message.is_empty()) {
+		print_line("AIStatusPanel: Appending final assistant message to chat");
+		ChatMessage assistant_msg = chat_store->append_message("assistant", p_final_message);
+		_append_message_ui(assistant_msg);
+	} else {
+		print_line(vformat("AIStatusPanel: Not appending message - chat_store valid=%s, message empty=%s",
+			chat_store.is_valid() ? "true" : "false", p_final_message.is_empty() ? "true" : "false"));
+	}
+
+	// Update state
+	is_waiting_for_response = false;
+	_update_send_button_state();
+	_update_cancel_button_state();
+
+	// Reset status label
+	if (status_label) {
+		status_label->set_text(p_success ? TTR("Ready") : TTR("Cancelled"));
+	}
 }
 
 void AIStatusPanel::_show_pending_message() {
@@ -626,6 +823,13 @@ AIStatusPanel::AIStatusPanel() {
 	send_button->connect(SceneStringNames::get_singleton()->pressed, callable_mp(this, &AIStatusPanel::_on_send_pressed));
 	button_column->add_child(send_button);
 
+	// Cancel button (for stopping agentic runs)
+	cancel_button = memnew(Button);
+	cancel_button->set_text(TTR("Cancel"));
+	cancel_button->set_disabled(true); // Disabled unless there's an active run
+	cancel_button->connect(SceneStringNames::get_singleton()->pressed, callable_mp(this, &AIStatusPanel::_on_cancel_pressed));
+	button_column->add_child(cancel_button);
+
 	// Clear button
 	clear_button = memnew(Button);
 	clear_button->set_text(TTR("Clear"));
@@ -681,6 +885,20 @@ AIStatusPanel::~AIStatusPanel() {
 			if (provider.is_valid()) {
 				if (provider->is_connected("request_completed", callable_mp(this, &AIStatusPanel::_on_ai_response))) {
 					provider->disconnect("request_completed", callable_mp(this, &AIStatusPanel::_on_ai_response));
+				}
+			}
+
+			// Disconnect from orchestrator signals if connected
+			Ref<AgenticOrchestrator> orchestrator = ai->get_orchestrator();
+			if (orchestrator.is_valid()) {
+				if (orchestrator->is_connected("progress_update", callable_mp(this, &AIStatusPanel::_on_orchestrator_progress))) {
+					orchestrator->disconnect("progress_update", callable_mp(this, &AIStatusPanel::_on_orchestrator_progress));
+				}
+				if (orchestrator->is_connected("tool_result_ready", callable_mp(this, &AIStatusPanel::_on_orchestrator_tool_result))) {
+					orchestrator->disconnect("tool_result_ready", callable_mp(this, &AIStatusPanel::_on_orchestrator_tool_result));
+				}
+				if (orchestrator->is_connected("run_complete", callable_mp(this, &AIStatusPanel::_on_orchestrator_complete))) {
+					orchestrator->disconnect("run_complete", callable_mp(this, &AIStatusPanel::_on_orchestrator_complete));
 				}
 			}
 		}

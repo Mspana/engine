@@ -84,6 +84,7 @@ private:
 	// Input area
 	TextEdit *prompt_edit = nullptr;
 	Button *send_button = nullptr;
+	Button *cancel_button = nullptr;
 	Button *clear_button = nullptr;
 
 	// Status bar
@@ -112,14 +113,23 @@ private:
 	void _rebuild_message_list();
 	void _append_message_ui(const ChatMessage &p_message);
 	Control *_create_message_bubble(const ChatMessage &p_message);
+	Control *_create_tool_result_ui(const Dictionary &p_tool_result);
+	void _append_tool_result_ui(const Dictionary &p_tool_result);
 	void _scroll_to_bottom();
 	void _update_send_button_state();
+	void _update_cancel_button_state();
 
 	// Event handlers
 	void _on_send_pressed();
+	void _on_cancel_pressed();
 	void _on_clear_pressed();
 	void _on_prompt_text_changed();
 	void _on_ai_response(bool p_success, const String &p_response, const String &p_error);
+
+	// Agentic orchestrator callbacks
+	void _on_orchestrator_progress(const String &p_status, int p_turn);
+	void _on_orchestrator_tool_result(const Dictionary &p_tool_result);
+	void _on_orchestrator_complete(bool p_success, const String &p_final_message);
 
 	// Pending message helpers
 	void _show_pending_message();

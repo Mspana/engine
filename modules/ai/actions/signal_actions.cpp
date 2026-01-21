@@ -12,36 +12,36 @@
 
 namespace AISignalActions {
 
-bool exec_connect_signal(const Dictionary &args) {
+Dictionary exec_connect_signal(const Dictionary &args) {
 #ifdef TOOLS_ENABLED
 	EditorUndoRedoManager *undo_redo = ai_get_undo_redo();
 	if (!undo_redo) {
-		ai_log_error("Execute 'connect_signal': EditorUndoRedoManager singleton not found.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::NO_UNDO_REDO,
+			"EditorUndoRedoManager singleton not found");
 	}
 
 	Node *edited_scene_root = ai_get_edited_scene_root();
 	if (!edited_scene_root) {
-		ai_log_error("Execute 'connect_signal': No edited scene root.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::NO_ACTIVE_SCENE,
+			"No edited scene root");
 	}
 
 	// Validate required arguments
 	if (!args.has("emitter_path") || args["emitter_path"].get_type() != Variant::STRING) {
-		ai_log_error("Execute 'connect_signal': 'emitter_path' must be a string.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			"'emitter_path' must be a string");
 	}
 	if (!args.has("signal_name") || args["signal_name"].get_type() != Variant::STRING) {
-		ai_log_error("Execute 'connect_signal': 'signal_name' must be a string.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			"'signal_name' must be a string");
 	}
 	if (!args.has("target_path") || args["target_path"].get_type() != Variant::STRING) {
-		ai_log_error("Execute 'connect_signal': 'target_path' must be a string.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			"'target_path' must be a string");
 	}
 	if (!args.has("method_name") || args["method_name"].get_type() != Variant::STRING) {
-		ai_log_error("Execute 'connect_signal': 'method_name' must be a string.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			"'method_name' must be a string");
 	}
 
 	String emitter_path_str = args["emitter_path"];
@@ -52,8 +52,8 @@ bool exec_connect_signal(const Dictionary &args) {
 	// Resolve emitter node
 	Node *emitter = ai_get_node_by_path(emitter_path_str);
 	if (!emitter) {
-		ai_log_error(vformat("Execute 'connect_signal': Could not find emitter node at path '%s'.", emitter_path_str));
-		return false;
+		return ai_create_error_result(AIErrorCodes::NODE_NOT_FOUND,
+			vformat("Could not find emitter node at path '%s'", emitter_path_str));
 	}
 
 	// Resolve target object (can be any Object, not just Node)
@@ -63,15 +63,15 @@ bool exec_connect_signal(const Dictionary &args) {
 	} else {
 		Node *target_node = ai_get_node_by_path(target_path_str);
 		if (!target_node) {
-			ai_log_error(vformat("Execute 'connect_signal': Could not find target node at path '%s'.", target_path_str));
-			return false;
+			return ai_create_error_result(AIErrorCodes::NODE_NOT_FOUND,
+				vformat("Could not find target node at path '%s'", target_path_str));
 		}
 		target = target_node;
 	}
 
 	if (!target) {
-		ai_log_error("Execute 'connect_signal': Target object is null.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INTERNAL_ERROR,
+			"Target object is null");
 	}
 
 	// Build Callable
@@ -95,8 +95,8 @@ bool exec_connect_signal(const Dictionary &args) {
 
 	// Check if already connected
 	if (emitter->is_connected(signal_name, callable)) {
-		ai_log_error(vformat("Execute 'connect_signal': Signal '%s' is already connected to '%s::%s'.", signal_name_str, target_path_str, method_name_str));
-		return false;
+		return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+			vformat("Signal '%s' is already connected to '%s::%s'", signal_name_str, target_path_str, method_name_str));
 	}
 
 	ai_log_verbose(vformat("Connecting signal '%s' from '%s' to '%s::%s'", signal_name_str, emitter_path_str, target_path_str, method_name_str));
@@ -107,44 +107,52 @@ bool exec_connect_signal(const Dictionary &args) {
 	undo_redo->add_undo_method(emitter, "disconnect", signal_name, callable);
 	undo_redo->commit_action();
 
+	// Return success with details
+	Dictionary result_data;
+	result_data["emitter_path"] = emitter_path_str;
+	result_data["signal_name"] = signal_name_str;
+	result_data["target_path"] = target_path_str;
+	result_data["method_name"] = method_name_str;
+	result_data["flags"] = flags;
+
 	print_line(vformat("AI: Executed connect_signal. Emitter: %s, Signal: %s, Target: %s, Method: %s", emitter_path_str, signal_name_str, target_path_str, method_name_str));
-	return true;
+	return ai_create_success_result(result_data);
 #else
-	ai_log_error("Execute 'connect_signal': Editor API not available in non-editor builds.");
-	return false;
+	return ai_create_error_result(AIErrorCodes::INTERNAL_ERROR,
+		"Editor API not available in non-editor builds");
 #endif
 }
 
-bool exec_disconnect_signal(const Dictionary &args) {
+Dictionary exec_disconnect_signal(const Dictionary &args) {
 #ifdef TOOLS_ENABLED
 	EditorUndoRedoManager *undo_redo = ai_get_undo_redo();
 	if (!undo_redo) {
-		ai_log_error("Execute 'disconnect_signal': EditorUndoRedoManager singleton not found.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::NO_UNDO_REDO,
+			"EditorUndoRedoManager singleton not found");
 	}
 
 	Node *edited_scene_root = ai_get_edited_scene_root();
 	if (!edited_scene_root) {
-		ai_log_error("Execute 'disconnect_signal': No edited scene root.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::NO_ACTIVE_SCENE,
+			"No edited scene root");
 	}
 
 	// Validate required arguments
 	if (!args.has("emitter_path") || args["emitter_path"].get_type() != Variant::STRING) {
-		ai_log_error("Execute 'disconnect_signal': 'emitter_path' must be a string.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			"'emitter_path' must be a string");
 	}
 	if (!args.has("signal_name") || args["signal_name"].get_type() != Variant::STRING) {
-		ai_log_error("Execute 'disconnect_signal': 'signal_name' must be a string.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			"'signal_name' must be a string");
 	}
 	if (!args.has("target_path") || args["target_path"].get_type() != Variant::STRING) {
-		ai_log_error("Execute 'disconnect_signal': 'target_path' must be a string.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			"'target_path' must be a string");
 	}
 	if (!args.has("method_name") || args["method_name"].get_type() != Variant::STRING) {
-		ai_log_error("Execute 'disconnect_signal': 'method_name' must be a string.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			"'method_name' must be a string");
 	}
 
 	String emitter_path_str = args["emitter_path"];
@@ -155,8 +163,8 @@ bool exec_disconnect_signal(const Dictionary &args) {
 	// Resolve emitter node
 	Node *emitter = ai_get_node_by_path(emitter_path_str);
 	if (!emitter) {
-		ai_log_error(vformat("Execute 'disconnect_signal': Could not find emitter node at path '%s'.", emitter_path_str));
-		return false;
+		return ai_create_error_result(AIErrorCodes::NODE_NOT_FOUND,
+			vformat("Could not find emitter node at path '%s'", emitter_path_str));
 	}
 
 	// Resolve target object (can be any Object, not just Node)
@@ -166,15 +174,15 @@ bool exec_disconnect_signal(const Dictionary &args) {
 	} else {
 		Node *target_node = ai_get_node_by_path(target_path_str);
 		if (!target_node) {
-			ai_log_error(vformat("Execute 'disconnect_signal': Could not find target node at path '%s'.", target_path_str));
-			return false;
+			return ai_create_error_result(AIErrorCodes::NODE_NOT_FOUND,
+				vformat("Could not find target node at path '%s'", target_path_str));
 		}
 		target = target_node;
 	}
 
 	if (!target) {
-		ai_log_error("Execute 'disconnect_signal': Target object is null.");
-		return false;
+		return ai_create_error_result(AIErrorCodes::INTERNAL_ERROR,
+			"Target object is null");
 	}
 
 	// Build Callable
@@ -182,10 +190,19 @@ bool exec_disconnect_signal(const Dictionary &args) {
 	StringName method_name = StringName(method_name_str);
 	Callable callable(target, method_name);
 
-	// Check if connected - if not, return true (idempotent)
+	// Check if connected - if not, return success (idempotent)
 	if (!emitter->is_connected(signal_name, callable)) {
-		ai_log_verbose(vformat("Execute 'disconnect_signal': Signal '%s' is not connected to '%s::%s'. Already disconnected.", signal_name_str, target_path_str, method_name_str));
-		return true;
+		ai_log_verbose(vformat("Signal '%s' is not connected to '%s::%s'. Already disconnected.", signal_name_str, target_path_str, method_name_str));
+
+		// Return success for idempotent operation
+		Dictionary result_data;
+		result_data["emitter_path"] = emitter_path_str;
+		result_data["signal_name"] = signal_name_str;
+		result_data["target_path"] = target_path_str;
+		result_data["method_name"] = method_name_str;
+		result_data["was_connected"] = false;
+
+		return ai_create_success_result(result_data);
 	}
 
 	ai_log_verbose(vformat("Disconnecting signal '%s' from '%s' to '%s::%s'", signal_name_str, emitter_path_str, target_path_str, method_name_str));
@@ -197,13 +214,20 @@ bool exec_disconnect_signal(const Dictionary &args) {
 	undo_redo->add_undo_method(emitter, "connect", signal_name, callable, 0);
 	undo_redo->commit_action();
 
+	// Return success with details
+	Dictionary result_data;
+	result_data["emitter_path"] = emitter_path_str;
+	result_data["signal_name"] = signal_name_str;
+	result_data["target_path"] = target_path_str;
+	result_data["method_name"] = method_name_str;
+	result_data["was_connected"] = true;
+
 	print_line(vformat("AI: Executed disconnect_signal. Emitter: %s, Signal: %s, Target: %s, Method: %s", emitter_path_str, signal_name_str, target_path_str, method_name_str));
-	return true;
+	return ai_create_success_result(result_data);
 #else
-	ai_log_error("Execute 'disconnect_signal': Editor API not available in non-editor builds.");
-	return false;
+	return ai_create_error_result(AIErrorCodes::INTERNAL_ERROR,
+		"Editor API not available in non-editor builds");
 #endif
 }
 
 } // namespace AISignalActions
-

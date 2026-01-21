@@ -11,11 +11,13 @@ namespace AISignalActions {
 // Connects a signal from an emitter node to a target method.
 // Required args: emitter_path (String), signal_name (String), target_path (String), method_name (String)
 // Optional args: binds (Array), flags (int)
-bool exec_connect_signal(const Dictionary &args);
+// Returns: Dictionary with status="success"|"error", result/error fields
+Dictionary exec_connect_signal(const Dictionary &args);
 
 // Disconnects a signal from an emitter node to a target method.
 // Required args: emitter_path (String), signal_name (String), target_path (String), method_name (String)
-bool exec_disconnect_signal(const Dictionary &args);
+// Returns: Dictionary with status="success"|"error", result/error fields
+Dictionary exec_disconnect_signal(const Dictionary &args);
 
 } // namespace AISignalActions
 
