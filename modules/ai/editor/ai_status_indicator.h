@@ -103,6 +103,10 @@ private:
 
 	// Chat state
 	bool is_waiting_for_response = false;
+	bool context_was_truncated = false;
+
+	// Build messages array for API call with truncation
+	Array _build_model_messages();
 
 	// UI building methods
 	void _rebuild_message_list();

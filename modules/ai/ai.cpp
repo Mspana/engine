@@ -590,6 +590,61 @@ Array AI::request_actions(const String &user_prompt) {
 	return result_array;
 }
 
+Array AI::request_actions_with_history(const Array &p_messages) {
+	Array result_array;
+
+	// Check if provider is set
+	if (provider.is_null()) {
+		ERR_PRINT("AI::request_actions_with_history - No provider set. Use DummyProvider for testing or set a real provider.");
+		return result_array;
+	}
+
+	// Get active scene path for context retrieval
+	String active_scene_path = _get_active_scene_path();
+	
+	// Extract the last user message for context retrieval
+	String last_user_prompt;
+	for (int i = p_messages.size() - 1; i >= 0; i--) {
+		Dictionary msg = p_messages[i];
+		if (msg.get("role", "") == "user") {
+			last_user_prompt = msg.get("content", "");
+			break;
+		}
+	}
+	
+	// Retrieve relevant project context based on the last user message
+	Array context_snippets;
+	if (retrieval.is_valid() && !last_user_prompt.is_empty()) {
+		context_snippets = retrieval->retrieve_context(last_user_prompt, active_scene_path, 8);
+	}
+	
+	// Build context block from snippets
+	String context_block;
+	if (!context_snippets.is_empty()) {
+		context_block = "\n\nProject context:\n";
+		for (int i = 0; i < context_snippets.size(); i++) {
+			Dictionary snippet = context_snippets[i];
+			String file_path = snippet.get("file_path", "");
+			String text = snippet.get("text", "");
+			real_t score = snippet.get("score", 0.0);
+			
+			context_block += vformat("\n--- File: %s (relevance: %.1f) ---\n%s\n", file_path, score, text);
+		}
+		print_line(vformat("AI: Retrieved %d context snippets for prompt enrichment", context_snippets.size()));
+	}
+
+	print_line(vformat("AI: Sending request with %d messages via %s provider", p_messages.size(), provider->get_class()));
+	
+	// Ask the provider to send the request with full message history and context block
+	// The provider will emit the "request_completed" signal when done
+	provider->send_request_with_messages(p_messages, context_block);
+	
+	// For async providers (OpenAI, Gemini, XAI), actions will be executed when signal fires
+	// For DummyProvider, the signal fires immediately and actions execute synchronously
+	
+	return result_array;
+}
+
 // Provider management
 void AI::set_provider(const Ref<AIProvider> &p_provider) {
     // Disconnect from old provider if it exists
@@ -625,6 +680,8 @@ Dictionary AI::_validate_command_json_bind(const String &json_str) const {
 void AI::_bind_methods() {
     // The D_METHOD for request_actions now conceptually takes a "user_prompt"
     ClassDB::bind_method(D_METHOD("request_actions", "user_prompt"), &AI::request_actions);
+    // Request with full conversation history
+    ClassDB::bind_method(D_METHOD("request_actions_with_history", "messages"), &AI::request_actions_with_history);
     // Bind the helper method under the desired name for GDScript
     ClassDB::bind_method(D_METHOD("validate_command_json", "json_str"), &AI::_validate_command_json_bind);
     

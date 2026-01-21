@@ -41,6 +41,10 @@
 #include "scene/resources/font.h"
 #include "scene/scene_string_names.h"
 
+// Truncation limits for conversation context (must match ai_provider.cpp)
+static const int MAX_CONTEXT_MESSAGES = 80;
+static const int MAX_CONTEXT_CHARS = 120000; // 120k chars
+
 // ============================================================================
 // AIStatusIndicator - The colored circle showing connection status
 // ============================================================================
@@ -256,6 +260,57 @@ void AIStatusPanel::_update_send_button_state() {
 	send_button->set_disabled(!can_send);
 }
 
+Array AIStatusPanel::_build_model_messages() {
+	Array messages;
+	context_was_truncated = false;
+	
+	if (!chat_store.is_valid()) {
+		return messages;
+	}
+	
+	const Vector<ChatMessage> &transcript = chat_store->get_messages();
+	
+	if (transcript.is_empty()) {
+		return messages;
+	}
+	
+	// Calculate total chars and find truncation point
+	// We work backwards from the most recent message to keep the latest context
+	int total_chars = 0;
+	int start_index = 0;
+	
+	for (int i = transcript.size() - 1; i >= 0; i--) {
+		total_chars += transcript[i].content.length();
+		int message_count = transcript.size() - i;
+		
+		if (total_chars > MAX_CONTEXT_CHARS || message_count > MAX_CONTEXT_MESSAGES) {
+			start_index = i + 1;
+			context_was_truncated = true;
+			WARN_PRINT(vformat("AI: Context truncated. Using %d of %d messages (%d chars).", 
+				transcript.size() - start_index, transcript.size(), total_chars - transcript[i].content.length()));
+			break;
+		}
+	}
+	
+	// Build messages array from start_index
+	for (int i = start_index; i < transcript.size(); i++) {
+		Dictionary msg;
+		msg["role"] = transcript[i].role;
+		msg["content"] = transcript[i].content;
+		messages.push_back(msg);
+	}
+	
+	// Log context info
+	int final_chars = 0;
+	for (int i = start_index; i < transcript.size(); i++) {
+		final_chars += transcript[i].content.length();
+	}
+	print_line(vformat("AI: Built %d messages for context (%d chars)%s", 
+		messages.size(), final_chars, context_was_truncated ? " [TRUNCATED]" : ""));
+	
+	return messages;
+}
+
 void AIStatusPanel::_on_send_pressed() {
 	if (!prompt_edit || is_waiting_for_response) {
 		return;
@@ -266,7 +321,7 @@ void AIStatusPanel::_on_send_pressed() {
 		return;
 	}
 
-	// Append user message
+	// Append user message to store first
 	if (chat_store.is_valid()) {
 		ChatMessage user_msg = chat_store->append_message("user", prompt_text);
 		_append_message_ui(user_msg);
@@ -282,13 +337,16 @@ void AIStatusPanel::_on_send_pressed() {
 	is_waiting_for_response = true;
 	_update_send_button_state();
 
-	// Send to AI
+	// Build full message history for context
+	Array messages = _build_model_messages();
+
+	// Send to AI with full conversation history
 	if (Engine::get_singleton()->has_singleton("AI")) {
 		Object *ai_obj = Engine::get_singleton()->get_singleton_object("AI");
 		AI *ai = Object::cast_to<AI>(ai_obj);
 		if (ai) {
-			print_line(vformat("AI Chat Panel: Sending prompt: '%s'", prompt_text));
-			ai->request_actions(prompt_text);
+			print_line(vformat("AI Chat Panel: Sending %d messages to AI", messages.size()));
+			ai->request_actions_with_history(messages);
 		}
 	} else {
 		ERR_PRINT("AI Chat Panel: AI singleton not found.");

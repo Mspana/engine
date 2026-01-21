@@ -51,8 +51,11 @@ private:
 	void _write_binary_file(const String &abs_path, const PackedByteArray &bytes);
 
 public:
-	// The core method to interact with the AI backend.
+	// The core method to interact with the AI backend (single message, legacy).
 	Array request_actions(const String &prompt);
+	
+	// Request with full conversation history
+	Array request_actions_with_history(const Array &p_messages);
 
 	// Provider management
 	void set_provider(const Ref<AIProvider> &p_provider);

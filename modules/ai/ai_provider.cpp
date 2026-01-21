@@ -7,6 +7,10 @@
 #include "core/os/os.h"
 #include "core/crypto/crypto.h"
 
+// Truncation limits for conversation context
+static const int MAX_CONTEXT_MESSAGES = 80;
+static const int MAX_CONTEXT_CHARS = 120000; // 120k chars
+
 // ============================================================================
 // AIProvider - Base Class Implementation
 // ============================================================================
@@ -119,6 +123,15 @@ String AIProvider::get_request_url() const {
 void AIProvider::send_request(const String &user_prompt, const String &context_block) {
 	ERR_PRINT("AIProvider::send_request() - Base class method called. Override in subclass.");
 	emit_signal("request_completed", false, "", "Provider does not implement send_request()");
+}
+
+void AIProvider::send_request_with_messages(const Array &p_messages, const String &context_block) {
+	ERR_PRINT("AIProvider::send_request_with_messages() - Base class method called. Override in subclass.");
+	emit_signal("request_completed", false, "", "Provider does not implement send_request_with_messages()");
+}
+
+Dictionary AIProvider::build_request_body_with_messages(const Array &p_messages, const String &context_block) const {
+	return Dictionary();
 }
 
 String AIProvider::load_api_key_from_env(const String &env_var_name) {
@@ -498,6 +511,165 @@ void OpenAIProvider::_perform_request(const String &user_prompt, const String &c
 	memdelete(http_client);
 }
 
+Dictionary OpenAIProvider::build_request_body_with_messages(const Array &p_messages, const String &context_block) const {
+	Dictionary body;
+	body["model"] = model;
+	body["temperature"] = temperature;
+	body["max_tokens"] = max_tokens;
+
+	// Build messages array with system prompt first
+	Array messages;
+	
+	Dictionary system_msg;
+	system_msg["role"] = "system";
+	String system_content = get_system_prompt();
+	if (!context_block.is_empty()) {
+		system_content += context_block;
+	}
+	system_msg["content"] = system_content;
+	messages.push_back(system_msg);
+
+	// Append all conversation messages
+	for (int i = 0; i < p_messages.size(); i++) {
+		messages.push_back(p_messages[i]);
+	}
+
+	body["messages"] = messages;
+
+	return body;
+}
+
+void OpenAIProvider::send_request_with_messages(const Array &p_messages, const String &context_block) {
+	if (api_key.is_empty()) {
+		ERR_PRINT("OpenAIProvider::send_request_with_messages() - API key is not set");
+		call_deferred("emit_signal", "request_completed", false, "", "API key is not set");
+		return;
+	}
+	
+	print_line(vformat("OpenAIProvider: Sending request with %d messages to %s", p_messages.size(), get_request_url()));
+	
+	// Submit task to worker thread pool
+	WorkerThreadPool::get_singleton()->add_task(
+		callable_mp(this, &OpenAIProvider::_perform_request_with_messages).bind(p_messages, context_block)
+	);
+}
+
+void OpenAIProvider::_perform_request_with_messages(const Array &p_messages, const String &context_block) {
+	HTTPClient *http_client = HTTPClient::create();
+	
+	// Parse URL to extract host and path
+	String url = get_request_url();
+	String host = "api.openai.com";
+	int port = 443;
+	
+	// Connect to host
+	Ref<TLSOptions> tls_options = TLSOptions::client();
+	Error err = http_client->connect_to_host(host, port, tls_options);
+	if (err != OK) {
+		ERR_PRINT(vformat("OpenAIProvider: Failed to connect to host: %d", err));
+		call_deferred("emit_signal", "request_completed", false, "", vformat("Failed to connect: %d", err));
+		memdelete(http_client);
+		return;
+	}
+	
+	// Wait for connection
+	while (http_client->get_status() == HTTPClient::STATUS_CONNECTING ||
+	       http_client->get_status() == HTTPClient::STATUS_RESOLVING) {
+		http_client->poll();
+		OS::get_singleton()->delay_usec(10000); // 10ms
+	}
+	
+	if (http_client->get_status() != HTTPClient::STATUS_CONNECTED) {
+		ERR_PRINT(vformat("OpenAIProvider: Connection failed, status: %d", http_client->get_status()));
+		call_deferred("emit_signal", "request_completed", false, "", "Connection failed");
+		memdelete(http_client);
+		return;
+	}
+	
+	// Build request with message history
+	Dictionary request_body = build_request_body_with_messages(p_messages, context_block);
+	String json_body = JSON::stringify(request_body);
+	PackedStringArray headers_array = get_request_headers();
+	
+	Vector<String> headers_vector;
+	for (int i = 0; i < headers_array.size(); i++) {
+		headers_vector.push_back(headers_array[i]);
+	}
+	
+	// Send request
+	CharString body_data = json_body.utf8();
+	err = http_client->request(HTTPClient::METHOD_POST, "/v1/chat/completions", headers_vector, (const uint8_t *)body_data.get_data(), body_data.length());
+	if (err != OK) {
+		ERR_PRINT(vformat("OpenAIProvider: Failed to send request: %d", err));
+		call_deferred("emit_signal", "request_completed", false, "", vformat("Failed to send request: %d", err));
+		memdelete(http_client);
+		return;
+	}
+	
+	// Wait for response
+	while (http_client->get_status() == HTTPClient::STATUS_REQUESTING) {
+		http_client->poll();
+		OS::get_singleton()->delay_usec(10000); // 10ms
+	}
+	
+	if (http_client->get_status() != HTTPClient::STATUS_BODY &&
+	    http_client->get_status() != HTTPClient::STATUS_CONNECTED) {
+		ERR_PRINT(vformat("OpenAIProvider: Request failed, status: %d", http_client->get_status()));
+		call_deferred("emit_signal", "request_completed", false, "", "Request failed");
+		memdelete(http_client);
+		return;
+	}
+	
+	// Check response code
+	int response_code = http_client->get_response_code();
+	if (response_code != 200) {
+		ERR_PRINT(vformat("OpenAIProvider: HTTP error code: %d", response_code));
+		call_deferred("emit_signal", "request_completed", false, "", vformat("HTTP error: %d", response_code));
+		memdelete(http_client);
+		return;
+	}
+	
+	// Read response body
+	PackedByteArray response_body;
+	while (http_client->get_status() == HTTPClient::STATUS_BODY) {
+		http_client->poll();
+		PackedByteArray chunk = http_client->read_response_body_chunk();
+		if (chunk.size() > 0) {
+			response_body.append_array(chunk);
+		} else {
+			OS::get_singleton()->delay_usec(10000); // 10ms
+		}
+	}
+	
+	String response_str = String::utf8((const char *)response_body.ptr(), response_body.size());
+	
+	// Parse JSON response
+	JSON json_parser;
+	err = json_parser.parse(response_str);
+	if (err != Error::OK) {
+		ERR_PRINT(vformat("OpenAIProvider: Failed to parse response JSON: %s", json_parser.get_error_message()));
+		call_deferred("emit_signal", "request_completed", false, "", "Failed to parse response JSON");
+		memdelete(http_client);
+		return;
+	}
+	
+	Dictionary response_data = json_parser.get_data();
+	String ai_response = parse_response(response_data);
+	
+	if (ai_response.is_empty()) {
+		ERR_PRINT("OpenAIProvider: Empty response from AI");
+		call_deferred("emit_signal", "request_completed", false, "", "Empty response");
+		memdelete(http_client);
+		return;
+	}
+	
+	print_line(vformat("OpenAIProvider: Received response: %s", ai_response));
+	call_deferred("emit_signal", "request_completed", true, ai_response, "");
+	
+	// Clean up
+	memdelete(http_client);
+}
+
 // ============================================================================
 // GeminiProvider Implementation
 // ============================================================================
@@ -658,6 +830,208 @@ void GeminiProvider::_perform_request(const String &user_prompt, const String &c
 	
 	// Build request
 	Dictionary request_body = build_request_body(user_prompt, context_block);
+	String json_body = JSON::stringify(request_body);
+	PackedStringArray headers_array = get_request_headers();
+	
+	Vector<String> headers_vector;
+	for (int i = 0; i < headers_array.size(); i++) {
+		headers_vector.push_back(headers_array[i]);
+	}
+	
+	// Build URL path with model and API key
+	String path = vformat("/v1beta/models/%s:generateContent?key=%s", model, api_key);
+	
+	// Send request
+	CharString body_data = json_body.utf8();
+	err = http_client->request(HTTPClient::METHOD_POST, path, headers_vector, (const uint8_t *)body_data.get_data(), body_data.length());
+	if (err != OK) {
+		ERR_PRINT(vformat("GeminiProvider: Failed to send request: %d", err));
+		call_deferred("emit_signal", "request_completed", false, "", vformat("Failed to send request: %d", err));
+		memdelete(http_client);
+		return;
+	}
+	
+	// Wait for response
+	while (http_client->get_status() == HTTPClient::STATUS_REQUESTING) {
+		http_client->poll();
+		OS::get_singleton()->delay_usec(10000); // 10ms
+	}
+	
+	if (http_client->get_status() != HTTPClient::STATUS_BODY &&
+	    http_client->get_status() != HTTPClient::STATUS_CONNECTED) {
+		ERR_PRINT(vformat("GeminiProvider: Request failed, status: %d", http_client->get_status()));
+		call_deferred("emit_signal", "request_completed", false, "", "Request failed");
+		memdelete(http_client);
+		return;
+	}
+	
+	// Check response code
+	int response_code = http_client->get_response_code();
+	if (response_code != 200) {
+		ERR_PRINT(vformat("GeminiProvider: HTTP error code: %d", response_code));
+		call_deferred("emit_signal", "request_completed", false, "", vformat("HTTP error: %d", response_code));
+		memdelete(http_client);
+		return;
+	}
+	
+	// Read response body
+	PackedByteArray response_body;
+	while (http_client->get_status() == HTTPClient::STATUS_BODY) {
+		http_client->poll();
+		PackedByteArray chunk = http_client->read_response_body_chunk();
+		if (chunk.size() > 0) {
+			response_body.append_array(chunk);
+		} else {
+			OS::get_singleton()->delay_usec(10000); // 10ms
+		}
+	}
+	
+	String response_str = String::utf8((const char *)response_body.ptr(), response_body.size());
+	
+	// Parse JSON response
+	JSON json_parser;
+	err = json_parser.parse(response_str);
+	if (err != Error::OK) {
+		ERR_PRINT(vformat("GeminiProvider: Failed to parse response JSON: %s", json_parser.get_error_message()));
+		call_deferred("emit_signal", "request_completed", false, "", "Failed to parse response JSON");
+		memdelete(http_client);
+		return;
+	}
+	
+	Dictionary response_data = json_parser.get_data();
+	String ai_response = parse_response(response_data);
+	
+	if (ai_response.is_empty()) {
+		ERR_PRINT("GeminiProvider: Empty response from AI");
+		call_deferred("emit_signal", "request_completed", false, "", "Empty response");
+		memdelete(http_client);
+		return;
+	}
+	
+	print_line(vformat("GeminiProvider: Received response: %s", ai_response));
+	call_deferred("emit_signal", "request_completed", true, ai_response, "");
+	
+	// Clean up
+	memdelete(http_client);
+}
+
+Dictionary GeminiProvider::build_request_body_with_messages(const Array &p_messages, const String &context_block) const {
+	Dictionary body;
+
+	// Build contents array for Gemini format
+	// Gemini uses role: "user" and role: "model" (not "assistant")
+	// System prompt is prepended to the first user message
+	Array contents;
+	
+	String system_content = get_system_prompt();
+	if (!context_block.is_empty()) {
+		system_content += context_block;
+	}
+	
+	bool system_prepended = false;
+	
+	for (int i = 0; i < p_messages.size(); i++) {
+		Dictionary msg = p_messages[i];
+		String role = msg.get("role", "");
+		String content = msg.get("content", "");
+		
+		Dictionary gemini_content;
+		Array parts;
+		Dictionary text_part;
+		
+		// Convert role: assistant -> model for Gemini
+		if (role == "assistant") {
+			gemini_content["role"] = "model";
+			text_part["text"] = content;
+		} else if (role == "user") {
+			gemini_content["role"] = "user";
+			// Prepend system prompt to first user message
+			if (!system_prepended) {
+				text_part["text"] = system_content + "\n\nUser request: " + content;
+				system_prepended = true;
+			} else {
+				text_part["text"] = content;
+			}
+		} else {
+			// Skip system messages (handled above)
+			continue;
+		}
+		
+		parts.push_back(text_part);
+		gemini_content["parts"] = parts;
+		contents.push_back(gemini_content);
+	}
+	
+	// If no user messages (empty transcript), add system as first user message
+	if (!system_prepended) {
+		Dictionary gemini_content;
+		gemini_content["role"] = "user";
+		Array parts;
+		Dictionary text_part;
+		text_part["text"] = system_content;
+		parts.push_back(text_part);
+		gemini_content["parts"] = parts;
+		contents.push_back(gemini_content);
+	}
+
+	body["contents"] = contents;
+
+	// Generation config
+	Dictionary generation_config;
+	generation_config["temperature"] = temperature;
+	generation_config["maxOutputTokens"] = max_tokens;
+	body["generationConfig"] = generation_config;
+
+	return body;
+}
+
+void GeminiProvider::send_request_with_messages(const Array &p_messages, const String &context_block) {
+	if (api_key.is_empty()) {
+		ERR_PRINT("GeminiProvider::send_request_with_messages() - API key is not set");
+		call_deferred("emit_signal", "request_completed", false, "", "API key is not set");
+		return;
+	}
+	
+	print_line(vformat("GeminiProvider: Sending request with %d messages to %s", p_messages.size(), get_request_url()));
+	
+	// Submit task to worker thread pool
+	WorkerThreadPool::get_singleton()->add_task(
+		callable_mp(this, &GeminiProvider::_perform_request_with_messages).bind(p_messages, context_block)
+	);
+}
+
+void GeminiProvider::_perform_request_with_messages(const Array &p_messages, const String &context_block) {
+	HTTPClient *http_client = HTTPClient::create();
+	
+	String host = "generativelanguage.googleapis.com";
+	int port = 443;
+	
+	// Connect to host
+	Ref<TLSOptions> tls_options = TLSOptions::client();
+	Error err = http_client->connect_to_host(host, port, tls_options);
+	if (err != OK) {
+		ERR_PRINT(vformat("GeminiProvider: Failed to connect to host: %d", err));
+		call_deferred("emit_signal", "request_completed", false, "", vformat("Failed to connect: %d", err));
+		memdelete(http_client);
+		return;
+	}
+	
+	// Wait for connection
+	while (http_client->get_status() == HTTPClient::STATUS_CONNECTING ||
+	       http_client->get_status() == HTTPClient::STATUS_RESOLVING) {
+		http_client->poll();
+		OS::get_singleton()->delay_usec(10000); // 10ms
+	}
+	
+	if (http_client->get_status() != HTTPClient::STATUS_CONNECTED) {
+		ERR_PRINT(vformat("GeminiProvider: Connection failed, status: %d", http_client->get_status()));
+		call_deferred("emit_signal", "request_completed", false, "", "Connection failed");
+		memdelete(http_client);
+		return;
+	}
+	
+	// Build request with message history
+	Dictionary request_body = build_request_body_with_messages(p_messages, context_block);
 	String json_body = JSON::stringify(request_body);
 	PackedStringArray headers_array = get_request_headers();
 	
@@ -970,6 +1344,164 @@ void XAIProvider::_perform_request(const String &user_prompt, const String &cont
 	memdelete(http_client);
 }
 
+Dictionary XAIProvider::build_request_body_with_messages(const Array &p_messages, const String &context_block) const {
+	// x.ai uses OpenAI-compatible API
+	Dictionary body;
+	body["model"] = model;
+	body["temperature"] = temperature;
+	body["max_tokens"] = max_tokens;
+
+	// Build messages array with system prompt first
+	Array messages;
+	
+	Dictionary system_msg;
+	system_msg["role"] = "system";
+	String system_content = get_system_prompt();
+	if (!context_block.is_empty()) {
+		system_content += context_block;
+	}
+	system_msg["content"] = system_content;
+	messages.push_back(system_msg);
+
+	// Append all conversation messages
+	for (int i = 0; i < p_messages.size(); i++) {
+		messages.push_back(p_messages[i]);
+	}
+
+	body["messages"] = messages;
+
+	return body;
+}
+
+void XAIProvider::send_request_with_messages(const Array &p_messages, const String &context_block) {
+	if (api_key.is_empty()) {
+		ERR_PRINT("XAIProvider::send_request_with_messages() - API key is not set");
+		call_deferred("emit_signal", "request_completed", false, "", "API key is not set");
+		return;
+	}
+	
+	print_line(vformat("XAIProvider: Sending request with %d messages to %s", p_messages.size(), get_request_url()));
+	
+	// Submit task to worker thread pool
+	WorkerThreadPool::get_singleton()->add_task(
+		callable_mp(this, &XAIProvider::_perform_request_with_messages).bind(p_messages, context_block)
+	);
+}
+
+void XAIProvider::_perform_request_with_messages(const Array &p_messages, const String &context_block) {
+	HTTPClient *http_client = HTTPClient::create();
+	
+	String host = "api.x.ai";
+	int port = 443;
+	
+	// Connect to host
+	Ref<TLSOptions> tls_options = TLSOptions::client();
+	Error err = http_client->connect_to_host(host, port, tls_options);
+	if (err != OK) {
+		ERR_PRINT(vformat("XAIProvider: Failed to connect to host: %d", err));
+		call_deferred("emit_signal", "request_completed", false, "", vformat("Failed to connect: %d", err));
+		memdelete(http_client);
+		return;
+	}
+	
+	// Wait for connection
+	while (http_client->get_status() == HTTPClient::STATUS_CONNECTING ||
+	       http_client->get_status() == HTTPClient::STATUS_RESOLVING) {
+		http_client->poll();
+		OS::get_singleton()->delay_usec(10000); // 10ms
+	}
+	
+	if (http_client->get_status() != HTTPClient::STATUS_CONNECTED) {
+		ERR_PRINT(vformat("XAIProvider: Connection failed, status: %d", http_client->get_status()));
+		call_deferred("emit_signal", "request_completed", false, "", "Connection failed");
+		memdelete(http_client);
+		return;
+	}
+	
+	// Build request with message history
+	Dictionary request_body = build_request_body_with_messages(p_messages, context_block);
+	String json_body = JSON::stringify(request_body);
+	PackedStringArray headers_array = get_request_headers();
+	
+	Vector<String> headers_vector;
+	for (int i = 0; i < headers_array.size(); i++) {
+		headers_vector.push_back(headers_array[i]);
+	}
+	
+	// Send request
+	CharString body_data = json_body.utf8();
+	err = http_client->request(HTTPClient::METHOD_POST, "/v1/chat/completions", headers_vector, (const uint8_t *)body_data.get_data(), body_data.length());
+	if (err != OK) {
+		ERR_PRINT(vformat("XAIProvider: Failed to send request: %d", err));
+		call_deferred("emit_signal", "request_completed", false, "", vformat("Failed to send request: %d", err));
+		memdelete(http_client);
+		return;
+	}
+	
+	// Wait for response
+	while (http_client->get_status() == HTTPClient::STATUS_REQUESTING) {
+		http_client->poll();
+		OS::get_singleton()->delay_usec(10000); // 10ms
+	}
+	
+	if (http_client->get_status() != HTTPClient::STATUS_BODY &&
+	    http_client->get_status() != HTTPClient::STATUS_CONNECTED) {
+		ERR_PRINT(vformat("XAIProvider: Request failed, status: %d", http_client->get_status()));
+		call_deferred("emit_signal", "request_completed", false, "", "Request failed");
+		memdelete(http_client);
+		return;
+	}
+	
+	// Check response code
+	int response_code = http_client->get_response_code();
+	if (response_code != 200) {
+		ERR_PRINT(vformat("XAIProvider: HTTP error code: %d", response_code));
+		call_deferred("emit_signal", "request_completed", false, "", vformat("HTTP error: %d", response_code));
+		memdelete(http_client);
+		return;
+	}
+	
+	// Read response body
+	PackedByteArray response_body;
+	while (http_client->get_status() == HTTPClient::STATUS_BODY) {
+		http_client->poll();
+		PackedByteArray chunk = http_client->read_response_body_chunk();
+		if (chunk.size() > 0) {
+			response_body.append_array(chunk);
+		} else {
+			OS::get_singleton()->delay_usec(10000); // 10ms
+		}
+	}
+	
+	String response_str = String::utf8((const char *)response_body.ptr(), response_body.size());
+	
+	// Parse JSON response
+	JSON json_parser;
+	err = json_parser.parse(response_str);
+	if (err != Error::OK) {
+		ERR_PRINT(vformat("XAIProvider: Failed to parse response JSON: %s", json_parser.get_error_message()));
+		call_deferred("emit_signal", "request_completed", false, "", "Failed to parse response JSON");
+		memdelete(http_client);
+		return;
+	}
+	
+	Dictionary response_data = json_parser.get_data();
+	String ai_response = parse_response(response_data);
+	
+	if (ai_response.is_empty()) {
+		ERR_PRINT("XAIProvider: Empty response from AI");
+		call_deferred("emit_signal", "request_completed", false, "", "Empty response");
+		memdelete(http_client);
+		return;
+	}
+	
+	print_line(vformat("XAIProvider: Received response: %s", ai_response));
+	call_deferred("emit_signal", "request_completed", true, ai_response, "");
+	
+	// Clean up
+	memdelete(http_client);
+}
+
 // ============================================================================
 // DummyProvider Implementation
 // ============================================================================
@@ -1021,11 +1553,34 @@ void DummyProvider::send_request(const String &user_prompt, const String &contex
 	emit_signal("request_completed", true, response, "");
 }
 
+Dictionary DummyProvider::build_request_body_with_messages(const Array &p_messages, const String &context_block) const {
+	// Dummy provider doesn't need to build real requests
+	Dictionary body;
+	body["messages"] = p_messages;
+	body["context"] = context_block;
+	return body;
+}
+
+void DummyProvider::send_request_with_messages(const Array &p_messages, const String &context_block) {
+	// DummyProvider doesn't make real HTTP requests - just immediately return dummy data
+	print_line(vformat("DummyProvider: Returning simulated response for %d messages", p_messages.size()));
+	
+	// Extract the last user message to use for the dummy response
+	String last_user_prompt;
+	for (int i = p_messages.size() - 1; i >= 0; i--) {
+		Dictionary msg = p_messages[i];
+		if (msg.get("role", "") == "user") {
+			last_user_prompt = msg.get("content", "");
+			break;
+		}
+	}
+	
+	String response = get_dummy_response(last_user_prompt);
+	emit_signal("request_completed", true, response, "");
+}
+
 String DummyProvider::get_dummy_response(const String &user_prompt) const {
-	// Simplified simulated response for testing
-	return "[ \
-        {\"action\": \"create_node\", \"args\": {\"node_name\": \"TestNode\", \"node_type\": \"Sprite2D\", \"parent_path\": \"\"}}, \
-        {\"action\": \"set_property\", \"args\": {\"node_path\": \"TestNode\", \"property_name\": \"position\", \"value\": {\"x\": 50, \"y\": 50}}} \
-    ]";
+	// Simplified simulated response for testing - now with message format
+	return "{\"message\": \"I received your request and will help with that.\", \"actions\": []}";
 }
 
