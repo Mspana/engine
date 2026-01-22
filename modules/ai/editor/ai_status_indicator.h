@@ -43,6 +43,44 @@
 #include "scene/gui/text_edit.h"
 #include "scene/main/http_request.h"
 #include "scene/main/timer.h"
+#include "core/input/input_event.h"
+
+// Collapsible entry for tool results in the chat transcript
+class ToolCollapsibleEntry : public VBoxContainer {
+	GDCLASS(ToolCollapsibleEntry, VBoxContainer);
+
+private:
+	bool is_collapsed = true;
+
+	// Header row (always visible)
+	HBoxContainer *header_container = nullptr;
+	Label *header_label = nullptr;
+	Label *status_label = nullptr;
+	Button *toggle_button = nullptr;
+
+	// Body (hidden when collapsed)
+	PanelContainer *body_container = nullptr;
+	TextEdit *body_text = nullptr;
+
+	void _on_toggle_pressed();
+	void _on_header_gui_input(const Ref<InputEvent> &p_event);
+	void _update_toggle_icon();
+
+protected:
+	static void _bind_methods();
+
+public:
+	void set_collapsed(bool p_collapsed);
+	bool get_collapsed() const;
+
+	void set_header(const String &p_text, const String &p_status = "");
+	void set_body(const String &p_text);
+
+	// Convenience: update from tool result dictionary
+	void update_from_tool_result(const Dictionary &p_tool_result);
+
+	ToolCollapsibleEntry();
+};
 
 class AIStatusIndicator : public ColorRect {
 	GDCLASS(AIStatusIndicator, ColorRect);

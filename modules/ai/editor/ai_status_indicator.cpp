@@ -32,6 +32,7 @@
 
 #include "../ai.h"
 #include "core/config/engine.h"
+#include "core/input/input_event.h"
 #include "core/io/json.h"
 #include "core/string/ustring.h"
 #include "editor/editor_node.h"
@@ -44,6 +45,217 @@
 // Truncation limits for conversation context (must match ai_provider.cpp)
 static const int MAX_CONTEXT_MESSAGES = 80;
 static const int MAX_CONTEXT_CHARS = 120000; // 120k chars
+
+// ============================================================================
+// ToolCollapsibleEntry - Collapsible widget for tool results
+// ============================================================================
+
+void ToolCollapsibleEntry::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("_on_toggle_pressed"), &ToolCollapsibleEntry::_on_toggle_pressed);
+	ClassDB::bind_method(D_METHOD("_on_header_gui_input", "event"), &ToolCollapsibleEntry::_on_header_gui_input);
+}
+
+void ToolCollapsibleEntry::_on_toggle_pressed() {
+	set_collapsed(!is_collapsed);
+}
+
+void ToolCollapsibleEntry::_on_header_gui_input(const Ref<InputEvent> &p_event) {
+	Ref<InputEventMouseButton> mb = p_event;
+	if (mb.is_valid() && mb->is_pressed() && mb->get_button_index() == MouseButton::LEFT) {
+		set_collapsed(!is_collapsed);
+	}
+}
+
+void ToolCollapsibleEntry::_update_toggle_icon() {
+	if (toggle_button) {
+		// Use unicode arrows: ▶ (collapsed) and ▼ (expanded)
+		toggle_button->set_text(is_collapsed ? String::utf8("▶") : String::utf8("▼"));
+	}
+}
+
+void ToolCollapsibleEntry::set_collapsed(bool p_collapsed) {
+	if (is_collapsed == p_collapsed) {
+		return;
+	}
+
+	is_collapsed = p_collapsed;
+	_update_toggle_icon();
+
+	if (body_container) {
+		body_container->set_visible(!is_collapsed);
+	}
+}
+
+bool ToolCollapsibleEntry::get_collapsed() const {
+	return is_collapsed;
+}
+
+void ToolCollapsibleEntry::set_header(const String &p_text, const String &p_status) {
+	if (header_label) {
+		header_label->set_text(p_text);
+	}
+	if (status_label) {
+		status_label->set_text(p_status);
+		status_label->set_visible(!p_status.is_empty());
+	}
+}
+
+void ToolCollapsibleEntry::set_body(const String &p_text) {
+	if (body_text) {
+		body_text->set_text(p_text);
+		// Auto-size height based on content (approximate lines * line height)
+		int line_count = p_text.get_slice_count("\n");
+		int min_height = MAX(60, (line_count + 1) * 18) * EDSCALE;
+		body_text->set_custom_minimum_size(Size2(0, min_height));
+	}
+}
+
+void ToolCollapsibleEntry::update_from_tool_result(const Dictionary &p_tool_result) {
+	String action_type = p_tool_result.get("type", "unknown");
+	String status = p_tool_result.get("status", "unknown");
+
+	// Build header text
+	String header_text = vformat("[Tool] %s", action_type);
+
+	// Build status indicator
+	String status_text;
+	if (status == "success") {
+		status_text = String::utf8("✓");
+	} else if (status == "error") {
+		status_text = String::utf8("✗");
+	}
+
+	set_header(header_text, status_text);
+
+	// Build body text with full details
+	String body_content;
+	if (status == "success") {
+		body_content = "Status: Success";
+		if (p_tool_result.has("result")) {
+			Dictionary result = p_tool_result["result"];
+			if (!result.is_empty()) {
+				body_content += vformat("\nResult:\n%s", JSON::stringify(result, "  ", false));
+			}
+		}
+	} else if (status == "error") {
+		body_content = "Status: Error";
+		if (p_tool_result.has("error")) {
+			Dictionary error = p_tool_result["error"];
+			String error_msg = error.get("message", "Unknown error");
+			String error_code = error.get("code", "");
+			if (!error_code.is_empty()) {
+				body_content += vformat("\nCode: %s", error_code);
+			}
+			body_content += vformat("\nMessage: %s", error_msg);
+		}
+	} else {
+		body_content = vformat("Status: %s", status);
+	}
+
+	// Add args if available
+	if (p_tool_result.has("args") && p_tool_result["args"].get_type() == Variant::DICTIONARY) {
+		Dictionary args = p_tool_result["args"];
+		if (!args.is_empty()) {
+			body_content += vformat("\nArgs: %s", JSON::stringify(args, "  ", false));
+		}
+	}
+
+	set_body(body_content);
+
+	// Update status label color
+	if (status_label) {
+		if (status == "success") {
+			status_label->add_theme_color_override("font_color", Color(0.2, 0.8, 0.2)); // Green
+		} else if (status == "error") {
+			status_label->add_theme_color_override("font_color", Color(0.9, 0.3, 0.3)); // Red
+		}
+	}
+}
+
+ToolCollapsibleEntry::ToolCollapsibleEntry() {
+	set_h_size_flags(SIZE_EXPAND_FILL);
+
+	// Create main panel with background
+	PanelContainer *main_panel = memnew(PanelContainer);
+	main_panel->set_h_size_flags(SIZE_EXPAND_FILL);
+	add_child(main_panel);
+
+	// Style the panel
+	Ref<StyleBoxFlat> panel_style;
+	panel_style.instantiate();
+	panel_style->set_bg_color(Color(0.22, 0.25, 0.28)); // Darker background for tool entries
+	panel_style->set_content_margin_all(6 * EDSCALE);
+	panel_style->set_corner_radius_all(4 * EDSCALE);
+	main_panel->add_theme_style_override("panel", panel_style);
+
+	// Inner VBox for header and body
+	VBoxContainer *inner_vbox = memnew(VBoxContainer);
+	inner_vbox->set_h_size_flags(SIZE_EXPAND_FILL);
+	inner_vbox->add_theme_constant_override("separation", 4 * EDSCALE);
+	main_panel->add_child(inner_vbox);
+
+	// Header row
+	header_container = memnew(HBoxContainer);
+	header_container->set_h_size_flags(SIZE_EXPAND_FILL);
+	header_container->add_theme_constant_override("separation", 6 * EDSCALE);
+	header_container->set_mouse_filter(MOUSE_FILTER_STOP);
+	header_container->connect("gui_input", callable_mp(this, &ToolCollapsibleEntry::_on_header_gui_input));
+	inner_vbox->add_child(header_container);
+
+	// Toggle button (chevron)
+	toggle_button = memnew(Button);
+	toggle_button->set_flat(true);
+	toggle_button->set_text(String::utf8("▶")); // Right-pointing triangle (collapsed)
+	toggle_button->set_custom_minimum_size(Size2(20 * EDSCALE, 0));
+	toggle_button->connect(SceneStringNames::get_singleton()->pressed, callable_mp(this, &ToolCollapsibleEntry::_on_toggle_pressed));
+	header_container->add_child(toggle_button);
+
+	// Header label
+	header_label = memnew(Label);
+	header_label->set_h_size_flags(SIZE_EXPAND_FILL);
+	header_label->set_text_overrun_behavior(TextServer::OVERRUN_TRIM_ELLIPSIS);
+	header_label->add_theme_color_override("font_color", Color(0.85, 0.85, 0.9)); // Slightly blue-ish white
+	header_container->add_child(header_label);
+
+	// Status label (emoji indicator)
+	status_label = memnew(Label);
+	status_label->set_visible(false);
+	header_container->add_child(status_label);
+
+	// Body container (hidden by default)
+	body_container = memnew(PanelContainer);
+	body_container->set_h_size_flags(SIZE_EXPAND_FILL);
+	body_container->set_visible(false); // Collapsed by default
+	inner_vbox->add_child(body_container);
+
+	// Style the body container
+	Ref<StyleBoxFlat> body_style;
+	body_style.instantiate();
+	body_style->set_bg_color(Color(0.18, 0.2, 0.22)); // Even darker for body
+	body_style->set_content_margin_all(4 * EDSCALE);
+	body_style->set_corner_radius_all(2 * EDSCALE);
+	body_container->add_theme_style_override("panel", body_style);
+
+	// Body text (read-only TextEdit for proper indentation handling)
+	body_text = memnew(TextEdit);
+	body_text->set_h_size_flags(SIZE_EXPAND_FILL);
+	body_text->set_editable(false);
+	body_text->set_context_menu_enabled(false);
+	body_text->set_shortcut_keys_enabled(false);
+	body_text->set_selecting_enabled(true);
+	body_text->set_line_wrapping_mode(TextEdit::LINE_WRAPPING_BOUNDARY);
+	body_text->set_custom_minimum_size(Size2(0, 60 * EDSCALE));
+	body_text->add_theme_color_override("font_color", Color(0.75, 0.75, 0.75));
+	body_text->add_theme_color_override("background_color", Color(0.18, 0.2, 0.22));
+	// Use a flat style for seamless look
+	Ref<StyleBoxFlat> text_style;
+	text_style.instantiate();
+	text_style->set_bg_color(Color(0.18, 0.2, 0.22));
+	text_style->set_content_margin_all(4 * EDSCALE);
+	body_text->add_theme_style_override("normal", text_style);
+	body_text->add_theme_style_override("read_only", text_style);
+	body_container->add_child(body_text);
+}
 
 // ============================================================================
 // AIStatusIndicator - The colored circle showing connection status
@@ -264,60 +476,10 @@ Control *AIStatusPanel::_create_message_bubble(const ChatMessage &p_message) {
 }
 
 Control *AIStatusPanel::_create_tool_result_ui(const Dictionary &p_tool_result) {
-	// Create container for alignment (tool results are always left-aligned)
-	HBoxContainer *align_container = memnew(HBoxContainer);
-	align_container->set_h_size_flags(SIZE_EXPAND_FILL);
-
-	// Create panel for the tool result bubble
-	PanelContainer *bubble = memnew(PanelContainer);
-	bubble->set_h_size_flags(SIZE_EXPAND_FILL);
-	align_container->add_child(bubble);
-
-	// Add spacer for right alignment
-	align_container->add_spacer();
-
-	// Style the bubble (using a distinct color for tool results)
-	Ref<StyleBoxFlat> style;
-	style.instantiate();
-	style->set_bg_color(Color(0.25, 0.3, 0.35)); // Darker grayish color for tool results
-	style->set_content_margin_all(8 * EDSCALE);
-	style->set_corner_radius_all(4 * EDSCALE);
-	bubble->add_theme_style_override("panel", style);
-
-	// Create label for content
-	RichTextLabel *label = memnew(RichTextLabel);
-	label->set_use_bbcode(true);
-	label->set_fit_content(true);
-	label->set_scroll_active(false);
-	label->set_selection_enabled(true);
-
-	// Format tool result for display
-	String action_type = p_tool_result.get("type", "unknown");
-	String status = p_tool_result.get("status", "unknown");
-
-	String display_text = vformat("[b][Tool][/b] %s\n", action_type);
-
-	if (status == "success") {
-		display_text += "[color=green]✓ Success[/color]";
-		if (p_tool_result.has("result")) {
-			Dictionary result = p_tool_result["result"];
-			if (!result.is_empty()) {
-				display_text += vformat("\n%s", JSON::stringify(result, "  ", false));
-			}
-		}
-	} else if (status == "error") {
-		display_text += "[color=red]✗ Error[/color]";
-		if (p_tool_result.has("error")) {
-			Dictionary error = p_tool_result["error"];
-			String error_msg = error.get("message", "Unknown error");
-			display_text += vformat("\n%s", error_msg);
-		}
-	}
-
-	label->add_text(display_text);
-	bubble->add_child(label);
-
-	return align_container;
+	// Create collapsible entry for tool result (collapsed by default)
+	ToolCollapsibleEntry *entry = memnew(ToolCollapsibleEntry);
+	entry->update_from_tool_result(p_tool_result);
+	return entry;
 }
 
 void AIStatusPanel::_append_tool_result_ui(const Dictionary &p_tool_result) {
@@ -640,6 +802,12 @@ void AIStatusPanel::_remove_pending_message() {
 }
 
 void AIStatusPanel::check_api_connectivity() {
+	// Guard: skip if checks are already in progress
+	if (pending_checks > 0) {
+		print_verbose("AI Status: Connectivity check already in progress, skipping");
+		return;
+	}
+
 	// Reset state
 	openai_connected = false;
 	gemini_connected = false;
