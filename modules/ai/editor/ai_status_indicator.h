@@ -110,6 +110,21 @@ public:
 class AIStatusPanel : public VBoxContainer {
 	GDCLASS(AIStatusPanel, VBoxContainer);
 
+public:
+	// Run state for the composer
+	enum RunState {
+		STATE_IDLE,
+		STATE_RUNNING,
+		STATE_CANCELLING
+	};
+
+	// Queued message structure
+	struct QueuedMessage {
+		String id;
+		String text;
+		uint64_t created_at;
+	};
+
 private:
 	// Chat store for persistence
 	Ref<AIChatStore> chat_store;
@@ -121,9 +136,13 @@ private:
 
 	// Input area
 	TextEdit *prompt_edit = nullptr;
-	Button *send_button = nullptr;
-	Button *cancel_button = nullptr;
+	Button *send_button = nullptr;  // Toggles between Send/Stop
 	Button *clear_button = nullptr;
+	Label *queue_count_label = nullptr;  // Shows "Queued: N"
+
+	// Message queue (in-memory, not persisted)
+	Vector<QueuedMessage> message_queue;
+	RunState run_state = STATE_IDLE;
 
 	// Status bar
 	AIStatusIndicator *status_indicator = nullptr;
@@ -155,11 +174,21 @@ private:
 	void _append_tool_result_ui(const Dictionary &p_tool_result);
 	void _scroll_to_bottom();
 	void _update_send_button_state();
-	void _update_cancel_button_state();
+	void _update_queue_ui();
+
+	// Message queue management
+	void _enqueue_message(const String &p_text);
+	void _dequeue_and_run_next();
+	void _remove_queued_message(int p_index);
+	String _generate_queue_id();
+
+	// Run state management
+	void _set_run_state(RunState p_state);
+	void _start_run(const String &p_message);
+	void _request_cancel();
 
 	// Event handlers
-	void _on_send_pressed();
-	void _on_cancel_pressed();
+	void _on_send_button_pressed();  // Handles both Send and Stop
 	void _on_clear_pressed();
 	void _on_prompt_text_changed();
 	void _on_prompt_gui_input(const Ref<InputEvent> &p_event);

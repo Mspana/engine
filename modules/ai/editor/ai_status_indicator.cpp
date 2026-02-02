@@ -34,6 +34,7 @@
 #include "core/config/engine.h"
 #include "core/input/input_event.h"
 #include "core/io/json.h"
+#include "core/os/os.h"
 #include "core/string/ustring.h"
 #include "editor/editor_node.h"
 #include "editor/themes/editor_scale.h"
@@ -413,8 +414,7 @@ void AIStatusPanel::_notification(int p_what) {
 }
 
 void AIStatusPanel::_bind_methods() {
-	ClassDB::bind_method(D_METHOD("_on_send_pressed"), &AIStatusPanel::_on_send_pressed);
-	ClassDB::bind_method(D_METHOD("_on_cancel_pressed"), &AIStatusPanel::_on_cancel_pressed);
+	ClassDB::bind_method(D_METHOD("_on_send_button_pressed"), &AIStatusPanel::_on_send_button_pressed);
 	ClassDB::bind_method(D_METHOD("_on_clear_pressed"), &AIStatusPanel::_on_clear_pressed);
 	ClassDB::bind_method(D_METHOD("_on_prompt_text_changed"), &AIStatusPanel::_on_prompt_text_changed);
 	ClassDB::bind_method(D_METHOD("_on_ai_response", "success", "response", "error"), &AIStatusPanel::_on_ai_response);
@@ -576,27 +576,205 @@ void AIStatusPanel::_update_send_button_state() {
 		return;
 	}
 
-	bool can_send = !is_waiting_for_response && !prompt_edit->get_text().strip_edges().is_empty();
-	send_button->set_disabled(!can_send);
+	// Button appearance and behavior depends on run state
+	switch (run_state) {
+		case STATE_IDLE: {
+			// Send mode: enabled if there's text to send
+			send_button->set_text(TTR("Send"));
+			bool has_text = !prompt_edit->get_text().strip_edges().is_empty();
+			send_button->set_disabled(!has_text);
+
+			// Apply accent blue style for Send
+			Ref<StyleBoxFlat> send_normal;
+			send_normal.instantiate();
+			send_normal->set_bg_color(AIColors::ACCENT_BLUE);
+			send_normal->set_corner_radius_all(AIColors::CORNER_RADIUS_MD * EDSCALE);
+			send_normal->set_content_margin_all(AIColors::PADDING_SM * EDSCALE);
+			send_button->add_theme_style_override("normal", send_normal);
+
+			Ref<StyleBoxFlat> send_hover;
+			send_hover.instantiate();
+			send_hover->set_bg_color(AIColors::ACCENT_BLUE_HOVER);
+			send_hover->set_corner_radius_all(AIColors::CORNER_RADIUS_MD * EDSCALE);
+			send_hover->set_content_margin_all(AIColors::PADDING_SM * EDSCALE);
+			send_button->add_theme_style_override("hover", send_hover);
+		} break;
+
+		case STATE_RUNNING: {
+			// Stop mode: always enabled, shows Stop
+			send_button->set_text(TTR("Stop"));
+			send_button->set_disabled(false);
+
+			// Apply warning/red style for Stop
+			Ref<StyleBoxFlat> stop_normal;
+			stop_normal.instantiate();
+			stop_normal->set_bg_color(AIColors::ERROR.darkened(0.2));
+			stop_normal->set_corner_radius_all(AIColors::CORNER_RADIUS_MD * EDSCALE);
+			stop_normal->set_content_margin_all(AIColors::PADDING_SM * EDSCALE);
+			send_button->add_theme_style_override("normal", stop_normal);
+
+			Ref<StyleBoxFlat> stop_hover;
+			stop_hover.instantiate();
+			stop_hover->set_bg_color(AIColors::ERROR);
+			stop_hover->set_corner_radius_all(AIColors::CORNER_RADIUS_MD * EDSCALE);
+			stop_hover->set_content_margin_all(AIColors::PADDING_SM * EDSCALE);
+			send_button->add_theme_style_override("hover", stop_hover);
+		} break;
+
+		case STATE_CANCELLING: {
+			// Cancelling: disabled, shows Stopping...
+			send_button->set_text(TTR("Stopping..."));
+			send_button->set_disabled(true);
+		} break;
+	}
 }
 
-void AIStatusPanel::_update_cancel_button_state() {
-	if (!cancel_button) {
+void AIStatusPanel::_update_queue_ui() {
+	if (!queue_count_label) {
 		return;
 	}
 
-	// Cancel button is enabled when there's an active agentic run
-	bool can_cancel = false;
+	if (message_queue.is_empty()) {
+		queue_count_label->set_visible(false);
+	} else {
+		queue_count_label->set_text(vformat(TTR("Queued: %d"), message_queue.size()));
+		queue_count_label->set_visible(true);
+	}
+}
+
+// ============================================================================
+// Message Queue Management
+// ============================================================================
+
+String AIStatusPanel::_generate_queue_id() {
+	static uint64_t counter = 0;
+	return vformat("queue_%d_%d", OS::get_singleton()->get_ticks_msec(), counter++);
+}
+
+void AIStatusPanel::_enqueue_message(const String &p_text) {
+	QueuedMessage msg;
+	msg.id = _generate_queue_id();
+	msg.text = p_text;
+	msg.created_at = OS::get_singleton()->get_ticks_msec();
+	message_queue.push_back(msg);
+
+	print_line(vformat("AI Queue: Enqueued message (queue size: %d)", message_queue.size()));
+	_update_queue_ui();
+}
+
+void AIStatusPanel::_dequeue_and_run_next() {
+	if (message_queue.is_empty()) {
+		return;
+	}
+
+	if (run_state != STATE_IDLE) {
+		// Still running, don't dequeue
+		return;
+	}
+
+	QueuedMessage next = message_queue[0];
+	message_queue.remove_at(0);
+
+	print_line(vformat("AI Queue: Dequeued message, %d remaining", message_queue.size()));
+	_update_queue_ui();
+
+	// Start the run with the dequeued message
+	_start_run(next.text);
+}
+
+void AIStatusPanel::_remove_queued_message(int p_index) {
+	if (p_index < 0 || p_index >= message_queue.size()) {
+		return;
+	}
+
+	message_queue.remove_at(p_index);
+	print_line(vformat("AI Queue: Removed message at index %d, %d remaining", p_index, message_queue.size()));
+	_update_queue_ui();
+}
+
+// ============================================================================
+// Run State Management
+// ============================================================================
+
+void AIStatusPanel::_set_run_state(RunState p_state) {
+	if (run_state == p_state) {
+		return;
+	}
+
+	run_state = p_state;
+	print_line(vformat("AI Run State: %s", p_state == STATE_IDLE ? "IDLE" : (p_state == STATE_RUNNING ? "RUNNING" : "CANCELLING")));
+	_update_send_button_state();
+}
+
+void AIStatusPanel::_start_run(const String &p_message) {
+	if (run_state != STATE_IDLE) {
+		// Already running - this shouldn't happen, but enqueue just in case
+		_enqueue_message(p_message);
+		return;
+	}
+
+	// Append user message to store
+	if (chat_store.is_valid()) {
+		ChatMessage user_msg = chat_store->append_message("user", p_message);
+		_append_message_ui(user_msg);
+	}
+
+	// Show pending message
+	_show_pending_message();
+
+	// Update state
+	_set_run_state(STATE_RUNNING);
+	is_waiting_for_response = true;
+
+	// Build full message history for context
+	Array messages = _build_model_messages();
+
+	// Send to AI via agentic orchestrator
+	if (Engine::get_singleton()->has_singleton("AI")) {
+		Object *ai_obj = Engine::get_singleton()->get_singleton_object("AI");
+		AI *ai = Object::cast_to<AI>(ai_obj);
+		if (ai) {
+			Ref<AIProvider> provider = ai->get_provider();
+			Ref<AgenticOrchestrator> orchestrator = ai->get_orchestrator();
+
+			if (orchestrator.is_valid() && provider.is_valid()) {
+				print_line(vformat("AI Chat Panel: Starting agentic run with %d messages", messages.size()));
+				orchestrator->run_agentic_loop(messages, provider);
+			} else {
+				ERR_PRINT("AI Chat Panel: Orchestrator or provider not available.");
+				_remove_pending_message();
+				is_waiting_for_response = false;
+				_set_run_state(STATE_IDLE);
+			}
+		}
+	} else {
+		ERR_PRINT("AI Chat Panel: AI singleton not found.");
+		_remove_pending_message();
+		is_waiting_for_response = false;
+		_set_run_state(STATE_IDLE);
+	}
+}
+
+void AIStatusPanel::_request_cancel() {
+	if (run_state != STATE_RUNNING) {
+		return;
+	}
+
+	_set_run_state(STATE_CANCELLING);
+
+	// Cancel the current agentic run
 	if (Engine::get_singleton()->has_singleton("AI")) {
 		Object *ai_obj = Engine::get_singleton()->get_singleton_object("AI");
 		AI *ai = Object::cast_to<AI>(ai_obj);
 		if (ai) {
 			Ref<AgenticOrchestrator> orchestrator = ai->get_orchestrator();
-			can_cancel = orchestrator.is_valid() && orchestrator->is_running();
+			if (orchestrator.is_valid() && orchestrator->is_running()) {
+				print_line("AI Chat Panel: Cancelling agentic run");
+				orchestrator->cancel_run();
+				// UI will update when _on_orchestrator_complete is called
+			}
 		}
 	}
-
-	cancel_button->set_disabled(!can_cancel);
 }
 
 Array AIStatusPanel::_build_model_messages() {
@@ -650,61 +828,36 @@ Array AIStatusPanel::_build_model_messages() {
 	return messages;
 }
 
-void AIStatusPanel::_on_send_pressed() {
-	if (!prompt_edit || is_waiting_for_response) {
-		return;
-	}
-
-	String prompt_text = prompt_edit->get_text().strip_edges();
-	if (prompt_text.is_empty()) {
-		return;
-	}
-
-	// Append user message to store first
-	if (chat_store.is_valid()) {
-		ChatMessage user_msg = chat_store->append_message("user", prompt_text);
-		_append_message_ui(user_msg);
-	}
-
-	// Clear input
-	prompt_edit->set_text("");
-
-	// Show pending message
-	_show_pending_message();
-
-	// Update state
-	is_waiting_for_response = true;
-	_update_send_button_state();
-	_update_cancel_button_state();
-
-	// Build full message history for context
-	Array messages = _build_model_messages();
-
-	// Send to AI via agentic orchestrator for multi-turn tool use
-	if (Engine::get_singleton()->has_singleton("AI")) {
-		Object *ai_obj = Engine::get_singleton()->get_singleton_object("AI");
-		AI *ai = Object::cast_to<AI>(ai_obj);
-		if (ai) {
-			Ref<AIProvider> provider = ai->get_provider();
-			Ref<AgenticOrchestrator> orchestrator = ai->get_orchestrator();
-
-			if (orchestrator.is_valid() && provider.is_valid()) {
-				print_line(vformat("AI Chat Panel: Starting agentic run with %d messages", messages.size()));
-				orchestrator->run_agentic_loop(messages, provider);
-			} else {
-				ERR_PRINT("AI Chat Panel: Orchestrator or provider not available.");
-				_remove_pending_message();
-				is_waiting_for_response = false;
-				_update_send_button_state();
-				_update_cancel_button_state();
+void AIStatusPanel::_on_send_button_pressed() {
+	// Button behavior depends on current run state
+	switch (run_state) {
+		case STATE_IDLE: {
+			// Send mode: try to send the message
+			if (!prompt_edit) {
+				return;
 			}
-		}
-	} else {
-		ERR_PRINT("AI Chat Panel: AI singleton not found.");
-		_remove_pending_message();
-		is_waiting_for_response = false;
-		_update_send_button_state();
-		_update_cancel_button_state();
+
+			String prompt_text = prompt_edit->get_text().strip_edges();
+			if (prompt_text.is_empty()) {
+				return;
+			}
+
+			// Clear input immediately for better UX
+			prompt_edit->set_text("");
+			_update_send_button_state();
+
+			// Start the run
+			_start_run(prompt_text);
+		} break;
+
+		case STATE_RUNNING: {
+			// Stop mode: request cancellation
+			_request_cancel();
+		} break;
+
+		case STATE_CANCELLING: {
+			// Already cancelling, ignore
+		} break;
 	}
 }
 
@@ -722,11 +875,36 @@ void AIStatusPanel::_on_prompt_text_changed() {
 void AIStatusPanel::_on_prompt_gui_input(const Ref<InputEvent> &p_event) {
 	Ref<InputEventKey> key_event = p_event;
 	if (key_event.is_valid() && key_event->is_pressed()) {
-		// Enter without Shift sends the message; Shift+Enter adds a newline
-		if (key_event->get_keycode() == Key::ENTER && !key_event->is_shift_pressed()) {
-			// Accept the event to prevent newline insertion
-			prompt_edit->accept_event();
-			_on_send_pressed();
+		if (key_event->get_keycode() == Key::ENTER) {
+			if (key_event->is_shift_pressed()) {
+				// Shift+Enter: insert newline explicitly
+				prompt_edit->accept_event();
+				prompt_edit->insert_text_at_caret("\n");
+			} else {
+				// Enter without Shift: send the message
+				// Skip if IME composition is active (best-effort for non-English input)
+				if (prompt_edit->has_ime_text()) {
+					return;
+				}
+
+				String prompt_text = prompt_edit->get_text().strip_edges();
+				if (prompt_text.is_empty()) {
+					return;
+				}
+
+				// Accept the event to prevent newline insertion
+				prompt_edit->accept_event();
+
+				// If running, queue the message instead of trying to send
+				if (run_state != STATE_IDLE) {
+					prompt_edit->set_text("");
+					_enqueue_message(prompt_text);
+					_update_send_button_state();
+				} else {
+					// Idle: trigger normal send
+					_on_send_button_pressed();
+				}
+			}
 		}
 	}
 }
@@ -791,24 +969,7 @@ void AIStatusPanel::_on_ai_response(bool p_success, const String &p_response, co
 
 	// Update state
 	is_waiting_for_response = false;
-	_update_send_button_state();
-	_update_cancel_button_state();
-}
-
-void AIStatusPanel::_on_cancel_pressed() {
-	// Cancel the current agentic run
-	if (Engine::get_singleton()->has_singleton("AI")) {
-		Object *ai_obj = Engine::get_singleton()->get_singleton_object("AI");
-		AI *ai = Object::cast_to<AI>(ai_obj);
-		if (ai) {
-			Ref<AgenticOrchestrator> orchestrator = ai->get_orchestrator();
-			if (orchestrator.is_valid() && orchestrator->is_running()) {
-				print_line("AI Chat Panel: Cancelling agentic run");
-				orchestrator->cancel_run();
-				// UI will update when _on_orchestrator_complete is called
-			}
-		}
-	}
+	_set_run_state(STATE_IDLE);
 }
 
 void AIStatusPanel::_on_orchestrator_progress(const String &p_status, int p_turn) {
@@ -850,12 +1011,18 @@ void AIStatusPanel::_on_orchestrator_complete(bool p_success, const String &p_fi
 
 	// Update state
 	is_waiting_for_response = false;
-	_update_send_button_state();
-	_update_cancel_button_state();
+	_set_run_state(STATE_IDLE);
 
 	// Reset status label
 	if (status_label) {
 		status_label->set_text(p_success ? TTR("Ready") : TTR("Cancelled"));
+	}
+
+	// Check for queued messages and process the next one
+	if (!message_queue.is_empty()) {
+		print_line(vformat("AIStatusPanel: Run complete, %d messages in queue. Starting next...", message_queue.size()));
+		// Use call_deferred to avoid re-entrancy issues
+		callable_mp(this, &AIStatusPanel::_dequeue_and_run_next).call_deferred();
 	}
 }
 
@@ -1117,11 +1284,11 @@ AIStatusPanel::AIStatusPanel() {
 	button_column->add_theme_constant_override("separation", AIColors::PADDING_XS * EDSCALE);
 	input_bar->add_child(button_column);
 
-	// === Send button (accent blue) ===
+	// === Send/Stop button (toggles based on run state) ===
 	send_button = memnew(Button);
 	send_button->set_text(TTR("Send"));
 	send_button->set_disabled(true);
-	send_button->connect(SceneStringNames::get_singleton()->pressed, callable_mp(this, &AIStatusPanel::_on_send_pressed));
+	send_button->connect(SceneStringNames::get_singleton()->pressed, callable_mp(this, &AIStatusPanel::_on_send_button_pressed));
 
 	// Send button - normal state
 	Ref<StyleBoxFlat> send_normal;
@@ -1162,7 +1329,7 @@ AIStatusPanel::AIStatusPanel() {
 
 	button_column->add_child(send_button);
 
-	// === Neutral button styles (for Cancel/Clear) ===
+	// === Neutral button styles (for Clear) ===
 	Ref<StyleBoxFlat> neutral_normal;
 	neutral_normal.instantiate();
 	neutral_normal->set_bg_color(AIColors::BG_2);
@@ -1194,21 +1361,6 @@ AIStatusPanel::AIStatusPanel() {
 	neutral_disabled->set_border_color(AIColors::BG_2);
 	neutral_disabled->set_corner_radius_all(AIColors::CORNER_RADIUS_MD * EDSCALE);
 	neutral_disabled->set_content_margin_all(AIColors::PADDING_SM * EDSCALE);
-
-	// === Cancel button ===
-	cancel_button = memnew(Button);
-	cancel_button->set_text(TTR("Cancel"));
-	cancel_button->set_disabled(true);
-	cancel_button->connect(SceneStringNames::get_singleton()->pressed, callable_mp(this, &AIStatusPanel::_on_cancel_pressed));
-	cancel_button->add_theme_style_override("normal", neutral_normal);
-	cancel_button->add_theme_style_override("hover", neutral_hover);
-	cancel_button->add_theme_style_override("pressed", neutral_pressed);
-	cancel_button->add_theme_style_override("disabled", neutral_disabled);
-	cancel_button->add_theme_color_override("font_color", AIColors::TEXT_SECONDARY);
-	cancel_button->add_theme_color_override("font_hover_color", AIColors::TEXT_PRIMARY);
-	cancel_button->add_theme_color_override("font_pressed_color", AIColors::TEXT_PRIMARY);
-	cancel_button->add_theme_color_override("font_disabled_color", AIColors::TEXT_DISABLED);
-	button_column->add_child(cancel_button);
 
 	// === Clear button ===
 	clear_button = memnew(Button);
@@ -1242,6 +1394,17 @@ AIStatusPanel::AIStatusPanel() {
 	status_label->set_text(TTR("Unknown"));
 	status_label->add_theme_color_override("font_color", AIColors::TEXT_MUTED);
 	status_bar->add_child(status_label);
+
+	// Spacer to push queue label to the right
+	Control *status_spacer = memnew(Control);
+	status_spacer->set_h_size_flags(SIZE_EXPAND_FILL);
+	status_bar->add_child(status_spacer);
+
+	// Queue count label (shown when messages are queued)
+	queue_count_label = memnew(Label);
+	queue_count_label->set_visible(false);
+	queue_count_label->add_theme_color_override("font_color", AIColors::WARNING);
+	status_bar->add_child(queue_count_label);
 
 	// ========================================
 	// HTTP request nodes for connectivity checks
