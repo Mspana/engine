@@ -138,11 +138,14 @@ private:
 	TextEdit *prompt_edit = nullptr;
 	Button *send_button = nullptr;  // Toggles between Send/Stop
 	Button *clear_button = nullptr;
-	Label *queue_count_label = nullptr;  // Shows "Queued: N"
 
 	// Message queue (in-memory, not persisted)
 	Vector<QueuedMessage> message_queue;
 	RunState run_state = STATE_IDLE;
+
+	// Queue display UI (simple list above input)
+	VBoxContainer *queue_container = nullptr;
+	Label *queue_header_label = nullptr;
 
 	// Status bar
 	AIStatusIndicator *status_indicator = nullptr;
@@ -175,6 +178,10 @@ private:
 	void _scroll_to_bottom();
 	void _update_send_button_state();
 	void _update_queue_ui();
+	void _rebuild_queue_list();
+	Control *_create_queue_item(int p_index, const QueuedMessage &p_msg);
+	void _on_queue_item_edit(int p_index);
+	void _on_queue_item_remove(int p_index);
 
 	// Message queue management
 	void _enqueue_message(const String &p_text);

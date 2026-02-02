@@ -417,6 +417,8 @@ void AIStatusPanel::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("_on_send_button_pressed"), &AIStatusPanel::_on_send_button_pressed);
 	ClassDB::bind_method(D_METHOD("_on_clear_pressed"), &AIStatusPanel::_on_clear_pressed);
 	ClassDB::bind_method(D_METHOD("_on_prompt_text_changed"), &AIStatusPanel::_on_prompt_text_changed);
+	ClassDB::bind_method(D_METHOD("_on_queue_item_edit", "index"), &AIStatusPanel::_on_queue_item_edit);
+	ClassDB::bind_method(D_METHOD("_on_queue_item_remove", "index"), &AIStatusPanel::_on_queue_item_remove);
 	ClassDB::bind_method(D_METHOD("_on_ai_response", "success", "response", "error"), &AIStatusPanel::_on_ai_response);
 	ClassDB::bind_method(D_METHOD("_on_orchestrator_progress", "status", "turn"), &AIStatusPanel::_on_orchestrator_progress);
 	ClassDB::bind_method(D_METHOD("_on_orchestrator_tool_result", "tool_result"), &AIStatusPanel::_on_orchestrator_tool_result);
@@ -630,16 +632,140 @@ void AIStatusPanel::_update_send_button_state() {
 }
 
 void AIStatusPanel::_update_queue_ui() {
-	if (!queue_count_label) {
+	if (!queue_container) {
 		return;
 	}
 
 	if (message_queue.is_empty()) {
-		queue_count_label->set_visible(false);
+		queue_container->set_visible(false);
 	} else {
-		queue_count_label->set_text(vformat(TTR("Queued: %d"), message_queue.size()));
-		queue_count_label->set_visible(true);
+		queue_container->set_visible(true);
+		if (queue_header_label) {
+			queue_header_label->set_text(vformat(TTR("Queued (%d)"), message_queue.size()));
+		}
+		_rebuild_queue_list();
 	}
+}
+
+void AIStatusPanel::_rebuild_queue_list() {
+	if (!queue_container) {
+		return;
+	}
+
+	// Clear existing items (skip the header label at index 0)
+	while (queue_container->get_child_count() > 1) {
+		Node *child = queue_container->get_child(1);
+		queue_container->remove_child(child);
+		memdelete(child);
+	}
+
+	// Add items for each queued message
+	for (int i = 0; i < message_queue.size(); i++) {
+		Control *item = _create_queue_item(i, message_queue[i]);
+		if (item) {
+			queue_container->add_child(item);
+		}
+	}
+}
+
+Control *AIStatusPanel::_create_queue_item(int p_index, const QueuedMessage &p_msg) {
+	// Main container for the queue item
+	PanelContainer *item_panel = memnew(PanelContainer);
+	item_panel->set_h_size_flags(SIZE_EXPAND_FILL);
+
+	// Style the item panel
+	Ref<StyleBoxFlat> item_style;
+	item_style.instantiate();
+	item_style->set_bg_color(AIColors::BG_1);
+	item_style->set_border_width_all(1);
+	item_style->set_border_color(AIColors::BORDER);
+	item_style->set_corner_radius_all(AIColors::CORNER_RADIUS_SM * EDSCALE);
+	item_style->set_content_margin(SIDE_LEFT, AIColors::PADDING_SM * EDSCALE);
+	item_style->set_content_margin(SIDE_RIGHT, AIColors::PADDING_SM * EDSCALE);
+	item_style->set_content_margin(SIDE_TOP, AIColors::PADDING_XS * EDSCALE);
+	item_style->set_content_margin(SIDE_BOTTOM, AIColors::PADDING_XS * EDSCALE);
+	item_panel->add_theme_style_override("panel", item_style);
+
+	// HBox for content and buttons
+	HBoxContainer *item_hbox = memnew(HBoxContainer);
+	item_hbox->add_theme_constant_override("separation", AIColors::PADDING_SM * EDSCALE);
+	item_panel->add_child(item_hbox);
+
+	// VBox for message text and subtitle
+	VBoxContainer *text_vbox = memnew(VBoxContainer);
+	text_vbox->set_h_size_flags(SIZE_EXPAND_FILL);
+	text_vbox->add_theme_constant_override("separation", 0);
+	item_hbox->add_child(text_vbox);
+
+	// Message text (truncated)
+	Label *msg_label = memnew(Label);
+	String display_text = p_msg.text;
+	// Truncate to ~50 chars and add ellipsis
+	if (display_text.length() > 50) {
+		display_text = display_text.substr(0, 47) + "...";
+	}
+	// Replace newlines with spaces for single-line display
+	display_text = display_text.replace("\n", " ").replace("\r", "");
+	msg_label->set_text(display_text);
+	msg_label->set_text_overrun_behavior(TextServer::OVERRUN_TRIM_ELLIPSIS);
+	msg_label->add_theme_color_override("font_color", AIColors::TEXT_PRIMARY);
+	text_vbox->add_child(msg_label);
+
+	// Subtitle
+	Label *subtitle_label = memnew(Label);
+	subtitle_label->set_text(TTR("Sends after message finishes"));
+	subtitle_label->add_theme_color_override("font_color", AIColors::TEXT_MUTED);
+	subtitle_label->add_theme_font_size_override("font_size", 11 * EDSCALE);
+	text_vbox->add_child(subtitle_label);
+
+	// Edit button (pencil icon or "Edit" text)
+	Button *edit_btn = memnew(Button);
+	edit_btn->set_flat(true);
+	edit_btn->set_text(TTR("Edit"));
+	edit_btn->add_theme_color_override("font_color", AIColors::TEXT_SECONDARY);
+	edit_btn->add_theme_color_override("font_hover_color", AIColors::ACCENT_BLUE);
+	edit_btn->connect(SceneStringNames::get_singleton()->pressed, callable_mp(this, &AIStatusPanel::_on_queue_item_edit).bind(p_index));
+	item_hbox->add_child(edit_btn);
+
+	// Remove button (X)
+	Button *remove_btn = memnew(Button);
+	remove_btn->set_flat(true);
+	remove_btn->set_text(String::utf8("✕"));
+	remove_btn->add_theme_color_override("font_color", AIColors::TEXT_MUTED);
+	remove_btn->add_theme_color_override("font_hover_color", AIColors::ERROR);
+	remove_btn->connect(SceneStringNames::get_singleton()->pressed, callable_mp(this, &AIStatusPanel::_on_queue_item_remove).bind(p_index));
+	item_hbox->add_child(remove_btn);
+
+	return item_panel;
+}
+
+void AIStatusPanel::_on_queue_item_edit(int p_index) {
+	if (p_index < 0 || p_index >= message_queue.size()) {
+		return;
+	}
+
+	// Get the message text
+	String text = message_queue[p_index].text;
+
+	// Remove from queue
+	message_queue.remove_at(p_index);
+	_update_queue_ui();
+
+	// Put the text in the input field for editing
+	if (prompt_edit) {
+		prompt_edit->set_text(text);
+		prompt_edit->grab_focus();
+		// Move cursor to end
+		prompt_edit->set_caret_line(prompt_edit->get_line_count() - 1);
+		prompt_edit->set_caret_column(prompt_edit->get_line(prompt_edit->get_line_count() - 1).length());
+	}
+
+	_update_send_button_state();
+	print_line(vformat("AI Queue: Edited message at index %d, %d remaining", p_index, message_queue.size()));
+}
+
+void AIStatusPanel::_on_queue_item_remove(int p_index) {
+	_remove_queued_message(p_index);
 }
 
 // ============================================================================
@@ -1237,6 +1363,20 @@ AIStatusPanel::AIStatusPanel() {
 	add_child(separator);
 
 	// ========================================
+	// Queue display (simple list above input)
+	// ========================================
+	queue_container = memnew(VBoxContainer);
+	queue_container->set_visible(false); // Hidden when empty
+	queue_container->add_theme_constant_override("separation", AIColors::PADDING_XS * EDSCALE);
+	add_child(queue_container);
+
+	// Queue header label ("Queued")
+	queue_header_label = memnew(Label);
+	queue_header_label->set_text(TTR("Queued"));
+	queue_header_label->add_theme_color_override("font_color", AIColors::TEXT_SECONDARY);
+	queue_container->add_child(queue_header_label);
+
+	// ========================================
 	// Input bar (bottom)
 	// ========================================
 	HBoxContainer *input_bar = memnew(HBoxContainer);
@@ -1394,17 +1534,6 @@ AIStatusPanel::AIStatusPanel() {
 	status_label->set_text(TTR("Unknown"));
 	status_label->add_theme_color_override("font_color", AIColors::TEXT_MUTED);
 	status_bar->add_child(status_label);
-
-	// Spacer to push queue label to the right
-	Control *status_spacer = memnew(Control);
-	status_spacer->set_h_size_flags(SIZE_EXPAND_FILL);
-	status_bar->add_child(status_spacer);
-
-	// Queue count label (shown when messages are queued)
-	queue_count_label = memnew(Label);
-	queue_count_label->set_visible(false);
-	queue_count_label->add_theme_color_override("font_color", AIColors::WARNING);
-	status_bar->add_child(queue_count_label);
 
 	// ========================================
 	// HTTP request nodes for connectivity checks
