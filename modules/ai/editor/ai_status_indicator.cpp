@@ -47,6 +47,50 @@ static const int MAX_CONTEXT_MESSAGES = 80;
 static const int MAX_CONTEXT_CHARS = 120000; // 120k chars
 
 // ============================================================================
+// Cursor-like Dark Theme Color Palette
+// ============================================================================
+namespace AIColors {
+	// Background hierarchy (near-true-black)
+	static const Color BG_0 = Color(0.08, 0.08, 0.09, 1.0);      // #141417 - Main background
+	static const Color BG_1 = Color(0.11, 0.11, 0.13, 1.0);      // #1C1C21 - Cards/tool entries
+	static const Color BG_2 = Color(0.14, 0.14, 0.16, 1.0);      // #242428 - Input fields/buttons
+	static const Color BG_3 = Color(0.18, 0.18, 0.20, 1.0);      // #2E2E33 - Hover states
+
+	// Borders
+	static const Color BORDER = Color(0.25, 0.25, 0.28, 1.0);    // #404047 - Subtle borders
+	static const Color BORDER_LIGHT = Color(0.35, 0.35, 0.38, 1.0); // #595961 - Focus/hover borders
+
+	// Text
+	static const Color TEXT_PRIMARY = Color(0.93, 0.93, 0.95, 1.0);  // #EDEFF2 - Primary text
+	static const Color TEXT_SECONDARY = Color(0.7, 0.7, 0.73, 1.0); // #B3B3BA - Secondary text
+	static const Color TEXT_MUTED = Color(0.5, 0.5, 0.53, 1.0);     // #808087 - Muted/placeholder
+	static const Color TEXT_DISABLED = Color(0.35, 0.35, 0.38, 1.0); // #595961 - Disabled text
+
+	// Accent - Blue
+	static const Color ACCENT_BLUE = Color(0.30, 0.52, 0.90, 1.0);   // #4D85E6 - Primary accent
+	static const Color ACCENT_BLUE_HOVER = Color(0.35, 0.57, 0.95, 1.0); // #5991F2 - Hover
+	static const Color ACCENT_BLUE_PRESSED = Color(0.25, 0.45, 0.80, 1.0); // #4073CC - Pressed
+	static const Color ACCENT_BLUE_MUTED = Color(0.20, 0.32, 0.55, 0.95); // #33528C - User bubble
+
+	// Assistant bubble - slightly warmer/distinct
+	static const Color ASSISTANT_BG = Color(0.13, 0.14, 0.17, 1.0); // #21242B - Assistant messages
+
+	// Status
+	static const Color SUCCESS = Color(0.35, 0.78, 0.45, 1.0);   // #59C773 - Green
+	static const Color ERROR = Color(0.90, 0.40, 0.40, 1.0);     // #E66666 - Red
+	static const Color WARNING = Color(0.95, 0.75, 0.25, 1.0);   // #F2BF40 - Yellow/Orange
+
+	// Spacing
+	static const int CORNER_RADIUS_SM = 3;
+	static const int CORNER_RADIUS_MD = 5;
+	static const int CORNER_RADIUS_LG = 8;
+	static const int PADDING_XS = 2;
+	static const int PADDING_SM = 6;
+	static const int PADDING_MD = 10;
+	static const int PADDING_LG = 14;
+}
+
+// ============================================================================
 // ToolCollapsibleEntry - Collapsible widget for tool results
 // ============================================================================
 
@@ -165,9 +209,9 @@ void ToolCollapsibleEntry::update_from_tool_result(const Dictionary &p_tool_resu
 	// Update status label color
 	if (status_label) {
 		if (status == "success") {
-			status_label->add_theme_color_override("font_color", Color(0.2, 0.8, 0.2)); // Green
+			status_label->add_theme_color_override("font_color", AIColors::SUCCESS);
 		} else if (status == "error") {
-			status_label->add_theme_color_override("font_color", Color(0.9, 0.3, 0.3)); // Red
+			status_label->add_theme_color_override("font_color", AIColors::ERROR);
 		}
 	}
 }
@@ -180,33 +224,38 @@ ToolCollapsibleEntry::ToolCollapsibleEntry() {
 	main_panel->set_h_size_flags(SIZE_EXPAND_FILL);
 	add_child(main_panel);
 
-	// Style the panel
+	// Style the panel with subtle border
 	Ref<StyleBoxFlat> panel_style;
 	panel_style.instantiate();
-	panel_style->set_bg_color(Color(0.22, 0.25, 0.28)); // Darker background for tool entries
-	panel_style->set_content_margin_all(6 * EDSCALE);
-	panel_style->set_corner_radius_all(4 * EDSCALE);
+	panel_style->set_bg_color(AIColors::BG_1);
+	panel_style->set_border_width_all(1);
+	panel_style->set_border_color(AIColors::BORDER);
+	panel_style->set_content_margin_all(AIColors::PADDING_SM * EDSCALE);
+	panel_style->set_corner_radius_all(AIColors::CORNER_RADIUS_MD * EDSCALE);
 	main_panel->add_theme_style_override("panel", panel_style);
 
 	// Inner VBox for header and body
 	VBoxContainer *inner_vbox = memnew(VBoxContainer);
 	inner_vbox->set_h_size_flags(SIZE_EXPAND_FILL);
-	inner_vbox->add_theme_constant_override("separation", 4 * EDSCALE);
+	inner_vbox->add_theme_constant_override("separation", AIColors::PADDING_XS * EDSCALE);
 	main_panel->add_child(inner_vbox);
 
 	// Header row
 	header_container = memnew(HBoxContainer);
 	header_container->set_h_size_flags(SIZE_EXPAND_FILL);
-	header_container->add_theme_constant_override("separation", 6 * EDSCALE);
+	header_container->add_theme_constant_override("separation", AIColors::PADDING_SM * EDSCALE);
 	header_container->set_mouse_filter(MOUSE_FILTER_STOP);
 	header_container->connect("gui_input", callable_mp(this, &ToolCollapsibleEntry::_on_header_gui_input));
 	inner_vbox->add_child(header_container);
 
-	// Toggle button (chevron)
+	// Toggle button (chevron) - styled flat button
 	toggle_button = memnew(Button);
 	toggle_button->set_flat(true);
 	toggle_button->set_text(String::utf8("▶")); // Right-pointing triangle (collapsed)
 	toggle_button->set_custom_minimum_size(Size2(20 * EDSCALE, 0));
+	toggle_button->add_theme_color_override("font_color", AIColors::TEXT_MUTED);
+	toggle_button->add_theme_color_override("font_hover_color", AIColors::TEXT_PRIMARY);
+	toggle_button->add_theme_color_override("font_pressed_color", AIColors::TEXT_PRIMARY);
 	toggle_button->connect(SceneStringNames::get_singleton()->pressed, callable_mp(this, &ToolCollapsibleEntry::_on_toggle_pressed));
 	header_container->add_child(toggle_button);
 
@@ -214,7 +263,7 @@ ToolCollapsibleEntry::ToolCollapsibleEntry() {
 	header_label = memnew(Label);
 	header_label->set_h_size_flags(SIZE_EXPAND_FILL);
 	header_label->set_text_overrun_behavior(TextServer::OVERRUN_TRIM_ELLIPSIS);
-	header_label->add_theme_color_override("font_color", Color(0.85, 0.85, 0.9)); // Slightly blue-ish white
+	header_label->add_theme_color_override("font_color", AIColors::TEXT_PRIMARY);
 	header_container->add_child(header_label);
 
 	// Status label (emoji indicator)
@@ -231,9 +280,9 @@ ToolCollapsibleEntry::ToolCollapsibleEntry() {
 	// Style the body container
 	Ref<StyleBoxFlat> body_style;
 	body_style.instantiate();
-	body_style->set_bg_color(Color(0.18, 0.2, 0.22)); // Even darker for body
-	body_style->set_content_margin_all(4 * EDSCALE);
-	body_style->set_corner_radius_all(2 * EDSCALE);
+	body_style->set_bg_color(AIColors::BG_0);
+	body_style->set_content_margin_all(AIColors::PADDING_SM * EDSCALE);
+	body_style->set_corner_radius_all(AIColors::CORNER_RADIUS_SM * EDSCALE);
 	body_container->add_theme_style_override("panel", body_style);
 
 	// Body text (read-only TextEdit for proper indentation handling)
@@ -245,13 +294,13 @@ ToolCollapsibleEntry::ToolCollapsibleEntry() {
 	body_text->set_selecting_enabled(true);
 	body_text->set_line_wrapping_mode(TextEdit::LINE_WRAPPING_BOUNDARY);
 	body_text->set_custom_minimum_size(Size2(0, 60 * EDSCALE));
-	body_text->add_theme_color_override("font_color", Color(0.75, 0.75, 0.75));
-	body_text->add_theme_color_override("background_color", Color(0.18, 0.2, 0.22));
+	body_text->add_theme_color_override("font_color", AIColors::TEXT_SECONDARY);
+	body_text->add_theme_color_override("background_color", AIColors::BG_0);
 	// Use a flat style for seamless look
 	Ref<StyleBoxFlat> text_style;
 	text_style.instantiate();
-	text_style->set_bg_color(Color(0.18, 0.2, 0.22));
-	text_style->set_content_margin_all(4 * EDSCALE);
+	text_style->set_bg_color(AIColors::BG_0);
+	text_style->set_content_margin_all(AIColors::PADDING_SM * EDSCALE);
 	body_text->add_theme_style_override("normal", text_style);
 	body_text->add_theme_style_override("read_only", text_style);
 	body_container->add_child(body_text);
@@ -268,16 +317,16 @@ void AIStatusIndicator::_notification(int p_what) {
 			Color indicator_color;
 			switch (current_status) {
 				case STATUS_UNKNOWN:
-					indicator_color = Color(0.5, 0.5, 0.5); // Gray
+					indicator_color = AIColors::TEXT_MUTED;
 					break;
 				case STATUS_CHECKING:
-					indicator_color = Color(1.0, 0.8, 0.0); // Yellow/Orange
+					indicator_color = AIColors::WARNING;
 					break;
 				case STATUS_CONNECTED:
-					indicator_color = Color(0.2, 0.8, 0.2); // Green
+					indicator_color = AIColors::SUCCESS;
 					break;
 				case STATUS_DISCONNECTED:
-					indicator_color = Color(0.8, 0.2, 0.2); // Red
+					indicator_color = AIColors::ERROR;
 					break;
 			}
 
@@ -395,9 +444,27 @@ void AIStatusPanel::_rebuild_message_list() {
 	if (chat_store.is_valid()) {
 		const Vector<ChatMessage> &messages = chat_store->get_messages();
 		for (int i = 0; i < messages.size(); i++) {
-			Control *bubble = _create_message_bubble(messages[i]);
-			if (bubble) {
-				message_list->add_child(bubble);
+			const ChatMessage &msg = messages[i];
+			Control *ui_element = nullptr;
+
+			if (msg.role == "tool") {
+				// Tool results: parse JSON content and create collapsible entry
+				JSON json;
+				Error err = json.parse(msg.content);
+				if (err == OK && json.get_data().get_type() == Variant::DICTIONARY) {
+					Dictionary tool_result = json.get_data();
+					ui_element = _create_tool_result_ui(tool_result);
+				} else {
+					// Fallback: render as regular message if JSON parse fails
+					ui_element = _create_message_bubble(msg);
+				}
+			} else {
+				// User/Assistant messages: render as bubbles
+				ui_element = _create_message_bubble(msg);
+			}
+
+			if (ui_element) {
+				message_list->add_child(ui_element);
 			}
 		}
 	}
@@ -429,32 +496,35 @@ Control *AIStatusPanel::_create_message_bubble(const ChatMessage &p_message) {
 	// Style the bubble based on role
 	Ref<StyleBoxFlat> style;
 	style.instantiate();
-	style->set_corner_radius_all(8 * EDSCALE);
-	style->set_content_margin_all(10 * EDSCALE);
+	style->set_corner_radius_all(AIColors::CORNER_RADIUS_LG * EDSCALE);
+	style->set_content_margin_all(AIColors::PADDING_MD * EDSCALE);
 
 	bool is_user = p_message.role == "user";
 
 	if (is_user) {
-		// User messages: blue tint, right aligned
-		style->set_bg_color(Color(0.2, 0.4, 0.6, 0.8));
+		// User messages: blue accent, right aligned (no border)
+		style->set_bg_color(AIColors::ACCENT_BLUE_MUTED);
+		style->set_border_width_all(0); // Explicitly no border
 		// Add flexible spacer on left to push bubble right
 		Control *spacer = memnew(Control);
 		spacer->set_h_size_flags(SIZE_EXPAND_FILL);
-		spacer->set_stretch_ratio(0.3); // Take up to 30% of space
+		spacer->set_stretch_ratio(0.2); // Take up to 20% of space
 		align_container->add_child(spacer);
 		bubble->set_h_size_flags(SIZE_EXPAND_FILL);
-		bubble->set_stretch_ratio(0.7); // Bubble takes up to 70%
+		bubble->set_stretch_ratio(0.8); // Bubble takes up to 80%
 		align_container->add_child(bubble);
 	} else {
-		// Assistant messages: gray tint, left aligned
-		style->set_bg_color(Color(0.3, 0.3, 0.35, 0.8));
+		// Assistant messages: distinct dark with subtle border, left aligned
+		style->set_bg_color(AIColors::ASSISTANT_BG);
+		style->set_border_width_all(1);
+		style->set_border_color(AIColors::BORDER);
 		bubble->set_h_size_flags(SIZE_EXPAND_FILL);
-		bubble->set_stretch_ratio(0.9); // Bubble takes up to 90%
+		bubble->set_stretch_ratio(0.95); // Bubble takes up to 95%
 		align_container->add_child(bubble);
-		// Add flexible spacer on right
+		// Add small spacer on right
 		Control *spacer = memnew(Control);
 		spacer->set_h_size_flags(SIZE_EXPAND_FILL);
-		spacer->set_stretch_ratio(0.1);
+		spacer->set_stretch_ratio(0.05);
 		align_container->add_child(spacer);
 	}
 
@@ -466,8 +536,9 @@ Control *AIStatusPanel::_create_message_bubble(const ChatMessage &p_message) {
 	label->set_fit_content(true);
 	label->set_scroll_active(false);
 	label->set_selection_enabled(true);
+	label->add_theme_color_override("default_color", AIColors::TEXT_PRIMARY);
 
-	// Display content (no longer need to pretty-print JSON since we extract the message)
+	// Display content
 	label->add_text(p_message.content);
 
 	bubble->add_child(label);
@@ -646,6 +717,18 @@ void AIStatusPanel::_on_clear_pressed() {
 
 void AIStatusPanel::_on_prompt_text_changed() {
 	_update_send_button_state();
+}
+
+void AIStatusPanel::_on_prompt_gui_input(const Ref<InputEvent> &p_event) {
+	Ref<InputEventKey> key_event = p_event;
+	if (key_event.is_valid() && key_event->is_pressed()) {
+		// Enter without Shift sends the message; Shift+Enter adds a newline
+		if (key_event->get_keycode() == Key::ENTER && !key_event->is_shift_pressed()) {
+			// Accept the event to prevent newline insertion
+			prompt_edit->accept_event();
+			_on_send_pressed();
+		}
+	}
 }
 
 void AIStatusPanel::_on_ai_response(bool p_success, const String &p_response, const String &p_error) {
@@ -940,6 +1023,16 @@ void AIStatusPanel::_update_status_from_results() {
 AIStatusPanel::AIStatusPanel() {
 	set_name("AI");
 
+	// Apply dark background to main panel
+	Ref<StyleBoxFlat> panel_bg;
+	panel_bg.instantiate();
+	panel_bg->set_bg_color(AIColors::BG_0);
+	panel_bg->set_content_margin(SIDE_LEFT, AIColors::PADDING_SM * EDSCALE);
+	panel_bg->set_content_margin(SIDE_RIGHT, AIColors::PADDING_SM * EDSCALE);
+	panel_bg->set_content_margin(SIDE_TOP, AIColors::PADDING_SM * EDSCALE);
+	panel_bg->set_content_margin(SIDE_BOTTOM, AIColors::PADDING_XS * EDSCALE); // Minimal bottom padding
+	add_theme_style_override("panel", panel_bg);
+
 	// Initialize chat store
 	chat_store.instantiate();
 
@@ -952,22 +1045,35 @@ AIStatusPanel::AIStatusPanel() {
 	transcript_scroll->set_horizontal_scroll_mode(ScrollContainer::SCROLL_MODE_DISABLED);
 	add_child(transcript_scroll);
 
+	// Dark background for scroll container
+	Ref<StyleBoxFlat> scroll_style;
+	scroll_style.instantiate();
+	scroll_style->set_bg_color(AIColors::BG_0);
+	scroll_style->set_content_margin_all(AIColors::PADDING_SM * EDSCALE);
+	transcript_scroll->add_theme_style_override("panel", scroll_style);
+
 	message_list = memnew(VBoxContainer);
 	message_list->set_h_size_flags(SIZE_EXPAND_FILL);
-	message_list->add_theme_constant_override("separation", 8 * EDSCALE);
+	message_list->add_theme_constant_override("separation", AIColors::PADDING_SM * EDSCALE);
 	transcript_scroll->add_child(message_list);
 
 	// ========================================
-	// Separator
+	// Separator - subtle divider line (compact)
 	// ========================================
 	HSeparator *separator = memnew(HSeparator);
+	Ref<StyleBoxFlat> sep_style;
+	sep_style.instantiate();
+	sep_style->set_bg_color(AIColors::BORDER);
+	sep_style->set_content_margin(SIDE_TOP, 2 * EDSCALE);
+	sep_style->set_content_margin(SIDE_BOTTOM, 2 * EDSCALE);
+	separator->add_theme_style_override("separator", sep_style);
 	add_child(separator);
 
 	// ========================================
 	// Input bar (bottom)
 	// ========================================
 	HBoxContainer *input_bar = memnew(HBoxContainer);
-	input_bar->add_theme_constant_override("separation", 4 * EDSCALE);
+	input_bar->add_theme_constant_override("separation", AIColors::PADDING_SM * EDSCALE);
 	add_child(input_bar);
 
 	// Prompt text edit
@@ -977,38 +1083,153 @@ AIStatusPanel::AIStatusPanel() {
 	prompt_edit->set_custom_minimum_size(Size2(0, 60 * EDSCALE));
 	prompt_edit->set_line_wrapping_mode(TextEdit::LINE_WRAPPING_BOUNDARY);
 	prompt_edit->connect("text_changed", callable_mp(this, &AIStatusPanel::_on_prompt_text_changed));
+	prompt_edit->connect("gui_input", callable_mp(this, &AIStatusPanel::_on_prompt_gui_input));
+
+	// Dark input field styling - normal state
+	Ref<StyleBoxFlat> prompt_normal;
+	prompt_normal.instantiate();
+	prompt_normal->set_bg_color(AIColors::BG_2);
+	prompt_normal->set_border_width_all(1);
+	prompt_normal->set_border_color(AIColors::BORDER);
+	prompt_normal->set_corner_radius_all(AIColors::CORNER_RADIUS_MD * EDSCALE);
+	prompt_normal->set_content_margin_all(AIColors::PADDING_SM * EDSCALE);
+	prompt_edit->add_theme_style_override("normal", prompt_normal);
+
+	// Focus state - highlighted border
+	Ref<StyleBoxFlat> prompt_focus;
+	prompt_focus.instantiate();
+	prompt_focus->set_bg_color(AIColors::BG_2);
+	prompt_focus->set_border_width_all(2);
+	prompt_focus->set_border_color(AIColors::ACCENT_BLUE);
+	prompt_focus->set_corner_radius_all(AIColors::CORNER_RADIUS_MD * EDSCALE);
+	prompt_focus->set_content_margin_all(AIColors::PADDING_SM * EDSCALE);
+	prompt_edit->add_theme_style_override("focus", prompt_focus);
+
+	prompt_edit->add_theme_color_override("font_color", AIColors::TEXT_PRIMARY);
+	prompt_edit->add_theme_color_override("font_placeholder_color", AIColors::TEXT_MUTED);
+	prompt_edit->add_theme_color_override("caret_color", AIColors::ACCENT_BLUE);
+	prompt_edit->add_theme_color_override("selection_color", AIColors::ACCENT_BLUE_MUTED);
+
 	input_bar->add_child(prompt_edit);
 
 	// Button column
 	VBoxContainer *button_column = memnew(VBoxContainer);
-	button_column->add_theme_constant_override("separation", 4 * EDSCALE);
+	button_column->add_theme_constant_override("separation", AIColors::PADDING_XS * EDSCALE);
 	input_bar->add_child(button_column);
 
-	// Send button
+	// === Send button (accent blue) ===
 	send_button = memnew(Button);
 	send_button->set_text(TTR("Send"));
-	send_button->set_disabled(true); // Disabled until text is entered
+	send_button->set_disabled(true);
 	send_button->connect(SceneStringNames::get_singleton()->pressed, callable_mp(this, &AIStatusPanel::_on_send_pressed));
+
+	// Send button - normal state
+	Ref<StyleBoxFlat> send_normal;
+	send_normal.instantiate();
+	send_normal->set_bg_color(AIColors::ACCENT_BLUE);
+	send_normal->set_corner_radius_all(AIColors::CORNER_RADIUS_MD * EDSCALE);
+	send_normal->set_content_margin_all(AIColors::PADDING_SM * EDSCALE);
+	send_button->add_theme_style_override("normal", send_normal);
+
+	// Send button - hover state
+	Ref<StyleBoxFlat> send_hover;
+	send_hover.instantiate();
+	send_hover->set_bg_color(AIColors::ACCENT_BLUE_HOVER);
+	send_hover->set_corner_radius_all(AIColors::CORNER_RADIUS_MD * EDSCALE);
+	send_hover->set_content_margin_all(AIColors::PADDING_SM * EDSCALE);
+	send_button->add_theme_style_override("hover", send_hover);
+
+	// Send button - pressed state
+	Ref<StyleBoxFlat> send_pressed;
+	send_pressed.instantiate();
+	send_pressed->set_bg_color(AIColors::ACCENT_BLUE_PRESSED);
+	send_pressed->set_corner_radius_all(AIColors::CORNER_RADIUS_MD * EDSCALE);
+	send_pressed->set_content_margin_all(AIColors::PADDING_SM * EDSCALE);
+	send_button->add_theme_style_override("pressed", send_pressed);
+
+	// Send button - disabled state
+	Ref<StyleBoxFlat> send_disabled;
+	send_disabled.instantiate();
+	send_disabled->set_bg_color(AIColors::BG_2);
+	send_disabled->set_corner_radius_all(AIColors::CORNER_RADIUS_MD * EDSCALE);
+	send_disabled->set_content_margin_all(AIColors::PADDING_SM * EDSCALE);
+	send_button->add_theme_style_override("disabled", send_disabled);
+
+	send_button->add_theme_color_override("font_color", AIColors::TEXT_PRIMARY);
+	send_button->add_theme_color_override("font_hover_color", AIColors::TEXT_PRIMARY);
+	send_button->add_theme_color_override("font_pressed_color", AIColors::TEXT_PRIMARY);
+	send_button->add_theme_color_override("font_disabled_color", AIColors::TEXT_DISABLED);
+
 	button_column->add_child(send_button);
 
-	// Cancel button (for stopping agentic runs)
+	// === Neutral button styles (for Cancel/Clear) ===
+	Ref<StyleBoxFlat> neutral_normal;
+	neutral_normal.instantiate();
+	neutral_normal->set_bg_color(AIColors::BG_2);
+	neutral_normal->set_border_width_all(1);
+	neutral_normal->set_border_color(AIColors::BORDER);
+	neutral_normal->set_corner_radius_all(AIColors::CORNER_RADIUS_MD * EDSCALE);
+	neutral_normal->set_content_margin_all(AIColors::PADDING_SM * EDSCALE);
+
+	Ref<StyleBoxFlat> neutral_hover;
+	neutral_hover.instantiate();
+	neutral_hover->set_bg_color(AIColors::BG_3);
+	neutral_hover->set_border_width_all(1);
+	neutral_hover->set_border_color(AIColors::BORDER_LIGHT);
+	neutral_hover->set_corner_radius_all(AIColors::CORNER_RADIUS_MD * EDSCALE);
+	neutral_hover->set_content_margin_all(AIColors::PADDING_SM * EDSCALE);
+
+	Ref<StyleBoxFlat> neutral_pressed;
+	neutral_pressed.instantiate();
+	neutral_pressed->set_bg_color(AIColors::BG_1);
+	neutral_pressed->set_border_width_all(1);
+	neutral_pressed->set_border_color(AIColors::BORDER);
+	neutral_pressed->set_corner_radius_all(AIColors::CORNER_RADIUS_MD * EDSCALE);
+	neutral_pressed->set_content_margin_all(AIColors::PADDING_SM * EDSCALE);
+
+	Ref<StyleBoxFlat> neutral_disabled;
+	neutral_disabled.instantiate();
+	neutral_disabled->set_bg_color(AIColors::BG_1);
+	neutral_disabled->set_border_width_all(1);
+	neutral_disabled->set_border_color(AIColors::BG_2);
+	neutral_disabled->set_corner_radius_all(AIColors::CORNER_RADIUS_MD * EDSCALE);
+	neutral_disabled->set_content_margin_all(AIColors::PADDING_SM * EDSCALE);
+
+	// === Cancel button ===
 	cancel_button = memnew(Button);
 	cancel_button->set_text(TTR("Cancel"));
-	cancel_button->set_disabled(true); // Disabled unless there's an active run
+	cancel_button->set_disabled(true);
 	cancel_button->connect(SceneStringNames::get_singleton()->pressed, callable_mp(this, &AIStatusPanel::_on_cancel_pressed));
+	cancel_button->add_theme_style_override("normal", neutral_normal);
+	cancel_button->add_theme_style_override("hover", neutral_hover);
+	cancel_button->add_theme_style_override("pressed", neutral_pressed);
+	cancel_button->add_theme_style_override("disabled", neutral_disabled);
+	cancel_button->add_theme_color_override("font_color", AIColors::TEXT_SECONDARY);
+	cancel_button->add_theme_color_override("font_hover_color", AIColors::TEXT_PRIMARY);
+	cancel_button->add_theme_color_override("font_pressed_color", AIColors::TEXT_PRIMARY);
+	cancel_button->add_theme_color_override("font_disabled_color", AIColors::TEXT_DISABLED);
 	button_column->add_child(cancel_button);
 
-	// Clear button
+	// === Clear button ===
 	clear_button = memnew(Button);
 	clear_button->set_text(TTR("Clear"));
 	clear_button->connect(SceneStringNames::get_singleton()->pressed, callable_mp(this, &AIStatusPanel::_on_clear_pressed));
+	clear_button->add_theme_style_override("normal", neutral_normal);
+	clear_button->add_theme_style_override("hover", neutral_hover);
+	clear_button->add_theme_style_override("pressed", neutral_pressed);
+	clear_button->add_theme_style_override("disabled", neutral_disabled);
+	clear_button->add_theme_color_override("font_color", AIColors::TEXT_SECONDARY);
+	clear_button->add_theme_color_override("font_hover_color", AIColors::TEXT_PRIMARY);
+	clear_button->add_theme_color_override("font_pressed_color", AIColors::TEXT_PRIMARY);
+	clear_button->add_theme_color_override("font_disabled_color", AIColors::TEXT_DISABLED);
 	button_column->add_child(clear_button);
 
 	// ========================================
-	// Status bar (bottom)
+	// Status bar (bottom) - compact and subtle
 	// ========================================
 	HBoxContainer *status_bar = memnew(HBoxContainer);
-	status_bar->add_theme_constant_override("separation", 4 * EDSCALE);
+	status_bar->add_theme_constant_override("separation", 4 * EDSCALE); // Tight spacing between indicator and label
+	status_bar->set_v_size_flags(SIZE_SHRINK_CENTER); // Don't expand vertically
 	add_child(status_bar);
 
 	// Status indicator (colored circle)
@@ -1016,13 +1237,11 @@ AIStatusPanel::AIStatusPanel() {
 	status_indicator->set_tooltip_text(TTR("API connection status"));
 	status_bar->add_child(status_indicator);
 
-	// Status label
+	// Status label - muted appearance
 	status_label = memnew(Label);
 	status_label->set_text(TTR("Unknown"));
+	status_label->add_theme_color_override("font_color", AIColors::TEXT_MUTED);
 	status_bar->add_child(status_label);
-
-	// Add spacer to push status to left
-	status_bar->add_spacer();
 
 	// ========================================
 	// HTTP request nodes for connectivity checks

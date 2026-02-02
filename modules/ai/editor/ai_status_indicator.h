@@ -162,6 +162,7 @@ private:
 	void _on_cancel_pressed();
 	void _on_clear_pressed();
 	void _on_prompt_text_changed();
+	void _on_prompt_gui_input(const Ref<InputEvent> &p_event);
 	void _on_ai_response(bool p_success, const String &p_response, const String &p_error);
 
 	// Agentic orchestrator callbacks
