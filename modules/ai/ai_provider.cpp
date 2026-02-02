@@ -226,6 +226,7 @@ String AIProvider::get_system_prompt() {
 	       "}\n"
 	       "\n"
 	       "CRITICAL RULES:\n"
+	       "- Your response MUST be strictly valid JSON. No comments (// or /* */) are allowed in JSON.\n"
 	       "- The 'actions' field is ALWAYS REQUIRED (even if empty).\n"
 	       "- In FINAL MODE, 'actions' MUST be an empty array [] and 'assistant_text' MUST be non-empty.\n"
 	       "- In ACTION MODE, 'actions' MUST contain at least one action.\n"

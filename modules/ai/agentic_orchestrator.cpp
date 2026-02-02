@@ -60,6 +60,9 @@ void AgenticOrchestrator::_bind_methods() {
 	// Bind the internal callback so it can be connected via signal
 	ClassDB::bind_method(D_METHOD("_on_provider_response", "success", "response", "error"), &AgenticOrchestrator::_on_provider_response);
 
+	// Bind deferred processing method (called on next frame to avoid ProgressDialog issues)
+	ClassDB::bind_method(D_METHOD("_process_model_response_deferred"), &AgenticOrchestrator::_process_model_response_deferred);
+
 	ADD_SIGNAL(MethodInfo("progress_update", PropertyInfo(Variant::STRING, "status"), PropertyInfo(Variant::INT, "turn")));
 	ADD_SIGNAL(MethodInfo("tool_result_ready", PropertyInfo(Variant::DICTIONARY, "tool_result")));
 	ADD_SIGNAL(MethodInfo("run_complete", PropertyInfo(Variant::BOOL, "success"), PropertyInfo(Variant::STRING, "final_message")));
@@ -213,9 +216,29 @@ void AgenticOrchestrator::_on_provider_response(bool p_success, const String &p_
 		return;
 	}
 
-	// Process the parsed response
-	Dictionary response = parsed_data;
-	_process_model_response(response);
+	// Store the parsed response and defer processing to next frame
+	// This avoids ProgressDialog conflicts when actions like save_scene trigger dialogs
+	_pending_response = parsed_data;
+	call_deferred("_process_model_response_deferred");
+}
+
+void AgenticOrchestrator::_process_model_response_deferred() {
+	// Check if we're still supposed to be running
+	if (!_is_running) {
+		print_line("AgenticOrchestrator: Deferred processing but run was already stopped. Ignoring.");
+		return;
+	}
+
+	// Check cancellation
+	if (current_run.cancelled) {
+		print_line("AgenticOrchestrator: Deferred processing but cancellation was requested.");
+		_handle_cancellation();
+		return;
+	}
+
+	// Process the stored response
+	_process_model_response(_pending_response);
+	_pending_response.clear();
 }
 
 void AgenticOrchestrator::_process_model_response(const Dictionary &p_response) {

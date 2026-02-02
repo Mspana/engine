@@ -93,13 +93,17 @@ private:
 	bool _waiting_for_response = false;
 	Ref<AIProvider> provider;
 
+	// Pending response for deferred processing (avoids ProgressDialog issues)
+	Dictionary _pending_response;
+
 	// Async provider callback
 	void _on_provider_response(bool p_success, const String &p_response, const String &p_error);
 
 	// Request sending (initiates async call)
 	void _send_model_request();
 
-	// Response processing (called when response arrives)
+	// Response processing (deferred to next frame to avoid message queue conflicts)
+	void _process_model_response_deferred();
 	void _process_model_response(const Dictionary &p_response);
 
 	// Internal processing methods
