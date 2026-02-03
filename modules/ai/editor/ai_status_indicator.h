@@ -202,6 +202,7 @@ private:
 	void _on_ai_response(bool p_success, const String &p_response, const String &p_error);
 
 	// Agentic orchestrator callbacks
+	void _on_orchestrator_started();
 	void _on_orchestrator_progress(const String &p_status, int p_turn);
 	void _on_orchestrator_tool_result(const Dictionary &p_tool_result);
 	void _on_orchestrator_complete(bool p_success, const String &p_final_message);

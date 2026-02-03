@@ -392,6 +392,9 @@ void AIStatusPanel::_notification(int p_what) {
 					// Connect to orchestrator signals for agentic tool use
 					Ref<AgenticOrchestrator> orchestrator = ai->get_orchestrator();
 					if (orchestrator.is_valid()) {
+						if (!orchestrator->is_connected("run_started", callable_mp(this, &AIStatusPanel::_on_orchestrator_started))) {
+							orchestrator->connect("run_started", callable_mp(this, &AIStatusPanel::_on_orchestrator_started));
+						}
 						if (!orchestrator->is_connected("progress_update", callable_mp(this, &AIStatusPanel::_on_orchestrator_progress))) {
 							orchestrator->connect("progress_update", callable_mp(this, &AIStatusPanel::_on_orchestrator_progress));
 						}
@@ -420,6 +423,7 @@ void AIStatusPanel::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("_on_queue_item_edit", "index"), &AIStatusPanel::_on_queue_item_edit);
 	ClassDB::bind_method(D_METHOD("_on_queue_item_remove", "index"), &AIStatusPanel::_on_queue_item_remove);
 	ClassDB::bind_method(D_METHOD("_on_ai_response", "success", "response", "error"), &AIStatusPanel::_on_ai_response);
+	ClassDB::bind_method(D_METHOD("_on_orchestrator_started"), &AIStatusPanel::_on_orchestrator_started);
 	ClassDB::bind_method(D_METHOD("_on_orchestrator_progress", "status", "turn"), &AIStatusPanel::_on_orchestrator_progress);
 	ClassDB::bind_method(D_METHOD("_on_orchestrator_tool_result", "tool_result"), &AIStatusPanel::_on_orchestrator_tool_result);
 	ClassDB::bind_method(D_METHOD("_on_orchestrator_complete", "success", "final_message"), &AIStatusPanel::_on_orchestrator_complete);
@@ -1098,6 +1102,11 @@ void AIStatusPanel::_on_ai_response(bool p_success, const String &p_response, co
 	_set_run_state(STATE_IDLE);
 }
 
+void AIStatusPanel::_on_orchestrator_started() {
+	print_line("AIStatusPanel: Orchestrator run started");
+	// State is already set to RUNNING by _start_run(), but this confirms orchestrator is active
+}
+
 void AIStatusPanel::_on_orchestrator_progress(const String &p_status, int p_turn) {
 	// Update status label with progress
 	if (status_label) {
@@ -1570,6 +1579,9 @@ AIStatusPanel::~AIStatusPanel() {
 			// Disconnect from orchestrator signals if connected
 			Ref<AgenticOrchestrator> orchestrator = ai->get_orchestrator();
 			if (orchestrator.is_valid()) {
+				if (orchestrator->is_connected("run_started", callable_mp(this, &AIStatusPanel::_on_orchestrator_started))) {
+					orchestrator->disconnect("run_started", callable_mp(this, &AIStatusPanel::_on_orchestrator_started));
+				}
 				if (orchestrator->is_connected("progress_update", callable_mp(this, &AIStatusPanel::_on_orchestrator_progress))) {
 					orchestrator->disconnect("progress_update", callable_mp(this, &AIStatusPanel::_on_orchestrator_progress));
 				}

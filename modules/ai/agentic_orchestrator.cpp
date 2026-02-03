@@ -63,6 +63,7 @@ void AgenticOrchestrator::_bind_methods() {
 	// Bind deferred processing method (called on next frame to avoid ProgressDialog issues)
 	ClassDB::bind_method(D_METHOD("_process_model_response_deferred"), &AgenticOrchestrator::_process_model_response_deferred);
 
+	ADD_SIGNAL(MethodInfo("run_started"));
 	ADD_SIGNAL(MethodInfo("progress_update", PropertyInfo(Variant::STRING, "status"), PropertyInfo(Variant::INT, "turn")));
 	ADD_SIGNAL(MethodInfo("tool_result_ready", PropertyInfo(Variant::DICTIONARY, "tool_result")));
 	ADD_SIGNAL(MethodInfo("run_complete", PropertyInfo(Variant::BOOL, "success"), PropertyInfo(Variant::STRING, "final_message")));
@@ -99,6 +100,9 @@ void AgenticOrchestrator::run_agentic_loop(const Array &p_initial_messages, Ref<
 	provider = p_provider;
 	_is_running = true;
 	_waiting_for_response = false;
+
+	// Emit run_started signal
+	emit_signal("run_started");
 
 	// Connect to provider signal (if not already connected)
 	if (!provider->is_connected("request_completed", callable_mp(this, &AgenticOrchestrator::_on_provider_response))) {
@@ -620,10 +624,18 @@ String AgenticOrchestrator::_format_tool_result_for_display(const Dictionary &p_
 }
 
 void AgenticOrchestrator::cancel_run() {
+	// Guard: no-op if not running or already cancelled
+	if (!_is_running || current_run.cancelled) {
+		print_verbose("AgenticOrchestrator::cancel_run - Already cancelled or not running. Ignoring.");
+		return;
+	}
+
 	current_run.cancelled = true;
+	print_line("AgenticOrchestrator: Cancellation requested.");
+
 	// If we're waiting for a response, the cancellation will be handled
 	// when the response arrives in _on_provider_response
-	// If we're not waiting, the next _send_model_request will detect it
+	// If we're not waiting, the next checkpoint will detect it
 }
 
 bool AgenticOrchestrator::is_cancelled() const {
