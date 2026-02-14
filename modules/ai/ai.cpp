@@ -300,6 +300,10 @@ bool AI::_validate_command_dictionary(const Dictionary &cmd, String &error_msg) 
             error_msg = "'get_node_info' requires string 'node_path'.";
             return false;
         }
+        if (args.has("resource_depth") && args["resource_depth"].get_type() != Variant::INT) {
+            error_msg = "'get_node_info' optional 'resource_depth' must be an int.";
+            return false;
+        }
     } else if (action == "find_nodes_by_type") {
         if (!args.has("type_name") || args["type_name"].get_type() != Variant::STRING) {
             error_msg = "'find_nodes_by_type' requires string 'type_name'.";

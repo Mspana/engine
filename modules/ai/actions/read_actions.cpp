@@ -6,9 +6,8 @@
 
 #include "core/io/json.h"
 #include "core/io/dir_access.h"
+#include "core/io/resource.h"
 #include "scene/main/node.h"
-#include "scene/2d/node_2d.h"
-#include "scene/main/canvas_item.h"
 
 namespace {
 
@@ -90,6 +89,41 @@ static void ai_find_nodes_by_type_dfs(Node *root, Node *relative_root, const Str
 	}
 }
 
+// Recursively scans a Resource's properties into a Dictionary.
+// depth: levels of sub-resource nesting to expand.
+//   1 = this resource's primitives only (no nested resources in sub_resources)
+//   2+ = recurse that many levels
+//   -1 = unlimited recursion
+//   0 = return type only, no properties or sub_resources
+static Dictionary ai_scan_resource(Resource *res, int depth) {
+	Dictionary result;
+	result["type"] = res->get_class();
+	if (depth == 0) {
+		return result;
+	}
+	Dictionary props;
+	Dictionary sub;
+
+	List<PropertyInfo> rpl;
+	res->get_property_list(&rpl);
+	for (const PropertyInfo &rpi : rpl) {
+		if (rpi.name.is_empty()) continue;
+		if (rpi.usage & PROPERTY_USAGE_INTERNAL) continue;
+		if (!(rpi.usage & PROPERTY_USAGE_STORAGE)) continue;
+		Variant rval = res->get(rpi.name);
+		if (rpi.hint == PROPERTY_HINT_RESOURCE_TYPE) {
+			Object *obj = (rval.get_type() == Variant::OBJECT) ? rval.operator Object *() : nullptr;
+			Resource *nested = Object::cast_to<Resource>(obj);
+			sub[rpi.name] = nested ? Variant(ai_scan_resource(nested, depth > 0 ? depth - 1 : depth)) : Variant();
+		} else if (rval.get_type() != Variant::OBJECT) {
+			props[rpi.name] = rval;
+		}
+	}
+	result["properties"] = props;
+	result["sub_resources"] = sub;
+	return result;
+}
+
 } // namespace
 
 namespace AIReadActions {
@@ -165,22 +199,37 @@ Dictionary exec_get_node_info(const Dictionary &args) {
 		info["script"] = Variant(); // null
 	}
 
+	// resource_depth: how many levels of sub-resource nesting to expand.
+	// 1 = resource type + its primitives (default); 2+ = recurse deeper; -1 = unlimited; 0 = type only.
+	int resource_depth = (int)args.get("resource_depth", 1);
+
 	Dictionary props;
+	Dictionary sub_resources;
 
-	// Node2D-specific properties.
-	if (Node2D *n2d = Object::cast_to<Node2D>(node)) {
-		props["position"] = n2d->get_position();
-		props["rotation"] = n2d->get_rotation();
-		props["scale"] = n2d->get_scale();
-		props["global_position"] = n2d->get_global_position();
-	}
+	List<PropertyInfo> prop_list;
+	node->get_property_list(&prop_list);
+	for (const PropertyInfo &pi : prop_list) {
+		if (pi.name.is_empty()) continue;
+		if (pi.usage & PROPERTY_USAGE_INTERNAL) continue;
+		if (!(pi.usage & PROPERTY_USAGE_STORAGE)) continue;
 
-	// CanvasItem-specific properties.
-	if (CanvasItem *ci = Object::cast_to<CanvasItem>(node)) {
-		props["visible"] = ci->is_visible();
+		Variant val = node->get(pi.name);
+
+		if (pi.hint == PROPERTY_HINT_RESOURCE_TYPE) {
+			Object *obj = (val.get_type() == Variant::OBJECT) ? val.operator Object *() : nullptr;
+			Resource *res = Object::cast_to<Resource>(obj);
+			if (!res) {
+				sub_resources[pi.name] = Variant(); // null = not assigned
+			} else {
+				sub_resources[pi.name] = ai_scan_resource(res, resource_depth);
+			}
+		} else if (val.get_type() != Variant::OBJECT) {
+			props[pi.name] = val;
+		}
 	}
 
 	info["properties"] = props;
+	info["sub_resources"] = sub_resources;
 	info["warnings"] = ai_get_node_warnings(node);
 
 	String json = JSON::stringify(info);
