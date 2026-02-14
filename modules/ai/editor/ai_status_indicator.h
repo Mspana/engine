@@ -220,7 +220,7 @@ private:
 	void _append_tool_result_ui(const Dictionary &p_tool_result);
 	void _append_thinking_ui(const String &p_text);
 	void _scroll_to_bottom();
-	void _on_content_resized();
+	void _on_scrollbar_range_changed();
 	void _on_vscroll_changed(float p_value);
 	void _update_send_button_state();
 	void _update_queue_ui();

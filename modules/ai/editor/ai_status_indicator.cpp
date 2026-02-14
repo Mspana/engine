@@ -439,8 +439,10 @@ void AIStatusPanel::_notification(int p_what) {
 			// Initial connectivity check
 			check_api_connectivity();
 
-			// Track scroll position to decide whether to auto-scroll
-			transcript_scroll->get_v_scroll_bar()->connect("value_changed", callable_mp(this, &AIStatusPanel::_on_vscroll_changed));
+			// Track scroll position (user scrolls) and range changes (content added)
+			ScrollBar *vbar = transcript_scroll->get_v_scroll_bar();
+			vbar->connect("value_changed", callable_mp(this, &AIStatusPanel::_on_vscroll_changed));
+			vbar->connect("changed", callable_mp(this, &AIStatusPanel::_on_scrollbar_range_changed));
 
 			// Connect to AI provider signal
 			if (Engine::get_singleton()->has_singleton("AI")) {
@@ -686,7 +688,7 @@ void AIStatusPanel::_append_tool_result_ui(const Dictionary &p_tool_result) {
 	}
 }
 
-void AIStatusPanel::_on_content_resized() {
+void AIStatusPanel::_on_scrollbar_range_changed() {
 	if (should_auto_scroll) {
 		_scroll_to_bottom();
 	}
@@ -1907,7 +1909,6 @@ AIStatusPanel::AIStatusPanel() {
 	message_list = memnew(VBoxContainer);
 	message_list->set_h_size_flags(SIZE_EXPAND_FILL);
 	message_list->add_theme_constant_override("separation", AIColors::PADDING_SM * EDSCALE);
-	message_list->connect("minimum_size_changed", callable_mp(this, &AIStatusPanel::_on_content_resized));
 	transcript_scroll->add_child(message_list);
 
 	// ========================================
