@@ -47,16 +47,33 @@ struct ChatMessage {
 		: id(p_id), role(p_role), content(p_content), created_at(p_created_at) {}
 };
 
+// Checkpoint data structure for rewind functionality
+struct ChatCheckpoint {
+	String checkpoint_id;             // Unique ID (timestamp-based)
+	int64_t anchor_message_id = 0;    // The user message ID this checkpoint is anchored to
+	int64_t created_at = 0;           // When checkpoint was created
+	int transcript_length = 0;        // Number of messages at checkpoint time
+	int undo_action_index = -1;       // EditorUndoRedoManager action index at checkpoint
+	bool undo_revert_available = false; // Whether UndoRedo revert is possible
+
+	ChatCheckpoint() {}
+	ChatCheckpoint(const String &p_id, int64_t p_anchor_id, int64_t p_created, int p_length, int p_undo_idx, bool p_undo_avail)
+		: checkpoint_id(p_id), anchor_message_id(p_anchor_id), created_at(p_created),
+		  transcript_length(p_length), undo_action_index(p_undo_idx), undo_revert_available(p_undo_avail) {}
+};
+
 // Handles persistence of chat transcript to disk
 class AIChatStore : public RefCounted {
 	GDCLASS(AIChatStore, RefCounted);
 
 private:
-	static const int TRANSCRIPT_VERSION = 1;
+	static const int TRANSCRIPT_VERSION = 2; // v2 adds checkpoints
 	Vector<ChatMessage> messages;
+	Vector<ChatCheckpoint> checkpoints;
 
 	String _get_transcript_dir() const;
 	bool _ensure_directory_exists() const;
+	String _generate_checkpoint_id() const;
 
 protected:
 	static void _bind_methods();
@@ -85,6 +102,16 @@ public:
 
 	// Set messages (used when loading)
 	void set_messages(const Vector<ChatMessage> &p_messages) { messages = p_messages; }
+
+	// Checkpoint management
+	ChatCheckpoint create_checkpoint(int64_t p_anchor_message_id, int p_undo_action_index, bool p_undo_available);
+	const ChatCheckpoint *get_checkpoint_for_message(int64_t p_message_id) const;
+	bool truncate_to_checkpoint(const String &p_checkpoint_id);
+	const Vector<ChatCheckpoint> &get_checkpoints() const { return checkpoints; }
+
+	// Edit support - find message and truncate by index
+	int find_message_index(int64_t p_message_id) const;
+	bool truncate_to_index(int p_index);
 
 	AIChatStore();
 	~AIChatStore();

@@ -67,6 +67,7 @@ public:
 		int repair_cycles = 0;
 		bool cancelled = false;
 		String user_message; // Original user message for context
+		int64_t user_message_id = 0; // Message ID for checkpoint anchoring
 	};
 
 	AgenticOrchestrator();
@@ -79,6 +80,9 @@ public:
 	void cancel_run();
 	bool is_cancelled() const;
 	bool is_running() const;
+
+	// Set the user message ID for checkpoint anchoring (call after run_agentic_loop)
+	void set_user_message_id(int64_t p_user_message_id);
 
 	// Get current run stats
 	int get_model_turns() const;

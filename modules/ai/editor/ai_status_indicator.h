@@ -41,6 +41,8 @@
 #include "scene/gui/scroll_container.h"
 #include "scene/gui/separator.h"
 #include "scene/gui/text_edit.h"
+#include "scene/gui/check_box.h"
+#include "scene/gui/dialogs.h"
 #include "scene/main/http_request.h"
 #include "scene/main/timer.h"
 #include "core/input/input_event.h"
@@ -165,6 +167,25 @@ private:
 	// Chat state
 	bool is_waiting_for_response = false;
 	bool context_was_truncated = false;
+	int64_t current_run_user_message_id = 0; // User message ID for checkpoint anchoring
+
+	// Rewind/Edit UI - custom dialog with three buttons
+	AcceptDialog *rewind_dialog = nullptr;
+	Label *rewind_dialog_label = nullptr; // Dynamic label for dialog text
+	CheckBox *dont_ask_again_checkbox = nullptr;
+	Button *cancel_button = nullptr;
+	Button *continue_no_revert_button = nullptr;
+	Button *continue_revert_button = nullptr;
+	int64_t pending_rewind_message_id = 0;
+	String pending_rewind_checkpoint_id;
+
+	// "Don't ask again" preference for edit sends
+	bool skip_edit_send_dialog = false;
+
+	// Edit mode - track state for showing dialog on send
+	bool is_pending_edit_send = false; // True after edit rewind, until send completes
+	int undo_target_for_edit = -1; // UndoRedo index to revert to if user chooses
+	bool undo_available_for_edit = false;
 
 	// Build messages array for API call with truncation
 	Array _build_model_messages();
@@ -210,6 +231,21 @@ private:
 	// Pending message helpers
 	void _show_pending_message();
 	void _remove_pending_message();
+
+	// Rewind functionality
+	void _on_rewind_clicked(int64_t p_message_id);
+	void _on_dialog_cancel();
+	void _on_dialog_continue_no_revert();
+	void _on_dialog_continue_revert();
+	void _perform_rewind(const String &p_checkpoint_id, bool p_revert_project);
+	void _revert_project_to_checkpoint(const ChatCheckpoint &p_checkpoint);
+
+	// Edit functionality (rewind + prefill input, dialog on send)
+	void _on_edit_clicked(int64_t p_message_id);
+	void _cancel_pending_edit();
+
+	// Checkpoint creation (called when orchestrator recommends)
+	void _on_checkpoint_recommended(int64_t p_user_message_id);
 
 	// Connectivity check handlers
 	void _on_openai_request_completed(int p_result, int p_code, const PackedStringArray &p_headers, const PackedByteArray &p_body);

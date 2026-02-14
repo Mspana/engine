@@ -31,12 +31,14 @@
 #include "ai_status_indicator.h"
 
 #include "../ai.h"
+#include "../agentic_orchestrator.h"
 #include "core/config/engine.h"
 #include "core/input/input_event.h"
 #include "core/io/json.h"
 #include "core/os/os.h"
 #include "core/string/ustring.h"
 #include "editor/editor_node.h"
+#include "editor/editor_undo_redo_manager.h"
 #include "editor/themes/editor_scale.h"
 #include "scene/gui/rich_text_label.h"
 #include "scene/resources/style_box_flat.h"
@@ -404,6 +406,9 @@ void AIStatusPanel::_notification(int p_what) {
 						if (!orchestrator->is_connected("run_complete", callable_mp(this, &AIStatusPanel::_on_orchestrator_complete))) {
 							orchestrator->connect("run_complete", callable_mp(this, &AIStatusPanel::_on_orchestrator_complete));
 						}
+						if (!orchestrator->is_connected("checkpoint_recommended", callable_mp(this, &AIStatusPanel::_on_checkpoint_recommended))) {
+							orchestrator->connect("checkpoint_recommended", callable_mp(this, &AIStatusPanel::_on_checkpoint_recommended));
+						}
 					}
 				}
 			}
@@ -427,6 +432,12 @@ void AIStatusPanel::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("_on_orchestrator_progress", "status", "turn"), &AIStatusPanel::_on_orchestrator_progress);
 	ClassDB::bind_method(D_METHOD("_on_orchestrator_tool_result", "tool_result"), &AIStatusPanel::_on_orchestrator_tool_result);
 	ClassDB::bind_method(D_METHOD("_on_orchestrator_complete", "success", "final_message"), &AIStatusPanel::_on_orchestrator_complete);
+	ClassDB::bind_method(D_METHOD("_on_rewind_clicked", "message_id"), &AIStatusPanel::_on_rewind_clicked);
+	ClassDB::bind_method(D_METHOD("_on_dialog_cancel"), &AIStatusPanel::_on_dialog_cancel);
+	ClassDB::bind_method(D_METHOD("_on_dialog_continue_no_revert"), &AIStatusPanel::_on_dialog_continue_no_revert);
+	ClassDB::bind_method(D_METHOD("_on_dialog_continue_revert"), &AIStatusPanel::_on_dialog_continue_revert);
+	ClassDB::bind_method(D_METHOD("_on_edit_clicked", "message_id"), &AIStatusPanel::_on_edit_clicked);
+	ClassDB::bind_method(D_METHOD("_on_checkpoint_recommended", "user_message_id"), &AIStatusPanel::_on_checkpoint_recommended);
 	ClassDB::bind_method(D_METHOD("_on_openai_request_completed", "result", "response_code", "headers", "body"), &AIStatusPanel::_on_openai_request_completed);
 	ClassDB::bind_method(D_METHOD("_on_gemini_request_completed", "result", "response_code", "headers", "body"), &AIStatusPanel::_on_gemini_request_completed);
 	ClassDB::bind_method(D_METHOD("_on_xai_request_completed", "result", "response_code", "headers", "body"), &AIStatusPanel::_on_xai_request_completed);
@@ -536,6 +547,49 @@ Control *AIStatusPanel::_create_message_bubble(const ChatMessage &p_message) {
 
 	bubble->add_theme_style_override("panel", style);
 
+	// Create inner VBox to hold header (for user messages) and content
+	VBoxContainer *inner_vbox = memnew(VBoxContainer);
+	inner_vbox->add_theme_constant_override("separation", AIColors::PADDING_XS * EDSCALE);
+	bubble->add_child(inner_vbox);
+
+	// For user messages, add a header row with edit and rewind buttons
+	if (is_user && p_message.id != 0) {
+		HBoxContainer *header_row = memnew(HBoxContainer);
+		header_row->set_h_size_flags(SIZE_EXPAND_FILL);
+		inner_vbox->add_child(header_row);
+
+		// Flexible spacer to push buttons to right
+		Control *header_spacer = memnew(Control);
+		header_spacer->set_h_size_flags(SIZE_EXPAND_FILL);
+		header_row->add_child(header_spacer);
+
+		// Edit button (✎ pencil unicode character)
+		Button *edit_btn = memnew(Button);
+		edit_btn->set_flat(true);
+		edit_btn->set_text(String::utf8("✎"));
+		edit_btn->set_tooltip_text(TTR("Edit and resend this message"));
+		edit_btn->set_custom_minimum_size(Size2(18, 18) * EDSCALE);
+		edit_btn->add_theme_color_override("font_color", AIColors::TEXT_MUTED);
+		edit_btn->add_theme_color_override("font_hover_color", AIColors::ACCENT_BLUE);
+		edit_btn->add_theme_color_override("font_pressed_color", AIColors::ACCENT_BLUE_PRESSED);
+		edit_btn->set_meta("message_id", p_message.id);
+		edit_btn->connect(SceneStringNames::get_singleton()->pressed, callable_mp(this, &AIStatusPanel::_on_edit_clicked).bind(p_message.id));
+		header_row->add_child(edit_btn);
+
+		// Rewind button (↶ unicode character)
+		Button *rewind_btn = memnew(Button);
+		rewind_btn->set_flat(true);
+		rewind_btn->set_text(String::utf8("↶"));
+		rewind_btn->set_tooltip_text(TTR("Rewind to this message"));
+		rewind_btn->set_custom_minimum_size(Size2(18, 18) * EDSCALE);
+		rewind_btn->add_theme_color_override("font_color", AIColors::TEXT_MUTED);
+		rewind_btn->add_theme_color_override("font_hover_color", AIColors::ACCENT_BLUE);
+		rewind_btn->add_theme_color_override("font_pressed_color", AIColors::ACCENT_BLUE_PRESSED);
+		rewind_btn->set_meta("message_id", p_message.id);
+		rewind_btn->connect(SceneStringNames::get_singleton()->pressed, callable_mp(this, &AIStatusPanel::_on_rewind_clicked).bind(p_message.id));
+		header_row->add_child(rewind_btn);
+	}
+
 	// Create label for content
 	RichTextLabel *label = memnew(RichTextLabel);
 	label->set_use_bbcode(true);
@@ -547,7 +601,7 @@ Control *AIStatusPanel::_create_message_bubble(const ChatMessage &p_message) {
 	// Display content
 	label->add_text(p_message.content);
 
-	bubble->add_child(label);
+	inner_vbox->add_child(label);
 
 	return align_container;
 }
@@ -844,8 +898,10 @@ void AIStatusPanel::_start_run(const String &p_message) {
 	}
 
 	// Append user message to store
+	current_run_user_message_id = 0;
 	if (chat_store.is_valid()) {
 		ChatMessage user_msg = chat_store->append_message("user", p_message);
+		current_run_user_message_id = user_msg.id; // Store for checkpoint anchoring
 		_append_message_ui(user_msg);
 	}
 
@@ -870,6 +926,8 @@ void AIStatusPanel::_start_run(const String &p_message) {
 			if (orchestrator.is_valid() && provider.is_valid()) {
 				print_line(vformat("AI Chat Panel: Starting agentic run with %d messages", messages.size()));
 				orchestrator->run_agentic_loop(messages, provider);
+				// Set user message ID for checkpoint anchoring
+				orchestrator->set_user_message_id(current_run_user_message_id);
 			} else {
 				ERR_PRINT("AI Chat Panel: Orchestrator or provider not available.");
 				_remove_pending_message();
@@ -972,7 +1030,41 @@ void AIStatusPanel::_on_send_button_pressed() {
 				return;
 			}
 
-			// Clear input immediately for better UX
+			// If we're in pending edit send mode, show dialog first (unless "don't ask again")
+			if (is_pending_edit_send) {
+				if (skip_edit_send_dialog) {
+					// User chose "don't ask again" - just send without reverting
+					_on_dialog_continue_no_revert();
+					return;
+				}
+
+				// Update dialog for edit send confirmation
+				if (rewind_dialog_label) {
+					rewind_dialog_label->set_text(TTR("You can optionally revert project changes (undo editor actions) made by the AI after this message."));
+				}
+				if (rewind_dialog) {
+					rewind_dialog->set_title(TTR("Submit edited message?"));
+				}
+
+				// Update revert button availability
+				if (continue_revert_button) {
+					continue_revert_button->set_disabled(!undo_available_for_edit);
+					if (!undo_available_for_edit) {
+						continue_revert_button->set_tooltip_text(TTR("Project revert not available (no prior checkpoint)"));
+					} else {
+						continue_revert_button->set_tooltip_text("");
+					}
+				}
+
+				// Show dialog
+				if (rewind_dialog) {
+					rewind_dialog->reset_size();
+					rewind_dialog->popup_centered();
+				}
+				return;
+			}
+
+			// Normal send: clear input and start run
 			prompt_edit->set_text("");
 			_update_send_button_state();
 
@@ -992,6 +1084,9 @@ void AIStatusPanel::_on_send_button_pressed() {
 }
 
 void AIStatusPanel::_on_clear_pressed() {
+	// Cancel any pending edit
+	_cancel_pending_edit();
+
 	if (chat_store.is_valid()) {
 		chat_store->clear_transcript();
 	}
@@ -1183,6 +1278,358 @@ void AIStatusPanel::_remove_pending_message() {
 		message_list->remove_child(pending_message);
 		memdelete(pending_message);
 		pending_message = nullptr;
+	}
+}
+
+// ============================================================================
+// Rewind Functionality
+// ============================================================================
+
+void AIStatusPanel::_on_rewind_clicked(int64_t p_message_id) {
+	// Safety check: don't allow rewind during active run
+	if (run_state != STATE_IDLE) {
+		WARN_PRINT("AI Chat Panel: Cannot rewind while a run is in progress. Stop the current run first.");
+		return;
+	}
+
+	// Check if checkpoint exists for this message
+	if (!chat_store.is_valid()) {
+		return;
+	}
+
+	const ChatCheckpoint *cp = chat_store->get_checkpoint_for_message(p_message_id);
+	if (!cp) {
+		WARN_PRINT(vformat("AI Chat Panel: No checkpoint available for message %d. Checkpoints are created after successful runs.", p_message_id));
+		return;
+	}
+
+	// Clear any pending edit state
+	_cancel_pending_edit();
+
+	// Store pending rewind info
+	pending_rewind_message_id = p_message_id;
+	pending_rewind_checkpoint_id = cp->checkpoint_id;
+
+	// Store undo info for revert option
+	undo_target_for_edit = cp->undo_action_index;
+	undo_available_for_edit = cp->undo_revert_available;
+
+	// Reset dialog for rewind mode
+	if (rewind_dialog_label) {
+		rewind_dialog_label->set_text(TTR("Rewinding will clear the messages after this one and let you continue from here."));
+	}
+	if (rewind_dialog) {
+		rewind_dialog->set_title(TTR("Rewind conversation?"));
+	}
+
+	// Update revert button availability
+	if (continue_revert_button) {
+		continue_revert_button->set_disabled(!cp->undo_revert_available);
+		if (!cp->undo_revert_available) {
+			continue_revert_button->set_tooltip_text(TTR("Project revert not available for this checkpoint"));
+		} else {
+			continue_revert_button->set_tooltip_text("");
+		}
+	}
+
+	// Show confirmation dialog
+	if (rewind_dialog) {
+		rewind_dialog->reset_size();
+		rewind_dialog->popup_centered();
+	}
+}
+
+void AIStatusPanel::_on_dialog_cancel() {
+	if (rewind_dialog) {
+		rewind_dialog->hide();
+	}
+	// Don't clear state - user can try again
+}
+
+void AIStatusPanel::_on_dialog_continue_no_revert() {
+	if (rewind_dialog) {
+		rewind_dialog->hide();
+	}
+
+	// Check "Don't ask again"
+	if (dont_ask_again_checkbox && dont_ask_again_checkbox->is_pressed()) {
+		skip_edit_send_dialog = true;
+	}
+
+	if (is_pending_edit_send) {
+		// Edit mode: send without reverting
+		is_pending_edit_send = false;
+		undo_target_for_edit = -1;
+		undo_available_for_edit = false;
+
+		// Send the message
+		if (prompt_edit) {
+			String prompt_text = prompt_edit->get_text().strip_edges();
+			if (!prompt_text.is_empty()) {
+				prompt_edit->set_text("");
+				_update_send_button_state();
+				_start_run(prompt_text);
+			}
+		}
+	} else {
+		// Rewind mode: rewind without reverting project
+		if (!pending_rewind_checkpoint_id.is_empty()) {
+			_perform_rewind(pending_rewind_checkpoint_id, false);
+			pending_rewind_message_id = 0;
+			pending_rewind_checkpoint_id = "";
+		}
+	}
+
+	undo_target_for_edit = -1;
+	undo_available_for_edit = false;
+}
+
+void AIStatusPanel::_on_dialog_continue_revert() {
+	if (rewind_dialog) {
+		rewind_dialog->hide();
+	}
+
+	// Check "Don't ask again" - but reverting, so don't skip future dialogs
+	// (Only skip if user chooses no-revert)
+
+	if (is_pending_edit_send) {
+		// Edit mode: revert then send
+		if (undo_available_for_edit && undo_target_for_edit >= 0) {
+			EditorUndoRedoManager *urm = EditorUndoRedoManager::get_singleton();
+			if (urm) {
+				UndoRedo *ur = urm->get_history_undo_redo(EditorUndoRedoManager::GLOBAL_HISTORY);
+				if (ur) {
+					int current_action = ur->get_current_action();
+					if (current_action > undo_target_for_edit) {
+						int undos_needed = current_action - undo_target_for_edit;
+						print_line(vformat("AI Chat Panel: Reverting project for edit - undoing %d actions", undos_needed));
+						for (int i = 0; i < undos_needed; i++) {
+							urm->undo();
+						}
+					}
+				}
+			}
+		}
+
+		is_pending_edit_send = false;
+		undo_target_for_edit = -1;
+		undo_available_for_edit = false;
+
+		// Send the message
+		if (prompt_edit) {
+			String prompt_text = prompt_edit->get_text().strip_edges();
+			if (!prompt_text.is_empty()) {
+				prompt_edit->set_text("");
+				_update_send_button_state();
+				_start_run(prompt_text);
+			}
+		}
+	} else {
+		// Rewind mode: rewind with reverting project
+		if (!pending_rewind_checkpoint_id.is_empty()) {
+			_perform_rewind(pending_rewind_checkpoint_id, true);
+			pending_rewind_message_id = 0;
+			pending_rewind_checkpoint_id = "";
+		}
+	}
+
+	undo_target_for_edit = -1;
+	undo_available_for_edit = false;
+}
+
+void AIStatusPanel::_perform_rewind(const String &p_checkpoint_id, bool p_revert_project) {
+	if (!chat_store.is_valid()) {
+		return;
+	}
+
+	print_line(vformat("AI Chat Panel: Performing rewind to checkpoint '%s' (revert project: %s)",
+			p_checkpoint_id, p_revert_project ? "yes" : "no"));
+
+	// Get checkpoint before truncation (we need undo info)
+	const ChatCheckpoint *cp = nullptr;
+	const Vector<ChatCheckpoint> &checkpoints = chat_store->get_checkpoints();
+	for (int i = 0; i < checkpoints.size(); i++) {
+		if (checkpoints[i].checkpoint_id == p_checkpoint_id) {
+			cp = &checkpoints[i];
+			break;
+		}
+	}
+
+	// Revert project state if requested
+	if (p_revert_project && cp && cp->undo_revert_available) {
+		_revert_project_to_checkpoint(*cp);
+	}
+
+	// Truncate transcript
+	if (!chat_store->truncate_to_checkpoint(p_checkpoint_id)) {
+		ERR_PRINT("AI Chat Panel: Failed to truncate transcript to checkpoint");
+		return;
+	}
+
+	// Rebuild UI
+	_rebuild_message_list();
+
+	// Update status
+	if (status_label) {
+		status_label->set_text(TTR("Rewound"));
+	}
+
+	print_line("AI Chat Panel: Rewind complete");
+}
+
+void AIStatusPanel::_revert_project_to_checkpoint(const ChatCheckpoint &p_checkpoint) {
+	if (!p_checkpoint.undo_revert_available || p_checkpoint.undo_action_index < 0) {
+		WARN_PRINT("AI Chat Panel: Project revert not available for this checkpoint");
+		return;
+	}
+
+	EditorUndoRedoManager *urm = EditorUndoRedoManager::get_singleton();
+	if (!urm) {
+		WARN_PRINT("AI Chat Panel: EditorUndoRedoManager not available");
+		return;
+	}
+
+	UndoRedo *ur = urm->get_history_undo_redo(EditorUndoRedoManager::GLOBAL_HISTORY);
+	if (!ur) {
+		WARN_PRINT("AI Chat Panel: UndoRedo history not available");
+		return;
+	}
+
+	int current_action = ur->get_current_action();
+	int target_action = p_checkpoint.undo_action_index;
+
+	if (current_action > target_action) {
+		int undos_needed = current_action - target_action;
+		print_line(vformat("AI Chat Panel: Reverting project - undoing %d actions (current: %d, target: %d)",
+				undos_needed, current_action, target_action));
+
+		for (int i = 0; i < undos_needed; i++) {
+			urm->undo();
+		}
+
+		print_line("AI Chat Panel: Project revert complete");
+	} else {
+		print_line(vformat("AI Chat Panel: No undo needed (current action %d <= target %d)", current_action, target_action));
+	}
+}
+
+void AIStatusPanel::_on_checkpoint_recommended(int64_t p_user_message_id) {
+	if (!chat_store.is_valid()) {
+		return;
+	}
+
+	// Get current UndoRedo action index
+	int undo_index = -1;
+	bool undo_available = false;
+
+	EditorUndoRedoManager *urm = EditorUndoRedoManager::get_singleton();
+	if (urm) {
+		UndoRedo *ur = urm->get_history_undo_redo(EditorUndoRedoManager::GLOBAL_HISTORY);
+		if (ur) {
+			undo_index = ur->get_current_action();
+			undo_available = true;
+		}
+	}
+
+	// Create checkpoint
+	chat_store->create_checkpoint(p_user_message_id, undo_index, undo_available);
+}
+
+// ============================================================================
+// Edit Functionality (Immediate truncate + prefill, dialog on send)
+// ============================================================================
+
+void AIStatusPanel::_on_edit_clicked(int64_t p_message_id) {
+	// Safety check: don't allow edit during active run
+	if (run_state != STATE_IDLE) {
+		WARN_PRINT("AI Chat Panel: Cannot edit while a run is in progress. Stop the current run first.");
+		return;
+	}
+
+	if (!chat_store.is_valid()) {
+		return;
+	}
+
+	// Find the message
+	int msg_index = chat_store->find_message_index(p_message_id);
+	if (msg_index < 0) {
+		ERR_PRINT(vformat("AI Chat Panel: Message %d not found", p_message_id));
+		return;
+	}
+
+	const Vector<ChatMessage> &messages = chat_store->get_messages();
+	const ChatMessage &target_msg = messages[msg_index];
+
+	// Only allow editing user messages
+	if (target_msg.role != "user") {
+		WARN_PRINT("AI Chat Panel: Can only edit user messages");
+		return;
+	}
+
+	// Get the message content before truncation
+	String edit_content = target_msg.content;
+
+	// Find checkpoint of PREVIOUS user message for project revert option
+	// Store undo info for later (when user confirms send)
+	undo_target_for_edit = -1;
+	undo_available_for_edit = false;
+	for (int i = msg_index - 1; i >= 0; i--) {
+		if (messages[i].role == "user") {
+			const ChatCheckpoint *prev_cp = chat_store->get_checkpoint_for_message(messages[i].id);
+			if (prev_cp && prev_cp->undo_revert_available) {
+				undo_target_for_edit = prev_cp->undo_action_index;
+				undo_available_for_edit = true;
+				break;
+			}
+		}
+	}
+
+	// Clear any queued messages (edit implies starting fresh from this point)
+	if (!message_queue.is_empty()) {
+		print_line(vformat("AI Chat Panel: Clearing %d queued messages for edit", message_queue.size()));
+		message_queue.clear();
+		_update_queue_ui();
+	}
+
+	// Truncate to BEFORE the message (not including it)
+	if (!chat_store->truncate_to_index(msg_index)) {
+		ERR_PRINT("AI Chat Panel: Failed to truncate transcript for edit");
+		return;
+	}
+
+	// Mark that we're in pending edit send mode
+	is_pending_edit_send = true;
+
+	// Rebuild UI to show truncated state
+	_rebuild_message_list();
+
+	// Prefill the prompt with the message content
+	if (prompt_edit) {
+		prompt_edit->set_text(edit_content);
+		prompt_edit->grab_focus();
+		// Move cursor to end
+		prompt_edit->set_caret_line(prompt_edit->get_line_count() - 1);
+		prompt_edit->set_caret_column(prompt_edit->get_line(prompt_edit->get_line_count() - 1).length());
+	}
+
+	// Update send button state (should be enabled since there's text)
+	_update_send_button_state();
+
+	// Update status
+	if (status_label) {
+		status_label->set_text(TTR("Editing..."));
+	}
+
+	print_line(vformat("AI Chat Panel: Edit started for message %d, ready for user to modify and send", p_message_id));
+}
+
+void AIStatusPanel::_cancel_pending_edit() {
+	is_pending_edit_send = false;
+	undo_target_for_edit = -1;
+	undo_available_for_edit = false;
+
+	if (status_label) {
+		status_label->set_text(TTR("Ready"));
 	}
 }
 
@@ -1561,6 +2008,107 @@ AIStatusPanel::AIStatusPanel() {
 	http_xai->set_timeout(10.0);
 	add_child(http_xai);
 	http_xai->connect("request_completed", callable_mp(this, &AIStatusPanel::_on_xai_request_completed));
+
+	// ========================================
+	// Rewind/Edit confirmation dialog (custom three-button layout)
+	// ========================================
+	rewind_dialog = memnew(AcceptDialog);
+	rewind_dialog->set_title(TTR("Rewind conversation?"));
+	rewind_dialog->set_exclusive(false);
+	rewind_dialog->get_ok_button()->hide(); // We'll use custom buttons
+	rewind_dialog->set_flag(Window::FLAG_RESIZE_DISABLED, true); // Prevent resizing
+	add_child(rewind_dialog);
+
+	// Main content VBox with fixed width to prevent stretching
+	VBoxContainer *dialog_vbox = memnew(VBoxContainer);
+	dialog_vbox->add_theme_constant_override("separation", AIColors::PADDING_SM * EDSCALE);
+	dialog_vbox->set_custom_minimum_size(Size2(400 * EDSCALE, 0)); // Fixed width
+	rewind_dialog->add_child(dialog_vbox);
+
+	// Explanation label (stored to update for edit/rewind modes)
+	rewind_dialog_label = memnew(Label);
+	rewind_dialog_label->set_text(TTR("Rewinding will clear the messages after this one and let you continue from here."));
+	rewind_dialog_label->set_autowrap_mode(TextServer::AUTOWRAP_WORD_SMART);
+	rewind_dialog_label->set_custom_minimum_size(Size2(380 * EDSCALE, 0)); // Width for wrapping
+	rewind_dialog_label->add_theme_color_override("font_color", AIColors::TEXT_SECONDARY);
+	dialog_vbox->add_child(rewind_dialog_label);
+
+	// "Don't ask again" checkbox
+	dont_ask_again_checkbox = memnew(CheckBox);
+	dont_ask_again_checkbox->set_text(TTR("Don't ask again"));
+	dont_ask_again_checkbox->add_theme_color_override("font_color", AIColors::TEXT_MUTED);
+	dialog_vbox->add_child(dont_ask_again_checkbox);
+
+	// Button row
+	HBoxContainer *button_row = memnew(HBoxContainer);
+	button_row->add_theme_constant_override("separation", AIColors::PADDING_SM * EDSCALE);
+	dialog_vbox->add_child(button_row);
+
+	// Cancel button
+	cancel_button = memnew(Button);
+	cancel_button->set_text(TTR("Cancel (esc)"));
+	cancel_button->connect(SceneStringNames::get_singleton()->pressed, callable_mp(this, &AIStatusPanel::_on_dialog_cancel));
+	cancel_button->add_theme_color_override("font_color", AIColors::TEXT_SECONDARY);
+	cancel_button->add_theme_color_override("font_hover_color", AIColors::TEXT_PRIMARY);
+	button_row->add_child(cancel_button);
+
+	// Continue without reverting button (outlined style)
+	continue_no_revert_button = memnew(Button);
+	continue_no_revert_button->set_text(TTR("Continue without reverting"));
+	continue_no_revert_button->connect(SceneStringNames::get_singleton()->pressed, callable_mp(this, &AIStatusPanel::_on_dialog_continue_no_revert));
+
+	Ref<StyleBoxFlat> outline_style;
+	outline_style.instantiate();
+	outline_style->set_bg_color(Color(0, 0, 0, 0)); // Transparent
+	outline_style->set_border_width_all(1);
+	outline_style->set_border_color(AIColors::BORDER_LIGHT);
+	outline_style->set_corner_radius_all(AIColors::CORNER_RADIUS_MD * EDSCALE);
+	outline_style->set_content_margin_all(AIColors::PADDING_SM * EDSCALE);
+	continue_no_revert_button->add_theme_style_override("normal", outline_style);
+
+	Ref<StyleBoxFlat> outline_hover;
+	outline_hover.instantiate();
+	outline_hover->set_bg_color(AIColors::BG_3);
+	outline_hover->set_border_width_all(1);
+	outline_hover->set_border_color(AIColors::BORDER_LIGHT);
+	outline_hover->set_corner_radius_all(AIColors::CORNER_RADIUS_MD * EDSCALE);
+	outline_hover->set_content_margin_all(AIColors::PADDING_SM * EDSCALE);
+	continue_no_revert_button->add_theme_style_override("hover", outline_hover);
+
+	continue_no_revert_button->add_theme_color_override("font_color", AIColors::TEXT_SECONDARY);
+	continue_no_revert_button->add_theme_color_override("font_hover_color", AIColors::TEXT_PRIMARY);
+	button_row->add_child(continue_no_revert_button);
+
+	// Continue and revert button (filled accent style)
+	continue_revert_button = memnew(Button);
+	continue_revert_button->set_text(TTR("Continue and revert"));
+	continue_revert_button->connect(SceneStringNames::get_singleton()->pressed, callable_mp(this, &AIStatusPanel::_on_dialog_continue_revert));
+
+	Ref<StyleBoxFlat> accent_style;
+	accent_style.instantiate();
+	accent_style->set_bg_color(AIColors::ACCENT_BLUE);
+	accent_style->set_corner_radius_all(AIColors::CORNER_RADIUS_MD * EDSCALE);
+	accent_style->set_content_margin_all(AIColors::PADDING_SM * EDSCALE);
+	continue_revert_button->add_theme_style_override("normal", accent_style);
+
+	Ref<StyleBoxFlat> accent_hover;
+	accent_hover.instantiate();
+	accent_hover->set_bg_color(AIColors::ACCENT_BLUE_HOVER);
+	accent_hover->set_corner_radius_all(AIColors::CORNER_RADIUS_MD * EDSCALE);
+	accent_hover->set_content_margin_all(AIColors::PADDING_SM * EDSCALE);
+	continue_revert_button->add_theme_style_override("hover", accent_hover);
+
+	Ref<StyleBoxFlat> accent_disabled;
+	accent_disabled.instantiate();
+	accent_disabled->set_bg_color(AIColors::BG_2);
+	accent_disabled->set_corner_radius_all(AIColors::CORNER_RADIUS_MD * EDSCALE);
+	accent_disabled->set_content_margin_all(AIColors::PADDING_SM * EDSCALE);
+	continue_revert_button->add_theme_style_override("disabled", accent_disabled);
+
+	continue_revert_button->add_theme_color_override("font_color", AIColors::TEXT_PRIMARY);
+	continue_revert_button->add_theme_color_override("font_hover_color", AIColors::TEXT_PRIMARY);
+	continue_revert_button->add_theme_color_override("font_disabled_color", AIColors::TEXT_DISABLED);
+	button_row->add_child(continue_revert_button);
 }
 
 AIStatusPanel::~AIStatusPanel() {
@@ -1590,6 +2138,9 @@ AIStatusPanel::~AIStatusPanel() {
 				}
 				if (orchestrator->is_connected("run_complete", callable_mp(this, &AIStatusPanel::_on_orchestrator_complete))) {
 					orchestrator->disconnect("run_complete", callable_mp(this, &AIStatusPanel::_on_orchestrator_complete));
+				}
+				if (orchestrator->is_connected("checkpoint_recommended", callable_mp(this, &AIStatusPanel::_on_checkpoint_recommended))) {
+					orchestrator->disconnect("checkpoint_recommended", callable_mp(this, &AIStatusPanel::_on_checkpoint_recommended));
 				}
 			}
 		}

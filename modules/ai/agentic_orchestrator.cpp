@@ -56,6 +56,7 @@ void AgenticOrchestrator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_running"), &AgenticOrchestrator::is_running);
 	ClassDB::bind_method(D_METHOD("get_model_turns"), &AgenticOrchestrator::get_model_turns);
 	ClassDB::bind_method(D_METHOD("get_total_actions"), &AgenticOrchestrator::get_total_actions);
+	ClassDB::bind_method(D_METHOD("set_user_message_id", "user_message_id"), &AgenticOrchestrator::set_user_message_id);
 
 	// Bind the internal callback so it can be connected via signal
 	ClassDB::bind_method(D_METHOD("_on_provider_response", "success", "response", "error"), &AgenticOrchestrator::_on_provider_response);
@@ -67,6 +68,7 @@ void AgenticOrchestrator::_bind_methods() {
 	ADD_SIGNAL(MethodInfo("progress_update", PropertyInfo(Variant::STRING, "status"), PropertyInfo(Variant::INT, "turn")));
 	ADD_SIGNAL(MethodInfo("tool_result_ready", PropertyInfo(Variant::DICTIONARY, "tool_result")));
 	ADD_SIGNAL(MethodInfo("run_complete", PropertyInfo(Variant::BOOL, "success"), PropertyInfo(Variant::STRING, "final_message")));
+	ADD_SIGNAL(MethodInfo("checkpoint_recommended", PropertyInfo(Variant::INT, "user_message_id")));
 }
 
 void AgenticOrchestrator::run_agentic_loop(const Array &p_initial_messages, Ref<AIProvider> p_provider) {
@@ -89,6 +91,7 @@ void AgenticOrchestrator::run_agentic_loop(const Array &p_initial_messages, Ref<
 	current_run.repair_cycles = 0;
 	current_run.cancelled = false;
 	current_run.user_message = "";
+	current_run.user_message_id = 0;
 
 	// Disconnect from old provider if any
 	if (provider.is_valid() && provider != p_provider) {
@@ -590,6 +593,12 @@ void AgenticOrchestrator::_emit_tool_result(const Dictionary &p_tool_result) {
 
 void AgenticOrchestrator::_emit_run_complete(bool p_success, const String &p_final_message) {
 	emit_signal("run_complete", p_success, p_final_message);
+
+	// On successful run completion, emit checkpoint_recommended signal
+	// so UI can create a checkpoint anchored to the user message that started this run
+	if (p_success && current_run.user_message_id != 0) {
+		emit_signal("checkpoint_recommended", current_run.user_message_id);
+	}
 }
 
 String AgenticOrchestrator::_format_tool_result_for_display(const Dictionary &p_tool_result) {
@@ -652,4 +661,8 @@ int AgenticOrchestrator::get_model_turns() const {
 
 int AgenticOrchestrator::get_total_actions() const {
 	return current_run.total_actions;
+}
+
+void AgenticOrchestrator::set_user_message_id(int64_t p_user_message_id) {
+	current_run.user_message_id = p_user_message_id;
 }
