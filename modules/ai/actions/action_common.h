@@ -27,29 +27,48 @@ static inline Node *ai_get_edited_scene_root() {
 
 // Resolves a node path relative to the edited scene root.
 // Returns nullptr if the scene root or node is not found.
+// Forgiveness: if the path begins with the scene root's own name (e.g. "Main/Player"
+// when root is "Main"), strips that prefix and retries with "Player".
 static inline Node *ai_get_node_by_path(const String &node_path) {
 	Node *root = ai_get_edited_scene_root();
 	if (!root) {
 		return nullptr;
 	}
-	
-	// Handle empty path or root reference
+
+	// Handle empty path
 	if (node_path.is_empty()) {
 		return root;
 	}
-	
-	// Check if path matches the scene root's name
-	if (node_path == root->get_name()) {
-		return root;
-	}
-	
-	// Strip leading slash if present (absolute paths don't work from scene root)
+
+	// Strip leading slash if present
 	String relative_path = node_path;
 	if (relative_path.begins_with("/")) {
 		relative_path = relative_path.substr(1);
 	}
-	
-	return root->get_node_or_null(NodePath(relative_path));
+
+	// Exact match on root name
+	String root_name = root->get_name();
+	if (relative_path == root_name) {
+		return root;
+	}
+
+	// Direct lookup (normal case: "Player", "Player/Weapon", etc.)
+	Node *result = root->get_node_or_null(NodePath(relative_path));
+	if (result) {
+		return result;
+	}
+
+	// Forgiveness: path may include root name as prefix, e.g. "Main/Player" when root is "Main".
+	// Strip it and retry.
+	if (relative_path.begins_with(root_name + "/")) {
+		String stripped = relative_path.substr(root_name.length() + 1);
+		result = root->get_node_or_null(NodePath(stripped));
+		if (result) {
+			return result;
+		}
+	}
+
+	return nullptr;
 }
 
 // Returns true if the given node is the edited scene root.
@@ -90,6 +109,22 @@ static inline Dictionary ai_create_error_result(const String &p_error_code, cons
 
 	result["error"] = error_dict;
 	return result;
+}
+
+// Create a node-not-found error with scene root context to help the model self-correct.
+static inline Dictionary ai_node_not_found_error(const String &tried_path) {
+	Node *root = ai_get_edited_scene_root();
+	String root_name = root ? String(root->get_name()) : "unknown";
+	Dictionary details;
+	details["tried_path"] = tried_path;
+	details["scene_root"] = root_name;
+	details["hint"] = vformat("Paths are relative to the scene root. Use '%s' to refer to the root, or 'Child' / 'Child/Grandchild' for descendants. Never include the root name as a prefix (e.g. use 'Player' not '%s/Player').", root_name, root_name);
+	return ai_create_error_result("node_not_found",
+		vformat("Could not find node at path '%s'. Scene root is '%s'. Try '%s' instead of '%s/%s'.",
+			tried_path, root_name,
+			tried_path.begins_with(root_name + "/") ? tried_path.substr(root_name.length() + 1) : tried_path.get_slice("/", tried_path.get_slice_count("/") - 1),
+			root_name, tried_path.begins_with(root_name + "/") ? tried_path.substr(root_name.length() + 1) : tried_path),
+		details);
 }
 
 // Common error codes (for consistency)

@@ -37,15 +37,9 @@ Dictionary exec_create_node(const Dictionary &args) {
 	if (parent_path_str.is_empty()) {
 		parent_node = edited_scene_root;
 	} else {
-		// Check if parent_path matches the scene root's name
-		if (parent_path_str == edited_scene_root->get_name()) {
-			parent_node = edited_scene_root;
-		} else {
-			parent_node = edited_scene_root->get_node_or_null(NodePath(parent_path_str));
-			if (!parent_node) {
-				return ai_create_error_result(AIErrorCodes::NODE_NOT_FOUND,
-					vformat("Could not find parent node at path '%s'", parent_path_str));
-			}
+		parent_node = ai_get_node_by_path(parent_path_str);
+		if (!parent_node) {
+			return ai_node_not_found_error(parent_path_str);
 		}
 	}
 
@@ -101,8 +95,7 @@ Dictionary exec_set_property(const Dictionary &args) {
 
 	Node *target_node = ai_get_node_by_path(node_path_str);
 	if (!target_node) {
-		return ai_create_error_result(AIErrorCodes::NODE_NOT_FOUND,
-			vformat("Could not find node at path '%s'", node_path_str));
+		return ai_node_not_found_error(node_path_str);
 	}
 
 	Variant current_value = target_node->get(property_name);
@@ -146,8 +139,7 @@ Dictionary exec_rename_node(const Dictionary &args) {
 
 	Node *target = ai_get_node_by_path(node_path_str);
 	if (!target) {
-		return ai_create_error_result(AIErrorCodes::NODE_NOT_FOUND,
-			vformat("Could not find node at path '%s'", node_path_str));
+		return ai_node_not_found_error(node_path_str);
 	}
 
 	String old_name = target->get_name();
@@ -188,15 +180,13 @@ Dictionary exec_reparent_node(const Dictionary &args) {
 	// Resolve node
 	Node *node = ai_get_node_by_path(node_path_str);
 	if (!node) {
-		return ai_create_error_result(AIErrorCodes::NODE_NOT_FOUND,
-			vformat("Could not find node at path '%s'", node_path_str));
+		return ai_node_not_found_error(node_path_str);
 	}
 
 	// Resolve new parent
 	Node *new_parent = ai_get_node_by_path(new_parent_path_str);
 	if (!new_parent) {
-		return ai_create_error_result(AIErrorCodes::NODE_NOT_FOUND,
-			vformat("Could not find new parent at path '%s'", new_parent_path_str));
+		return ai_node_not_found_error(new_parent_path_str);
 	}
 
 	// Reject if node is the scene root
@@ -276,8 +266,7 @@ Dictionary exec_delete_node(const Dictionary &args) {
 	// Resolve node
 	Node *node = ai_get_node_by_path(node_path_str);
 	if (!node) {
-		return ai_create_error_result(AIErrorCodes::NODE_NOT_FOUND,
-			vformat("Could not find node at path '%s'", node_path_str));
+		return ai_node_not_found_error(node_path_str);
 	}
 
 	// Reject if node is the scene root
@@ -335,8 +324,7 @@ Dictionary exec_duplicate_node(const Dictionary &args) {
 	// Resolve node
 	Node *node = ai_get_node_by_path(node_path_str);
 	if (!node) {
-		return ai_create_error_result(AIErrorCodes::NODE_NOT_FOUND,
-			vformat("Could not find node at path '%s'", node_path_str));
+		return ai_node_not_found_error(node_path_str);
 	}
 
 	// Reject if node is the scene root
