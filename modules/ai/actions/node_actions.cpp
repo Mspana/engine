@@ -71,6 +71,8 @@ Dictionary exec_create_node(const Dictionary &args) {
 	result_data["node_type"] = node_type;
 	result_data["parent_path"] = parent_node->get_path();
 	result_data["node_path"] = new_node->get_path();
+	result_data["warnings"] = ai_get_node_warnings(new_node);
+	result_data["parent_warnings"] = ai_get_node_warnings(parent_node);
 
 	print_line(vformat("AI: Executed create_node. Name: %s, Type: %s, Parent: %s", node_name, node_type, parent_node->get_path()));
 	return ai_create_success_result(result_data);
@@ -111,6 +113,7 @@ Dictionary exec_set_property(const Dictionary &args) {
 	result_data["property_name"] = property_name;
 	result_data["old_value"] = current_value;
 	result_data["new_value"] = value;
+	result_data["warnings"] = ai_get_node_warnings(target_node);
 
 	print_line(vformat("AI: Executed set_property. Node: %s, Property: %s, Value: %s", node_path_str, property_name, String(value)));
 	return ai_create_success_result(result_data);

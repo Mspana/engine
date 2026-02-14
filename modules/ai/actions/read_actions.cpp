@@ -43,6 +43,7 @@ static void ai_collect_nodes_dfs(Node *root, Node *relative_root, Array &out_nod
 	} else {
 		entry["script"] = Variant(); // null
 	}
+	entry["has_warnings"] = !root->get_configuration_warnings().is_empty();
 
 	out_nodes.push_back(entry);
 
@@ -145,8 +146,7 @@ Dictionary exec_get_node_info(const Dictionary &args) {
 
 	Node *node = ai_get_node_by_path(node_path);
 	if (!node) {
-		return ai_create_error_result(AIErrorCodes::NODE_NOT_FOUND,
-			vformat("Could not find node at path '%s'", node_path));
+		return ai_node_not_found_error(node_path);
 	}
 
 	Dictionary info;
@@ -181,6 +181,7 @@ Dictionary exec_get_node_info(const Dictionary &args) {
 	}
 
 	info["properties"] = props;
+	info["warnings"] = ai_get_node_warnings(node);
 
 	String json = JSON::stringify(info);
 	print_line("READ/NODE_INFO: " + json);

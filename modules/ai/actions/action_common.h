@@ -6,6 +6,7 @@
 
 #include "core/error/error_macros.h"
 #include "core/string/ustring.h"
+#include "core/variant/array.h"
 #include "core/variant/dictionary.h"
 #include "editor/editor_interface.h"
 #include "editor/editor_undo_redo_manager.h"
@@ -108,6 +109,20 @@ static inline Dictionary ai_create_error_result(const String &p_error_code, cons
 	error_dict["details"] = p_details;
 
 	result["error"] = error_dict;
+	return result;
+}
+
+// Returns a Variant Array of configuration warning strings for a node.
+// Empty array = no warnings (node is properly configured).
+static inline Array ai_get_node_warnings(Node *p_node) {
+	Array result;
+	if (!p_node) {
+		return result;
+	}
+	PackedStringArray warnings = p_node->get_configuration_warnings();
+	for (int i = 0; i < warnings.size(); i++) {
+		result.push_back(warnings[i]);
+	}
 	return result;
 }
 
