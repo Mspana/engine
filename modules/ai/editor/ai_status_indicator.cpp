@@ -94,6 +94,66 @@ namespace AIColors {
 }
 
 // ============================================================================
+// ThinkingCollapsibleEntry - Lightweight collapsible for agent reasoning text
+// ============================================================================
+
+void ThinkingCollapsibleEntry::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("_on_toggle_pressed"), &ThinkingCollapsibleEntry::_on_toggle_pressed);
+}
+
+void ThinkingCollapsibleEntry::_on_toggle_pressed() {
+	is_collapsed = !is_collapsed;
+	body_label->set_visible(!is_collapsed);
+	toggle_button->set_text(is_collapsed ? String::utf8("\xe2\x96\xb8 Thinking") : String::utf8("\xe2\x96\xbe Thinking"));
+}
+
+void ThinkingCollapsibleEntry::set_text(const String &p_text) {
+	body_label->set_text(p_text);
+}
+
+ThinkingCollapsibleEntry::ThinkingCollapsibleEntry() {
+	set_h_size_flags(SIZE_EXPAND_FILL);
+	add_theme_constant_override("separation", AIColors::PADDING_XS * EDSCALE);
+
+	// Outer padding
+	Ref<StyleBoxFlat> outer_style;
+	outer_style.instantiate();
+	outer_style.ptr()->set_content_margin(SIDE_LEFT, AIColors::PADDING_MD * EDSCALE);
+	outer_style.ptr()->set_content_margin(SIDE_TOP, AIColors::PADDING_SM * EDSCALE);
+	outer_style.ptr()->set_content_margin(SIDE_BOTTOM, AIColors::PADDING_SM * EDSCALE);
+	outer_style.ptr()->set_content_margin(SIDE_RIGHT, 0);
+	outer_style.ptr()->set_bg_color(Color(0, 0, 0, 0));
+	add_theme_style_override("panel", outer_style);
+
+	// Toggle button - plain text, no border, muted color
+	toggle_button = memnew(Button);
+	toggle_button->set_text(String::utf8("\xe2\x96\xb8 Thinking"));
+	toggle_button->set_flat(true);
+	toggle_button->set_h_size_flags(SIZE_SHRINK_BEGIN);
+	toggle_button->add_theme_color_override("font_color", AIColors::TEXT_MUTED);
+	toggle_button->add_theme_color_override("font_hover_color", AIColors::TEXT_SECONDARY);
+	toggle_button->add_theme_color_override("font_pressed_color", AIColors::TEXT_SECONDARY);
+	toggle_button->add_theme_font_size_override("font_size", 14 * EDSCALE);
+	toggle_button->connect(SceneStringNames::get_singleton()->pressed, callable_mp(this, &ThinkingCollapsibleEntry::_on_toggle_pressed));
+	add_child(toggle_button);
+
+	// Body label - hidden by default, muted color
+	body_label = memnew(Label);
+	body_label->set_visible(false);
+	body_label->set_autowrap_mode(TextServer::AUTOWRAP_WORD_SMART);
+	body_label->add_theme_color_override("font_color", AIColors::TEXT_MUTED);
+	body_label->add_theme_font_size_override("font_size", 13 * EDSCALE);
+	body_label->add_theme_constant_override("line_separation", 4);
+	Ref<StyleBoxFlat> body_style;
+	body_style.instantiate();
+	body_style.ptr()->set_content_margin_all(AIColors::PADDING_SM * EDSCALE);
+	body_style.ptr()->set_content_margin(SIDE_LEFT, AIColors::PADDING_MD * EDSCALE);
+	body_style.ptr()->set_bg_color(Color(0, 0, 0, 0));
+	body_label->add_theme_style_override("normal", body_style);
+	add_child(body_label);
+}
+
+// ============================================================================
 // ToolCollapsibleEntry - Collapsible widget for tool results
 // ============================================================================
 
@@ -379,6 +439,9 @@ void AIStatusPanel::_notification(int p_what) {
 			// Initial connectivity check
 			check_api_connectivity();
 
+			// Track scroll position to decide whether to auto-scroll
+			transcript_scroll->get_v_scroll_bar()->connect("value_changed", callable_mp(this, &AIStatusPanel::_on_vscroll_changed));
+
 			// Connect to AI provider signal
 			if (Engine::get_singleton()->has_singleton("AI")) {
 				Object *ai_obj = Engine::get_singleton()->get_singleton_object("AI");
@@ -486,8 +549,8 @@ void AIStatusPanel::_rebuild_message_list() {
 		}
 	}
 
-	// Scroll to bottom after rebuild
-	callable_mp(this, &AIStatusPanel::_scroll_to_bottom).call_deferred();
+	// Reset auto-scroll so the rebuild always lands at the bottom
+	should_auto_scroll = true;
 }
 
 void AIStatusPanel::_append_message_ui(const ChatMessage &p_message) {
@@ -498,7 +561,6 @@ void AIStatusPanel::_append_message_ui(const ChatMessage &p_message) {
 	Control *bubble = _create_message_bubble(p_message);
 	if (bubble) {
 		message_list->add_child(bubble);
-		callable_mp(this, &AIStatusPanel::_scroll_to_bottom).call_deferred();
 	}
 }
 
@@ -621,8 +683,22 @@ void AIStatusPanel::_append_tool_result_ui(const Dictionary &p_tool_result) {
 	Control *tool_result_ui = _create_tool_result_ui(p_tool_result);
 	if (tool_result_ui) {
 		message_list->add_child(tool_result_ui);
-		callable_mp(this, &AIStatusPanel::_scroll_to_bottom).call_deferred();
 	}
+}
+
+void AIStatusPanel::_on_content_resized() {
+	if (should_auto_scroll) {
+		_scroll_to_bottom();
+	}
+}
+
+void AIStatusPanel::_on_vscroll_changed(float p_value) {
+	if (!transcript_scroll) {
+		return;
+	}
+	ScrollBar *vbar = transcript_scroll->get_v_scroll_bar();
+	float max_scroll = vbar->get_max() - vbar->get_page();
+	should_auto_scroll = (p_value >= max_scroll - 10.0f);
 }
 
 void AIStatusPanel::_scroll_to_bottom() {
@@ -1202,10 +1278,38 @@ void AIStatusPanel::_on_orchestrator_started() {
 	// State is already set to RUNNING by _start_run(), but this confirms orchestrator is active
 }
 
+void AIStatusPanel::_append_thinking_ui(const String &p_text) {
+	if (!message_list || p_text.is_empty()) {
+		return;
+	}
+
+	ThinkingCollapsibleEntry *entry = memnew(ThinkingCollapsibleEntry);
+	entry->set_text(p_text);
+
+	// Indent slightly to sit inside the chat flow without being prominent
+	Ref<StyleBoxEmpty> margin_style;
+	margin_style.instantiate();
+	entry->add_theme_style_override("panel", margin_style);
+
+	// Insert before the pending message if present, otherwise append
+	if (pending_message) {
+		int idx = pending_message->get_index();
+		message_list->add_child(entry);
+		message_list->move_child(entry, idx);
+	} else {
+		message_list->add_child(entry);
+	}
+}
+
 void AIStatusPanel::_on_orchestrator_progress(const String &p_status, int p_turn) {
-	// Update status label with progress
+	// If it's actual assistant reasoning text (not a status message), show as thinking dropdown
+	if (!p_status.begins_with("Thinking...") && !p_status.begins_with("Cancelling")) {
+		_append_thinking_ui(p_status);
+	}
+
+	// Always update status label
 	if (status_label) {
-		status_label->set_text(vformat("Turn %d: %s", p_turn, p_status));
+		status_label->set_text(vformat("Turn %d: %s", p_turn, p_status.begins_with("Thinking...") ? p_status : TTR("Thinking...")));
 	}
 	print_verbose(vformat("AI Chat Panel: Agentic progress (turn %d): %s", p_turn, p_status));
 }
@@ -1269,7 +1373,6 @@ void AIStatusPanel::_show_pending_message() {
 	pending_message = _create_message_bubble(thinking_msg);
 	if (pending_message) {
 		message_list->add_child(pending_message);
-		callable_mp(this, &AIStatusPanel::_scroll_to_bottom).call_deferred();
 	}
 }
 
@@ -1804,6 +1907,7 @@ AIStatusPanel::AIStatusPanel() {
 	message_list = memnew(VBoxContainer);
 	message_list->set_h_size_flags(SIZE_EXPAND_FILL);
 	message_list->add_theme_constant_override("separation", AIColors::PADDING_SM * EDSCALE);
+	message_list->connect("minimum_size_changed", callable_mp(this, &AIStatusPanel::_on_content_resized));
 	transcript_scroll->add_child(message_list);
 
 	// ========================================

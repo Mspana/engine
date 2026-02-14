@@ -41,6 +41,8 @@ void initialize_ai_module(ModuleInitializationLevel p_level) {
 	if (p_level == MODULE_INITIALIZATION_LEVEL_EDITOR) {
 		// Register editor plugin classes
 		GDREGISTER_CLASS(AIChatStore);
+		GDREGISTER_CLASS(ThinkingCollapsibleEntry);
+		GDREGISTER_CLASS(ToolCollapsibleEntry);
 		GDREGISTER_CLASS(AIStatusIndicator);
 		GDREGISTER_CLASS(AIStatusPanel);
 		GDREGISTER_CLASS(AIStatusIndicatorPlugin);

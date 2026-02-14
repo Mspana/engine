@@ -47,6 +47,25 @@
 #include "scene/main/timer.h"
 #include "core/input/input_event.h"
 
+// Lightweight collapsible entry for agent thinking text between tool calls
+class ThinkingCollapsibleEntry : public VBoxContainer {
+	GDCLASS(ThinkingCollapsibleEntry, VBoxContainer);
+
+private:
+	bool is_collapsed = true;
+	Button *toggle_button = nullptr;
+	Label *body_label = nullptr;
+
+	void _on_toggle_pressed();
+
+protected:
+	static void _bind_methods();
+
+public:
+	void set_text(const String &p_text);
+	ThinkingCollapsibleEntry();
+};
+
 // Collapsible entry for tool results in the chat transcript
 class ToolCollapsibleEntry : public VBoxContainer {
 	GDCLASS(ToolCollapsibleEntry, VBoxContainer);
@@ -164,6 +183,9 @@ private:
 	bool xai_connected = false;
 	int pending_checks = 0;
 
+	// Auto-scroll state
+	bool should_auto_scroll = true;
+
 	// Chat state
 	bool is_waiting_for_response = false;
 	bool context_was_truncated = false;
@@ -196,7 +218,10 @@ private:
 	Control *_create_message_bubble(const ChatMessage &p_message);
 	Control *_create_tool_result_ui(const Dictionary &p_tool_result);
 	void _append_tool_result_ui(const Dictionary &p_tool_result);
+	void _append_thinking_ui(const String &p_text);
 	void _scroll_to_bottom();
+	void _on_content_resized();
+	void _on_vscroll_changed(float p_value);
 	void _update_send_button_state();
 	void _update_queue_ui();
 	void _rebuild_queue_list();
