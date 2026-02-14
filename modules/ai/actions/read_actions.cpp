@@ -307,4 +307,44 @@ Dictionary exec_list_files(const Dictionary &args) {
 #endif
 }
 
+Dictionary exec_read_script(const Dictionary &args) {
+#ifdef TOOLS_ENABLED
+	if (!args.has("file_path") || args["file_path"].get_type() != Variant::STRING) {
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			"'file_path' must be a string");
+	}
+
+	String file_path = args["file_path"];
+
+	if (!file_path.begins_with("res://")) {
+		return ai_create_error_result(AIErrorCodes::INVALID_PATH,
+			vformat("File path must start with 'res://'. Got: %s", file_path));
+	}
+
+	if (!FileAccess::exists(file_path)) {
+		return ai_create_error_result(AIErrorCodes::FILE_NOT_FOUND,
+			vformat("File does not exist: %s", file_path));
+	}
+
+	Ref<FileAccess> file = FileAccess::open(file_path, FileAccess::READ);
+	if (file.is_null()) {
+		return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+			vformat("Failed to open file: %s", file_path));
+	}
+
+	String content = file->get_as_text();
+
+	Dictionary result_data;
+	result_data["file_path"] = file_path;
+	result_data["content"] = content;
+	result_data["size"] = content.length();
+
+	print_line(vformat("AI: Read script '%s' (%d chars)", file_path, content.length()));
+	return ai_create_success_result(result_data);
+#else
+	return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+		"Editor API not available in non-editor builds");
+#endif
+}
+
 } // namespace AIReadActions

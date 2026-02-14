@@ -30,6 +30,11 @@ Dictionary exec_find_nodes_by_type(const Dictionary &args);
 // Returns: Dictionary with status="success"|"error", result/error fields
 Dictionary exec_list_files(const Dictionary &args);
 
+// Reads the source content of an existing script file.
+// Required args: file_path (String) - must start with "res://"
+// Returns: Dictionary with status="success"|"error", result/error fields
+Dictionary exec_read_script(const Dictionary &args);
+
 } // namespace AIReadActions
 
 #endif // AI_READ_ACTIONS_H

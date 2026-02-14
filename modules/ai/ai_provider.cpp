@@ -313,7 +313,9 @@ String AIProvider::get_system_prompt() {
 	       "- find_nodes_by_type: Find all nodes of a specific type in the scene tree\n"
 	       "  Args: {\"type_name\": string (e.g. \"CharacterBody2D\")}\n"
 	       "- list_files: List files in a directory\n"
-	       "  Args: {\"directory\": string (e.g. \"res://scripts\"), \"glob\": string (optional, e.g. \"*.gd\")}";
+	       "  Args: {\"directory\": string (e.g. \"res://scripts\"), \"glob\": string (optional, e.g. \"*.gd\")}\n"
+	       "- read_script: Read the current source content of an existing script file\n"
+	       "  Args: {\"file_path\": string (e.g. \"res://scripts/player.gd\")}";
 }
 
 // ============================================================================
