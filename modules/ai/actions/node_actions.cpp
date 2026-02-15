@@ -7,6 +7,7 @@
 #include "core/object/class_db.h"
 #include "core/string/node_path.h"
 #include "core/io/json.h"
+#include "core/io/resource.h"
 #include "scene/main/node.h"
 
 namespace {
@@ -136,6 +137,15 @@ Dictionary exec_set_property(const Dictionary &args) {
 		value = ai_coerce_value(target_node, property_name, value);
 		Variant current_value = target_node->get(property_name);
 
+		// Pre-validate: confirm the property exists before touching UndoRedo.
+		bool prop_exists = false;
+		target_node->get(StringName(property_name), &prop_exists);
+		if (!prop_exists) {
+			return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+				vformat("Property '%s' does not exist on %s. Check the property name.",
+					property_name, target_node->get_class()));
+		}
+
 		undo_redo->create_action("AI Set Property");
 		undo_redo->add_do_method(target_node, "set", property_name, value);
 		undo_redo->add_undo_method(target_node, "set", property_name, current_value);
@@ -175,6 +185,15 @@ Dictionary exec_set_property(const Dictionary &args) {
 		String final_prop = segs[segs.size() - 1];
 		value = ai_coerce_value(cur, final_prop, value);
 		Variant old_value = cur->get(final_prop);
+
+		// Pre-validate: confirm the final property exists on the traversed object.
+		bool prop_exists = false;
+		cur->get(StringName(final_prop), &prop_exists);
+		if (!prop_exists) {
+			return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+				vformat("Property '%s' does not exist on %s. Check the property name.",
+					property_name, cur->get_class()));
+		}
 
 		undo_redo->create_action("AI Set Property");
 		undo_redo->add_do_method(cur, "set", final_prop, value);
@@ -457,6 +476,161 @@ Dictionary exec_duplicate_node(const Dictionary &args) {
 	result_data["duplicate_path"] = dup->get_path();
 
 	print_line(vformat("AI: Executed duplicate_node. Node: %s, Duplicate: %s, Parent: %s", node_path_str, final_name, parent->get_path()));
+	return ai_create_success_result(result_data);
+}
+
+Dictionary exec_create_resource(const Dictionary &args) {
+	EditorUndoRedoManager *undo_redo = ai_get_undo_redo();
+	if (!undo_redo) {
+		return ai_create_error_result(AIErrorCodes::NO_UNDO_REDO,
+			"EditorUndoRedoManager singleton not found");
+	}
+
+	Node *edited_scene_root = ai_get_edited_scene_root();
+	if (!edited_scene_root) {
+		return ai_create_error_result(AIErrorCodes::NO_ACTIVE_SCENE,
+			"No edited scene root");
+	}
+
+	if (!args.has("node_path") || args["node_path"].get_type() != Variant::STRING) {
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS, "'node_path' must be a string");
+	}
+	if (!args.has("property_name") || args["property_name"].get_type() != Variant::STRING) {
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS, "'property_name' must be a string");
+	}
+	if (!args.has("resource_type") || args["resource_type"].get_type() != Variant::STRING) {
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS, "'resource_type' must be a string");
+	}
+
+	String node_path_str = args["node_path"];
+	String property_name = args["property_name"];
+	String resource_type = args["resource_type"];
+
+	Node *target_node = ai_get_node_by_path(node_path_str);
+	if (!target_node) {
+		return ai_node_not_found_error(node_path_str);
+	}
+
+	// Three-step ClassDB validation — no registry, no whitelist needed.
+	StringName type_sname(resource_type);
+	if (!ClassDB::class_exists(type_sname)) {
+		return ai_create_error_result(AIErrorCodes::INVALID_TYPE,
+			vformat("Resource type '%s' does not exist in ClassDB", resource_type));
+	}
+	if (!ClassDB::is_parent_class(type_sname, "Resource")) {
+		return ai_create_error_result(AIErrorCodes::INVALID_TYPE,
+			vformat("Type '%s' is not a Resource subclass", resource_type));
+	}
+	if (!ClassDB::can_instantiate(type_sname)) {
+		return ai_create_error_result(AIErrorCodes::INVALID_TYPE,
+			vformat("Type '%s' cannot be instantiated (abstract or virtual)", resource_type));
+	}
+
+	Object *obj = ClassDB::instantiate(type_sname);
+	if (!obj) {
+		return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+			vformat("ClassDB::instantiate returned null for type '%s'", resource_type));
+	}
+
+	Resource *resource_raw = Object::cast_to<Resource>(obj);
+	if (!resource_raw) {
+		memdelete(obj);
+		return ai_create_error_result(AIErrorCodes::INTERNAL_ERROR,
+			vformat("Instantiated object for type '%s' is not a Resource", resource_type));
+	}
+	Ref<Resource> new_resource(resource_raw); // Takes ownership; no leak on any code path.
+
+	// Apply optional initial properties before the UndoRedo assignment.
+	// This way undo restores cleanly to old_value (no partial state).
+	if (args.has("properties") && args["properties"].get_type() == Variant::DICTIONARY) {
+		Dictionary props = args["properties"];
+		Array keys = props.keys();
+		for (int i = 0; i < keys.size(); i++) {
+			String key = keys[i];
+			Variant val = ai_coerce_value(resource_raw, key, props[key]);
+			new_resource->set(key, val);
+		}
+	}
+
+	// Resolve the target object and final property name, supporting dot notation.
+	// e.g. "environment.sky.sky_material" → traverse to sky object, set "sky_material".
+	Object *target_obj = target_node;
+	String final_prop = property_name;
+
+	if (property_name.contains(".")) {
+		PackedStringArray segs = property_name.split(".");
+		for (int i = 0; i < segs.size() - 1; i++) {
+			Variant v = target_obj->get(segs[i]);
+			if (v.get_type() != Variant::OBJECT) {
+				return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+					vformat("Property '%s' is not a resource (got type %s). Assign a resource first.",
+						segs[i], Variant::get_type_name(v.get_type())));
+			}
+			Object *next = v.operator Object *();
+			if (!next) {
+				return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+					vformat("Property '%s' is null. Use create_resource to assign a resource first.", segs[i]));
+			}
+			target_obj = next;
+		}
+		final_prop = segs[segs.size() - 1];
+	}
+
+	Variant old_value = target_obj->get(final_prop);
+
+	// Pre-validate: confirm the property exists, then check PROPERTY_HINT_RESOURCE_TYPE.
+	// Using get() with r_valid is side-effect-free (no setter calls, no GPU mutations).
+	bool prop_exists = false;
+	target_obj->get(StringName(final_prop), &prop_exists);
+	if (!prop_exists) {
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			vformat("Property '%s' does not exist on %s. Check the property name.",
+				property_name, target_obj->get_class()));
+	}
+	{
+		// Walk property list once to validate the resource type hint.
+		// hint_string may be comma-separated, e.g. "BaseMaterial3D,ShaderMaterial".
+		List<PropertyInfo> plist;
+		target_obj->get_property_list(&plist);
+		for (const PropertyInfo &pi : plist) {
+			if (pi.name != StringName(final_prop)) {
+				continue;
+			}
+			if (pi.type == Variant::OBJECT && pi.hint == PROPERTY_HINT_RESOURCE_TYPE
+					&& !pi.hint_string.is_empty()) {
+				bool type_ok = false;
+				Vector<String> accepted = pi.hint_string.split(",");
+				for (const String &base_raw : accepted) {
+					String base = base_raw.strip_edges();
+					if (!base.is_empty() && ClassDB::is_parent_class(type_sname, StringName(base))) {
+						type_ok = true;
+						break;
+					}
+				}
+				if (!type_ok) {
+					return ai_create_error_result(AIErrorCodes::INVALID_TYPE,
+						vformat("Resource type '%s' is not compatible with property '%s' (expected: %s).",
+							resource_type, property_name, pi.hint_string));
+				}
+			}
+			break;
+		}
+	}
+
+	undo_redo->create_action("AI Create Resource");
+	undo_redo->add_do_method(target_obj, "set", final_prop, new_resource);
+	undo_redo->add_undo_method(target_obj, "set", final_prop, old_value);
+	undo_redo->commit_action();
+
+	Dictionary result_data;
+	result_data["node_path"] = node_path_str;
+	result_data["property_name"] = property_name;
+	result_data["resource_type"] = resource_type;
+	result_data["old_value"] = old_value;
+	result_data["warnings"] = ai_get_node_warnings(target_node);
+
+	print_line(vformat("AI: Executed create_resource. Node: %s, Property: %s, Type: %s",
+		node_path_str, property_name, resource_type));
 	return ai_create_success_result(result_data);
 }
 

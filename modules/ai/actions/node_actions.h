@@ -41,6 +41,12 @@ Dictionary exec_delete_node(const Dictionary &args);
 // Returns: Dictionary with status="success"|"error", result/error fields
 Dictionary exec_duplicate_node(const Dictionary &args);
 
+// Instantiates a Resource subclass and assigns it to a node property.
+// Required args: node_path (String), property_name (String), resource_type (String)
+// Optional args: properties (Dictionary) — initial property values applied before assignment
+// Returns: Dictionary with status="success"|"error", result/error fields
+Dictionary exec_create_resource(const Dictionary &args);
+
 } // namespace AINodeActions
 
 #endif // AI_NODE_ACTIONS_H

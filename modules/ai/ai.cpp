@@ -39,7 +39,7 @@
 AI *AI::singleton = nullptr;
 
 static const Vector<String> ALLOWED_ACTIONS = {
-    "create_node","delete_node","duplicate_node","set_property",
+    "create_node","delete_node","duplicate_node","set_property","create_resource",
     "create_script","update_script","attach_script","detach_script","rename_script","delete_script",
     "connect_signal","disconnect_signal","run_project","play_test",
     "rename_node","reparent_node","create_scene","open_scene","save_scene","close_scene","set_main_scene",
@@ -107,6 +107,23 @@ bool AI::_validate_command_dictionary(const Dictionary &cmd, String &error_msg) 
         }
         if (!args.has("value")) {
             error_msg = "'set_property' requires 'value'.";
+            return false;
+        }
+    } else if (action == "create_resource") {
+        if (!args.has("node_path") || args["node_path"].get_type() != Variant::STRING) {
+            error_msg = "'create_resource' requires string 'node_path'.";
+            return false;
+        }
+        if (!args.has("property_name") || args["property_name"].get_type() != Variant::STRING) {
+            error_msg = "'create_resource' requires string 'property_name'.";
+            return false;
+        }
+        if (!args.has("resource_type") || args["resource_type"].get_type() != Variant::STRING) {
+            error_msg = "'create_resource' requires string 'resource_type'.";
+            return false;
+        }
+        if (args.has("properties") && args["properties"].get_type() != Variant::DICTIONARY) {
+            error_msg = "'create_resource' optional 'properties' must be a Dictionary.";
             return false;
         }
     } else if (action == "create_script") {
@@ -435,6 +452,8 @@ Dictionary AI::execute_single_action(const Dictionary &p_action) {
         return AINodeActions::exec_delete_node(action_args);
     } else if (action_name == "duplicate_node") {
         return AINodeActions::exec_duplicate_node(action_args);
+    } else if (action_name == "create_resource") {
+        return AINodeActions::exec_create_resource(action_args);
     } else if (action_name == "create_script") {
         return AIScriptActions::exec_create_script(action_args);
     } else if (action_name == "update_script") {
