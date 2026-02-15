@@ -100,23 +100,63 @@ Dictionary exec_set_property(const Dictionary &args) {
 		return ai_node_not_found_error(node_path_str);
 	}
 
-	Variant current_value = target_node->get(property_name);
+	if (!property_name.contains(".")) {
+		// Flat property path — set directly on the node.
+		Variant current_value = target_node->get(property_name);
 
-	undo_redo->create_action("AI Set Property");
-	undo_redo->add_do_method(target_node, "set", property_name, value);
-	undo_redo->add_undo_method(target_node, "set", property_name, current_value);
-	undo_redo->commit_action();
+		undo_redo->create_action("AI Set Property");
+		undo_redo->add_do_method(target_node, "set", property_name, value);
+		undo_redo->add_undo_method(target_node, "set", property_name, current_value);
+		undo_redo->commit_action();
 
-	// Return success with details
-	Dictionary result_data;
-	result_data["node_path"] = node_path_str;
-	result_data["property_name"] = property_name;
-	result_data["old_value"] = current_value;
-	result_data["new_value"] = value;
-	result_data["warnings"] = ai_get_node_warnings(target_node);
+		Dictionary result_data;
+		result_data["node_path"] = node_path_str;
+		result_data["property_name"] = property_name;
+		result_data["old_value"] = current_value;
+		result_data["new_value"] = value;
+		result_data["warnings"] = ai_get_node_warnings(target_node);
 
-	print_line(vformat("AI: Executed set_property. Node: %s, Property: %s, Value: %s", node_path_str, property_name, String(value)));
-	return ai_create_success_result(result_data);
+		print_line(vformat("AI: Executed set_property. Node: %s, Property: %s, Value: %s", node_path_str, property_name, String(value)));
+		return ai_create_success_result(result_data);
+	} else {
+		// Dot-notation sub-resource path, e.g. "mesh.size" or "mat.albedo_color".
+		// Walk all segments except the last, traversing the resource chain.
+		PackedStringArray segs = property_name.split(".");
+
+		Object *cur = target_node;
+		for (int i = 0; i < segs.size() - 1; i++) {
+			Variant v = cur->get(segs[i]);
+			if (v.get_type() != Variant::OBJECT) {
+				return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+					vformat("Property '%s' is not a resource (got type %s). Assign a resource first.",
+						segs[i], Variant::get_type_name(v.get_type())));
+			}
+			Object *obj = v.operator Object *();
+			if (!obj) {
+				return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+					vformat("Property '%s' is null. Use create_resource to assign a resource first.", segs[i]));
+			}
+			cur = obj;
+		}
+
+		String final_prop = segs[segs.size() - 1];
+		Variant old_value = cur->get(final_prop);
+
+		undo_redo->create_action("AI Set Property");
+		undo_redo->add_do_method(cur, "set", final_prop, value);
+		undo_redo->add_undo_method(cur, "set", final_prop, old_value);
+		undo_redo->commit_action();
+
+		Dictionary result_data;
+		result_data["node_path"] = node_path_str;
+		result_data["property_name"] = property_name;
+		result_data["old_value"] = old_value;
+		result_data["new_value"] = value;
+		result_data["warnings"] = ai_get_node_warnings(target_node);
+
+		print_line(vformat("AI: Executed set_property. Node: %s, Property: %s, Value: %s", node_path_str, property_name, String(value)));
+		return ai_create_success_result(result_data);
+	}
 }
 
 Dictionary exec_rename_node(const Dictionary &args) {
