@@ -9,6 +9,37 @@
 #include "core/io/json.h"
 #include "scene/main/node.h"
 
+namespace {
+
+// Coerce a JSON dict to a Godot math type given the expected Variant::Type.
+static Variant ai_coerce_dict(const Dictionary &d, Variant::Type t) {
+	switch (t) {
+		case Variant::VECTOR2:  return Vector2((float)d.get("x", 0.0), (float)d.get("y", 0.0));
+		case Variant::VECTOR3:  return Vector3((float)d.get("x", 0.0), (float)d.get("y", 0.0), (float)d.get("z", 0.0));
+		case Variant::COLOR:    return Color((float)d.get("r", 0.0), (float)d.get("g", 0.0), (float)d.get("b", 0.0), (float)d.get("a", 1.0));
+		case Variant::VECTOR2I: return Vector2i((int)d.get("x", 0), (int)d.get("y", 0));
+		case Variant::VECTOR3I: return Vector3i((int)d.get("x", 0), (int)d.get("y", 0), (int)d.get("z", 0));
+		default: return d;
+	}
+}
+
+// If value is a Dictionary and the named property expects a math type, coerce it.
+static Variant ai_coerce_value(Object *obj, const String &prop, const Variant &val) {
+	if (val.get_type() != Variant::DICTIONARY) {
+		return val;
+	}
+	List<PropertyInfo> plist;
+	obj->get_property_list(&plist);
+	for (const PropertyInfo &pi : plist) {
+		if (pi.name == prop) {
+			return ai_coerce_dict(Dictionary(val), pi.type);
+		}
+	}
+	return val;
+}
+
+} // namespace
+
 namespace AINodeActions {
 
 Dictionary exec_create_node(const Dictionary &args) {
@@ -102,6 +133,7 @@ Dictionary exec_set_property(const Dictionary &args) {
 
 	if (!property_name.contains(".")) {
 		// Flat property path — set directly on the node.
+		value = ai_coerce_value(target_node, property_name, value);
 		Variant current_value = target_node->get(property_name);
 
 		undo_redo->create_action("AI Set Property");
@@ -113,7 +145,8 @@ Dictionary exec_set_property(const Dictionary &args) {
 		result_data["node_path"] = node_path_str;
 		result_data["property_name"] = property_name;
 		result_data["old_value"] = current_value;
-		result_data["new_value"] = value;
+		result_data["target_value"] = value;
+		result_data["actual_value"] = target_node->get(property_name);
 		result_data["warnings"] = ai_get_node_warnings(target_node);
 
 		print_line(vformat("AI: Executed set_property. Node: %s, Property: %s, Value: %s", node_path_str, property_name, String(value)));
@@ -140,6 +173,7 @@ Dictionary exec_set_property(const Dictionary &args) {
 		}
 
 		String final_prop = segs[segs.size() - 1];
+		value = ai_coerce_value(cur, final_prop, value);
 		Variant old_value = cur->get(final_prop);
 
 		undo_redo->create_action("AI Set Property");
@@ -151,7 +185,8 @@ Dictionary exec_set_property(const Dictionary &args) {
 		result_data["node_path"] = node_path_str;
 		result_data["property_name"] = property_name;
 		result_data["old_value"] = old_value;
-		result_data["new_value"] = value;
+		result_data["target_value"] = value;
+		result_data["actual_value"] = cur->get(final_prop);
 		result_data["warnings"] = ai_get_node_warnings(target_node);
 
 		print_line(vformat("AI: Executed set_property. Node: %s, Property: %s, Value: %s", node_path_str, property_name, String(value)));

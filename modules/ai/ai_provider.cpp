@@ -227,7 +227,7 @@ String AIProvider::get_system_prompt() {
 	       "\n"
 	       "DIAGNOSTICS:\n"
 	       "- create_node results include 'warnings' (for the new node) and 'parent_warnings' (for its parent).\n"
-	       "- set_property results include 'warnings' for the affected node.\n"
+	       "- set_property results include 'warnings', 'target_value' (what was attempted), and 'actual_value' (what the property reads back as). If actual_value differs from target_value, the set may have failed silently — check property name and value type.\n"
 	       "- get_node_info results include 'warnings'. list_nodes entries include 'has_warnings' (bool).\n"
 	       "- An empty warnings array means the node is correctly configured.\n"
 	       "- If warnings are non-empty after creating or configuring a node, fix them immediately (e.g. set a shape on CollisionShape3D, add a collision child to CharacterBody3D).\n"
