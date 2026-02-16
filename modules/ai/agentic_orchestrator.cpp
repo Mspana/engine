@@ -663,6 +663,18 @@ int AgenticOrchestrator::get_total_actions() const {
 	return current_run.total_actions;
 }
 
+int AgenticOrchestrator::get_repair_cycles() const {
+	return current_run.repair_cycles;
+}
+
+String AgenticOrchestrator::get_user_message() const {
+	return current_run.user_message;
+}
+
+int64_t AgenticOrchestrator::get_user_message_id() const {
+	return current_run.user_message_id;
+}
+
 void AgenticOrchestrator::set_user_message_id(int64_t p_user_message_id) {
 	current_run.user_message_id = p_user_message_id;
 }

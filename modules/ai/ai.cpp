@@ -44,6 +44,7 @@ static const Vector<String> ALLOWED_ACTIONS = {
     "connect_signal","disconnect_signal","run_project","play_test",
     "rename_node","reparent_node","create_scene","open_scene","save_scene","close_scene","set_main_scene",
     "get_node_info","find_nodes_by_type","list_nodes","list_files","read_script","set_project_setting","get_project_settings","create_autoload_singleton","remove_autoload_singleton","import_asset","delete_asset",
+    "write_dev_note",
 };
 
 // New helper function to validate a command already parsed into a Dictionary
@@ -124,6 +125,11 @@ bool AI::_validate_command_dictionary(const Dictionary &cmd, String &error_msg) 
         }
         if (args.has("properties") && args["properties"].get_type() != Variant::DICTIONARY) {
             error_msg = "'create_resource' optional 'properties' must be a Dictionary.";
+            return false;
+        }
+    } else if (action == "write_dev_note") {
+        if (!args.has("summary") || args["summary"].get_type() != Variant::STRING) {
+            error_msg = "'write_dev_note' requires string 'summary'.";
             return false;
         }
     } else if (action == "create_script") {
@@ -454,6 +460,8 @@ Dictionary AI::execute_single_action(const Dictionary &p_action) {
         return AINodeActions::exec_duplicate_node(action_args);
     } else if (action_name == "create_resource") {
         return AINodeActions::exec_create_resource(action_args);
+    } else if (action_name == "write_dev_note") {
+        return _exec_write_dev_note(action_args);
     } else if (action_name == "create_script") {
         return AIScriptActions::exec_create_script(action_args);
     } else if (action_name == "update_script") {
@@ -935,9 +943,13 @@ AI::AI() {
 	orchestrator.instantiate();
 
 	// Connect orchestrator signals to callbacks
+	orchestrator->connect("run_started", callable_mp(this, &AI::_on_agentic_run_started));
 	orchestrator->connect("progress_update", callable_mp(this, &AI::_on_agentic_progress));
 	orchestrator->connect("tool_result_ready", callable_mp(this, &AI::_on_agentic_tool_result));
 	orchestrator->connect("run_complete", callable_mp(this, &AI::_on_agentic_complete));
+
+	// Initialize journal writer
+	_journal_writer = memnew(AIJournalWriter);
 
 	print_line("AI: Agentic orchestrator initialized");
 }
@@ -952,6 +964,9 @@ AI::~AI() {
 
     // Disconnect from orchestrator if connected
     if (orchestrator.is_valid()) {
+        if (orchestrator->is_connected("run_started", callable_mp(this, &AI::_on_agentic_run_started))) {
+            orchestrator->disconnect("run_started", callable_mp(this, &AI::_on_agentic_run_started));
+        }
         if (orchestrator->is_connected("progress_update", callable_mp(this, &AI::_on_agentic_progress))) {
             orchestrator->disconnect("progress_update", callable_mp(this, &AI::_on_agentic_progress));
         }
@@ -962,12 +977,25 @@ AI::~AI() {
             orchestrator->disconnect("run_complete", callable_mp(this, &AI::_on_agentic_complete));
         }
     }
+
+    // Shut down journal writer (flushes pending writes before destroying thread)
+    if (_journal_writer) {
+        memdelete(_journal_writer);
+        _journal_writer = nullptr;
+    }
 }
 
 // Agentic callback implementations
+void AI::_on_agentic_run_started() {
+    _run_start_ms = Time::get_singleton()->get_ticks_msec();
+    _current_run_id = itos(Time::get_singleton()->get_ticks_usec());
+    _run_action_buffer.clear();
+}
+
 void AI::_on_agentic_tool_result(const Dictionary &p_tool_result) {
-    // Tool result received from orchestrator
-    // In Phase 4, we'll forward this to the UI for display in chat transcript
+    // Buffer _tool_result_data for the run log record
+    _run_action_buffer.push_back(p_tool_result); // signal already passes _tool_result_data directly
+    // In Phase 4, we'll also forward this to the UI for display in chat transcript
     print_verbose(vformat("AI: Tool result received: %s", JSON::stringify(p_tool_result)));
 }
 
@@ -985,6 +1013,67 @@ void AI::_on_agentic_complete(bool p_success, const String &p_final_message) {
     } else {
         print_line(vformat("AI: Agentic run failed or was cancelled: %s", p_final_message));
     }
+
+    // Write run record to journal
+    if (_journal_writer) {
+        Dictionary run_entry;
+        run_entry["schema"] = "run_v1";
+        run_entry["run_id"] = _current_run_id;
+        run_entry["timestamp"] = Time::get_singleton()->get_datetime_string_from_system(true);
+        run_entry["user_message"] = orchestrator->get_user_message();
+        run_entry["model_turns"] = orchestrator->get_model_turns();
+        run_entry["total_actions"] = orchestrator->get_total_actions();
+        run_entry["repair_cycles"] = orchestrator->get_repair_cycles();
+        run_entry["duration_ms"] = (int64_t)(Time::get_singleton()->get_ticks_msec() - _run_start_ms);
+        run_entry["success"] = p_success;
+        run_entry["final_message"] = p_final_message;
+        run_entry["actions"] = _run_action_buffer;
+        _journal_writer->enqueue(_get_journal_path("runs.jsonl"), run_entry);
+    }
+}
+
+String AI::_get_journal_path(const String &p_filename) const {
+    String base = ProjectSettings::get_singleton()->globalize_path("user://ai_journal");
+    return base + "/" + p_filename;
+}
+
+Dictionary AI::_exec_write_dev_note(const Dictionary &args) {
+    if (!_journal_writer) {
+        Dictionary error_result;
+        error_result["status"] = "error";
+        Dictionary error_dict;
+        error_dict["code"] = "internal_error";
+        error_dict["message"] = "Journal writer not initialized.";
+        error_dict["details"] = Dictionary();
+        error_result["error"] = error_dict;
+        return error_result;
+    }
+
+    Dictionary note;
+    note["schema"] = "dev_note_v1";
+    note["run_id"] = _current_run_id;
+    note["turn"] = orchestrator->get_model_turns();
+    note["timestamp"] = Time::get_singleton()->get_datetime_string_from_system(true);
+    note["summary"] = args["summary"];
+
+    static const char *optional_fields[] = {
+        "friction_points", "missing_tools", "schema_suggestions",
+        "prompt_suggestions", "bugs_suspected", "next_debug_steps", "freeform", nullptr
+    };
+    for (int i = 0; optional_fields[i]; i++) {
+        if (args.has(optional_fields[i])) {
+            note[optional_fields[i]] = args[optional_fields[i]];
+        }
+    }
+
+    _journal_writer->enqueue(_get_journal_path("dev_notes.jsonl"), note);
+
+    Dictionary result_data;
+    result_data["written"] = true;
+    Dictionary success_result;
+    success_result["status"] = "success";
+    success_result["result"] = result_data;
+    return success_result;
 }
 
 Ref<AgenticOrchestrator> AI::get_orchestrator() const {

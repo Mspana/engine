@@ -87,6 +87,9 @@ public:
 	// Get current run stats
 	int get_model_turns() const;
 	int get_total_actions() const;
+	int get_repair_cycles() const;
+	String get_user_message() const;
+	int64_t get_user_message_id() const;
 
 protected:
 	static void _bind_methods();

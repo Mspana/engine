@@ -5,6 +5,8 @@
 #include "core/variant/array.h"         // For Array return type
 #include "core/string/ustring.h"        // For String parameter type
 #include "core/variant/dictionary.h"    // Added for Dictionary type hint
+#include "core/os/time.h"               // For Time singleton (journal timestamps)
+#include "ai_journal_writer.h"          // For AIJournalWriter
 #include "ai_provider.h"                // For AIProvider types
 #include "retrieval.h"                  // For RetrievalIndex
 #include "agentic_orchestrator.h"       // For agentic tool use
@@ -38,9 +40,19 @@ private:
 	void _on_provider_request_completed(bool success, const String &response_json, const String &error_message);
 
 	// Agentic callbacks
+	void _on_agentic_run_started();
 	void _on_agentic_tool_result(const Dictionary &p_tool_result);
 	void _on_agentic_progress(const String &p_status, int p_turn);
 	void _on_agentic_complete(bool p_success, const String &p_final_message);
+
+	// Journal
+	AIJournalWriter *_journal_writer = nullptr;
+	Array _run_action_buffer;   // Cleared at run start, accumulates _tool_result_data dicts
+	uint64_t _run_start_ms = 0; // Ticks at run_started
+	String _current_run_id;     // Timestamp-based ID, set at run_started
+
+	Dictionary _exec_write_dev_note(const Dictionary &args);
+	String _get_journal_path(const String &p_filename) const;
 
 	// Helper to process and execute actions from JSON response
 	void _process_and_execute_actions(const String &ai_json_response);
