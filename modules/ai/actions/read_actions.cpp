@@ -8,6 +8,8 @@
 #include "core/io/dir_access.h"
 #include "core/io/resource.h"
 #include "scene/main/node.h"
+#include "modules/gdscript/gdscript_parser.h"
+#include "modules/gdscript/gdscript_analyzer.h"
 
 namespace {
 
@@ -384,10 +386,42 @@ Dictionary exec_read_script(const Dictionary &args) {
 
 	String content = file->get_as_text();
 
+	// Validate GDScript syntax + semantics (same pipeline as update_script)
+	Array parse_errors;
+	if (file_path.ends_with(".gd")) {
+		GDScriptParser parser;
+		Error parse_err = parser.parse(content, file_path, false);
+
+		for (const GDScriptParser::ParserError &e : parser.get_errors()) {
+			Dictionary err_dict;
+			err_dict["line"] = e.line;
+			err_dict["column"] = e.column;
+			err_dict["message"] = e.message;
+			err_dict["type"] = "syntax";
+			parse_errors.push_back(err_dict);
+		}
+
+		if (parse_err == OK && parser.get_errors().is_empty()) {
+			GDScriptAnalyzer analyzer(&parser);
+			analyzer.analyze();
+			for (const GDScriptParser::ParserError &e : parser.get_errors()) {
+				Dictionary err_dict;
+				err_dict["line"] = e.line;
+				err_dict["column"] = e.column;
+				err_dict["message"] = e.message;
+				err_dict["type"] = "semantic";
+				parse_errors.push_back(err_dict);
+			}
+		}
+	}
+
 	Dictionary result_data;
 	result_data["file_path"] = file_path;
 	result_data["content"] = content;
 	result_data["size"] = content.length();
+	if (!parse_errors.is_empty()) {
+		result_data["parse_errors"] = parse_errors;
+	}
 
 	print_line(vformat("AI: Read script '%s' (%d chars)", file_path, content.length()));
 	return ai_create_success_result(result_data);

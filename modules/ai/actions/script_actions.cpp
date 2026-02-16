@@ -12,6 +12,8 @@
 #include "core/io/resource_loader.h"
 #include "core/object/script_language.h"
 #include "scene/main/node.h"
+#include "modules/gdscript/gdscript_parser.h"
+#include "modules/gdscript/gdscript_analyzer.h"
 
 namespace AIScriptActions {
 
@@ -105,10 +107,44 @@ Dictionary exec_update_script(const Dictionary &args) {
 	undo_redo->add_undo_method(ai_singleton, "_write_script_file", abs_path, original_content);
 	undo_redo->commit_action();
 
+	// Validate written script: parser + analyzer mirrors full editor error feedback.
+	// Runs post-write so base-class resolution works on the saved file.
+	Array parse_errors;
+	{
+		GDScriptParser parser;
+		Error parse_err = parser.parse(patch_content, abs_path, false);
+
+		for (const GDScriptParser::ParserError &e : parser.get_errors()) {
+			Dictionary err_dict;
+			err_dict["line"] = e.line;
+			err_dict["column"] = e.column;
+			err_dict["message"] = e.message;
+			err_dict["type"] = "syntax";
+			parse_errors.push_back(err_dict);
+		}
+
+		// Only run analyzer if parse succeeded — analyzer requires a valid parse tree
+		if (parse_err == OK && parser.get_errors().is_empty()) {
+			GDScriptAnalyzer analyzer(&parser);
+			analyzer.analyze();
+			for (const GDScriptParser::ParserError &e : parser.get_errors()) {
+				Dictionary err_dict;
+				err_dict["line"] = e.line;
+				err_dict["column"] = e.column;
+				err_dict["message"] = e.message;
+				err_dict["type"] = "semantic";
+				parse_errors.push_back(err_dict);
+			}
+		}
+	}
+
 	Dictionary result_data;
 	result_data["file_path"] = file_path;
 	result_data["old_size"] = original_content.length();
 	result_data["new_size"] = patch_content.length();
+	if (!parse_errors.is_empty()) {
+		result_data["parse_errors"] = parse_errors;
+	}
 
 	print_line(vformat("AI: Executed update_script. File: %s", file_path));
 	return ai_create_success_result(result_data);

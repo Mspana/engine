@@ -853,6 +853,12 @@ void AI::_write_script_file(const String &abs_path, const String &content) {
         return;
     }
     print_verbose(vformat("AI: Updated script at '%s'", abs_path));
+
+    // Notify EditorFileSystem to refresh (matches _delete_script_file, _rename_script_file)
+    EditorFileSystem *efs = EditorFileSystem::get_singleton();
+    if (efs) {
+        efs->scan_changes();
+    }
 }
 
 void AI::_delete_script_file(const String &abs_path) {

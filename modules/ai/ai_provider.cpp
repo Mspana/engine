@@ -248,6 +248,8 @@ String AIProvider::get_system_prompt() {
 	       "- You can make multiple action attempts in sequence. When satisfied, return FINAL MODE.\n"
 	       "- Keep assistant_text brief and focused.\n"
 	       "- Use tool results to repair errors (e.g., if rename fails with 'no scene open', first open_scene, then retry).\n"
+	       "- NEVER describe a change as done if you have not yet executed it. Describing a fix in assistant_text does NOT apply it. Every change to files, scripts, nodes, or properties MUST be performed via an action in ACTION MODE. Do NOT go to FINAL MODE claiming something is fixed unless you have a tool result confirming the action succeeded.\n"
+	       "- After update_script, always call read_script on the same file and check the result for 'parse_errors' before going to FINAL MODE. If parse_errors are present, fix them and call update_script again.\n"
 	       "\n"
 	       "TOOL RESULTS FORMAT:\n"
 	       "After each action, you receive:\n"
@@ -300,6 +302,9 @@ String AIProvider::get_system_prompt() {
 	       "  Args: {\"file_path\": string (e.g. \"res://scripts/Enemy.gd\"), \"language\": \"GDScript\", \"content\": string}\n"
 	       "- update_script: Update an existing script file with new content\n"
 	       "  Args: {\"file_path\": string, \"patch\": string (full file content)}\n"
+	       "  Always writes the file. After writing, validates with the full GDScript compiler\n"
+	       "  (syntax + type checks). If errors exist, result includes\n"
+	       "  'parse_errors': [{line, column, message, type}, ...] — fix them and call update_script again.\n"
 	       "- attach_script: Attach a script to a node\n"
 	       "  Args: {\"node_path\": string, \"script_path\": string}\n"
 	       "- detach_script: Detach a script from a node\n"
@@ -346,7 +351,10 @@ String AIProvider::get_system_prompt() {
 	       "- list_files: List files in a directory\n"
 	       "  Args: {\"directory\": string (e.g. \"res://scripts\"), \"glob\": string (optional, e.g. \"*.gd\")}\n"
 	       "- read_script: Read the current source content of an existing script file\n"
-	       "  Args: {\"file_path\": string (e.g. \"res://scripts/player.gd\")}";
+	       "  Args: {\"file_path\": string (e.g. \"res://scripts/player.gd\")}\n"
+	       "  For .gd files, also validates with the full GDScript compiler (syntax + type checks).\n"
+	       "  If errors exist, result includes 'parse_errors': [{line, column, message, type}, ...].\n"
+	       "  Use after update_script to verify the written content is error-free.";
 }
 
 // ============================================================================
