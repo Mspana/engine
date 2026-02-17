@@ -110,6 +110,7 @@ Dictionary exec_update_script(const Dictionary &args) {
 	// Validate written script: parser + analyzer mirrors full editor error feedback.
 	// Runs post-write so base-class resolution works on the saved file.
 	Array parse_errors;
+	Array warnings;
 	{
 		GDScriptParser parser;
 		Error parse_err = parser.parse(patch_content, abs_path, false);
@@ -136,6 +137,16 @@ Dictionary exec_update_script(const Dictionary &args) {
 				parse_errors.push_back(err_dict);
 			}
 		}
+
+#ifdef DEBUG_ENABLED
+		for (const GDScriptWarning &w : parser.get_warnings()) {
+			Dictionary warn_dict;
+			warn_dict["line"] = w.start_line;
+			warn_dict["message"] = w.get_message();
+			warn_dict["code"] = w.get_name();
+			warnings.push_back(warn_dict);
+		}
+#endif
 	}
 
 	Dictionary result_data;
@@ -144,6 +155,9 @@ Dictionary exec_update_script(const Dictionary &args) {
 	result_data["new_size"] = patch_content.length();
 	if (!parse_errors.is_empty()) {
 		result_data["parse_errors"] = parse_errors;
+	}
+	if (!warnings.is_empty()) {
+		result_data["warnings"] = warnings;
 	}
 
 	print_line(vformat("AI: Executed update_script. File: %s", file_path));

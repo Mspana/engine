@@ -303,8 +303,9 @@ String AIProvider::get_system_prompt() {
 	       "- update_script: Update an existing script file with new content\n"
 	       "  Args: {\"file_path\": string, \"patch\": string (full file content)}\n"
 	       "  Always writes the file. After writing, validates with the full GDScript compiler\n"
-	       "  (syntax + type checks). If errors exist, result includes\n"
-	       "  'parse_errors': [{line, column, message, type}, ...] — fix them and call update_script again.\n"
+	       "  (syntax + type checks). Result may include:\n"
+	       "  'parse_errors': [{line, column, message, type}, ...] — errors, fix and retry.\n"
+	       "  'warnings': [{line, message, code}, ...] — non-fatal issues worth reviewing.\n"
 	       "- attach_script: Attach a script to a node\n"
 	       "  Args: {\"node_path\": string, \"script_path\": string}\n"
 	       "- detach_script: Detach a script from a node\n"
@@ -353,7 +354,9 @@ String AIProvider::get_system_prompt() {
 	       "- read_script: Read the current source content of an existing script file\n"
 	       "  Args: {\"file_path\": string (e.g. \"res://scripts/player.gd\")}\n"
 	       "  For .gd files, also validates with the full GDScript compiler (syntax + type checks).\n"
-	       "  If errors exist, result includes 'parse_errors': [{line, column, message, type}, ...].\n"
+	       "  Result may include:\n"
+	       "  'parse_errors': [{line, column, message, type}, ...] — errors, fix and retry.\n"
+	       "  'warnings': [{line, message, code}, ...] — non-fatal issues worth reviewing.\n"
 	       "  Use after update_script to verify the written content is error-free.";
 }
 

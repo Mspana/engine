@@ -388,6 +388,7 @@ Dictionary exec_read_script(const Dictionary &args) {
 
 	// Validate GDScript syntax + semantics (same pipeline as update_script)
 	Array parse_errors;
+	Array warnings;
 	if (file_path.ends_with(".gd")) {
 		GDScriptParser parser;
 		Error parse_err = parser.parse(content, file_path, false);
@@ -413,6 +414,16 @@ Dictionary exec_read_script(const Dictionary &args) {
 				parse_errors.push_back(err_dict);
 			}
 		}
+
+#ifdef DEBUG_ENABLED
+		for (const GDScriptWarning &w : parser.get_warnings()) {
+			Dictionary warn_dict;
+			warn_dict["line"] = w.start_line;
+			warn_dict["message"] = w.get_message();
+			warn_dict["code"] = w.get_name();
+			warnings.push_back(warn_dict);
+		}
+#endif
 	}
 
 	Dictionary result_data;
@@ -421,6 +432,9 @@ Dictionary exec_read_script(const Dictionary &args) {
 	result_data["size"] = content.length();
 	if (!parse_errors.is_empty()) {
 		result_data["parse_errors"] = parse_errors;
+	}
+	if (!warnings.is_empty()) {
+		result_data["warnings"] = warnings;
 	}
 
 	print_line(vformat("AI: Read script '%s' (%d chars)", file_path, content.length()));
