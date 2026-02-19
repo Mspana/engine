@@ -33,6 +33,7 @@
 #include "core/io/resource_loader.h"
 #include "core/io/resource_saver.h"
 #include "modules/gdscript/gdscript.h"
+#include "editor/plugins/script_editor_plugin.h"
 
 
 // Define and initialize the static singleton pointer.
@@ -854,7 +855,15 @@ void AI::_write_script_file(const String &abs_path, const String &content) {
     }
     print_verbose(vformat("AI: Updated script at '%s'", abs_path));
 
-    // Notify EditorFileSystem to refresh (matches _delete_script_file, _rename_script_file)
+    // Reload open script tabs so the editor picks up the new content immediately
+    // without showing the "file is newer on disk" dialog. reload_scripts() updates
+    // the cached modification time, re-reads from disk, and refreshes the tab.
+    ScriptEditor *se = ScriptEditor::get_singleton();
+    if (se) {
+        se->reload_scripts();
+    }
+
+    // Also refresh the FileSystem dock (file size, etc.)
     EditorFileSystem *efs = EditorFileSystem::get_singleton();
     if (efs) {
         efs->scan_changes();
