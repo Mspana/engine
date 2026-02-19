@@ -14,6 +14,7 @@
 #include "scene/main/node.h"
 #include "modules/gdscript/gdscript_parser.h"
 #include "modules/gdscript/gdscript_analyzer.h"
+#include "editor/gui/editor_run_bar.h"
 
 namespace AIScriptActions {
 
@@ -99,6 +100,13 @@ Dictionary exec_update_script(const Dictionary &args) {
 	}
 	String original_content = file->get_as_text();
 	file.unref(); // Close the file
+
+	// Check if game is running (file will be locked by the running process)
+	EditorRunBar *run_bar = EditorRunBar::get_singleton();
+	if (run_bar && run_bar->is_playing()) {
+		return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+			"Cannot update script while the game is running. Stop the game (F8) first.");
+	}
 
 	ai_log_verbose(vformat("Updating script at '%s'. Old size: %d bytes, New size: %d bytes", abs_path, original_content.length(), patch_content.length()));
 
