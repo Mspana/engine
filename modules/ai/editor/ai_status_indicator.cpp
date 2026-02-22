@@ -50,47 +50,50 @@ static const int MAX_CONTEXT_MESSAGES = 80;
 static const int MAX_CONTEXT_CHARS = 120000; // 120k chars
 
 // ============================================================================
-// Cursor-like Dark Theme Color Palette
+// Aristotle Design Tokens (shared with global editor theme)
 // ============================================================================
+#include "editor/themes/aristotle_tokens.h"
+
+// Local aliases so the 151 existing AIColors:: references keep compiling.
 namespace AIColors {
-	// Background hierarchy (near-true-black)
-	static const Color BG_0 = Color(0.08, 0.08, 0.09, 1.0);      // #141417 - Main background
-	static const Color BG_1 = Color(0.11, 0.11, 0.13, 1.0);      // #1C1C21 - Cards/tool entries
-	static const Color BG_2 = Color(0.14, 0.14, 0.16, 1.0);      // #242428 - Input fields/buttons
-	static const Color BG_3 = Color(0.18, 0.18, 0.20, 1.0);      // #2E2E33 - Hover states
+	// Backgrounds
+	static const Color BG_0 = Aristotle::BG_0;
+	static const Color BG_1 = Aristotle::BG_1;
+	static const Color BG_2 = Aristotle::BG_2;
+	static const Color BG_3 = Aristotle::BG_3;
 
 	// Borders
-	static const Color BORDER = Color(0.25, 0.25, 0.28, 1.0);    // #404047 - Subtle borders
-	static const Color BORDER_LIGHT = Color(0.35, 0.35, 0.38, 1.0); // #595961 - Focus/hover borders
+	static const Color BORDER = Aristotle::BORDER;
+	static const Color BORDER_LIGHT = Aristotle::BORDER_LIGHT;
 
 	// Text
-	static const Color TEXT_PRIMARY = Color(0.93, 0.93, 0.95, 1.0);  // #EDEFF2 - Primary text
-	static const Color TEXT_SECONDARY = Color(0.7, 0.7, 0.73, 1.0); // #B3B3BA - Secondary text
-	static const Color TEXT_MUTED = Color(0.5, 0.5, 0.53, 1.0);     // #808087 - Muted/placeholder
-	static const Color TEXT_DISABLED = Color(0.35, 0.35, 0.38, 1.0); // #595961 - Disabled text
+	static const Color TEXT_PRIMARY = Aristotle::TEXT_PRIMARY;
+	static const Color TEXT_SECONDARY = Aristotle::TEXT_SECONDARY;
+	static const Color TEXT_MUTED = Aristotle::TEXT_MUTED;
+	static const Color TEXT_DISABLED = Aristotle::TEXT_DISABLED;
 
 	// Accent - Blue
-	static const Color ACCENT_BLUE = Color(0.30, 0.52, 0.90, 1.0);   // #4D85E6 - Primary accent
-	static const Color ACCENT_BLUE_HOVER = Color(0.35, 0.57, 0.95, 1.0); // #5991F2 - Hover
-	static const Color ACCENT_BLUE_PRESSED = Color(0.25, 0.45, 0.80, 1.0); // #4073CC - Pressed
-	static const Color ACCENT_BLUE_MUTED = Color(0.20, 0.32, 0.55, 0.95); // #33528C - User bubble
+	static const Color ACCENT_BLUE = Aristotle::ACCENT;
+	static const Color ACCENT_BLUE_HOVER = Aristotle::ACCENT_HOVER;
+	static const Color ACCENT_BLUE_PRESSED = Aristotle::ACCENT_PRESSED;
+	static const Color ACCENT_BLUE_MUTED = Aristotle::ACCENT_MUTED;
 
-	// Assistant bubble - slightly warmer/distinct
-	static const Color ASSISTANT_BG = Color(0.13, 0.14, 0.17, 1.0); // #21242B - Assistant messages
+	// Assistant bubble (AI panel specific, not in global tokens)
+	static const Color ASSISTANT_BG = Color(0.13, 0.14, 0.17, 1.0); // #21242B
 
 	// Status
-	static const Color SUCCESS = Color(0.35, 0.78, 0.45, 1.0);   // #59C773 - Green
-	static const Color ERROR = Color(0.90, 0.40, 0.40, 1.0);     // #E66666 - Red
-	static const Color WARNING = Color(0.95, 0.75, 0.25, 1.0);   // #F2BF40 - Yellow/Orange
+	static const Color SUCCESS = Aristotle::STATUS_SUCCESS;
+	static const Color ERROR = Aristotle::STATUS_ERROR;
+	static const Color WARNING = Aristotle::STATUS_WARNING;
 
 	// Spacing
-	static const int CORNER_RADIUS_SM = 3;
-	static const int CORNER_RADIUS_MD = 5;
-	static const int CORNER_RADIUS_LG = 8;
-	static const int PADDING_XS = 2;
-	static const int PADDING_SM = 6;
-	static const int PADDING_MD = 10;
-	static const int PADDING_LG = 14;
+	static const int CORNER_RADIUS_SM = Aristotle::RADIUS_SM;
+	static const int CORNER_RADIUS_MD = Aristotle::RADIUS_MD;
+	static const int CORNER_RADIUS_LG = Aristotle::RADIUS_LG;
+	static const int PADDING_XS = Aristotle::PAD_XS;
+	static const int PADDING_SM = Aristotle::PAD_SM;
+	static const int PADDING_MD = Aristotle::PAD_MD;
+	static const int PADDING_LG = Aristotle::PAD_LG;
 }
 
 // ============================================================================
