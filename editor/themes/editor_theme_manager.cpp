@@ -34,6 +34,7 @@
 #include "core/io/resource_loader.h"
 #include "editor/editor_settings.h"
 #include "editor/editor_string_names.h"
+#include "editor/themes/aristotle_tokens.h"
 #include "editor/themes/editor_color_map.h"
 #include "editor/themes/editor_fonts.h"
 #include "editor/themes/editor_icons.h"
@@ -217,6 +218,11 @@ Ref<EditorTheme> EditorThemeManager::_create_base_theme(const Ref<EditorTheme> &
 	_populate_text_editor_styles(theme, config);
 	_populate_visual_shader_styles(theme, config);
 
+	// Apply Aristotle theme overrides after all standard styles.
+	if (config.preset == "Aristotle") {
+		_apply_aristotle_overrides(theme, config);
+	}
+
 	OS::get_singleton()->benchmark_end_measure(get_benchmark_key(), "Create Base Theme");
 	return theme;
 }
@@ -285,7 +291,12 @@ EditorThemeManager::ThemeConfiguration EditorThemeManager::_create_theme_config(
 			bool preset_draw_extra_borders = false;
 
 			// Please use alphabetical order if you're adding a new theme here.
-			if (config.preset == "Breeze Dark") {
+			if (config.preset == "Aristotle") {
+				preset_accent_color = Aristotle::PRESET_ACCENT_COLOR;
+				preset_base_color = Aristotle::PRESET_BASE_COLOR;
+				preset_contrast = Aristotle::PRESET_CONTRAST;
+				preset_draw_extra_borders = false;
+			} else if (config.preset == "Breeze Dark") {
 				preset_accent_color = Color(0.26, 0.76, 1.00);
 				preset_base_color = Color(0.24, 0.26, 0.28);
 				preset_contrast = config.default_contrast;
@@ -350,6 +361,14 @@ EditorThemeManager::ThemeConfiguration EditorThemeManager::_create_theme_config(
 		EditorSettings::get_singleton()->set_manually("interface/theme/base_color", config.base_color);
 		EditorSettings::get_singleton()->set_manually("interface/theme/contrast", config.contrast);
 		EditorSettings::get_singleton()->set_manually("interface/theme/draw_extra_borders", config.draw_extra_borders);
+	}
+
+	// Aristotle overrides corner radius and border for flatter look.
+	if (config.preset == "Aristotle") {
+		config.corner_radius = Aristotle::RADIUS_SM;
+		config.border_width = 0;
+		EditorSettings::get_singleton()->set_manually("interface/theme/corner_radius", config.corner_radius);
+		EditorSettings::get_singleton()->set_manually("interface/theme/border_size", config.border_width);
 	}
 
 	// Handle theme spacing preset.
@@ -2863,6 +2882,261 @@ Ref<EditorTheme> EditorThemeManager::generate_theme(const Ref<EditorTheme> &p_ol
 	benchmark_run++;
 
 	return theme;
+}
+
+// ============================================================================
+// Aristotle Theme Overrides
+// ============================================================================
+// Applied after all standard styles are populated. Adjusts specific controls
+// for a flatter, darker aesthetic matching the Aristotle design language.
+// Tokens come from editor/themes/aristotle_tokens.h.
+
+void EditorThemeManager::_apply_aristotle_overrides(const Ref<EditorTheme> &p_theme, ThemeConfiguration &p_config) {
+	// -- Panel backgrounds: use Aristotle's exact BG hierarchy. ----
+
+	// Main Panel gets BG_0 (deepest).
+	p_theme->set_stylebox(SceneStringName(panel), "Panel",
+			make_flat_stylebox(Aristotle::BG_0, 6, 4, 6, 4, Aristotle::RADIUS_SM));
+
+	// Tree panels (Scene Tree, Inspector, FileSystem): BG_0 background.
+	{
+		Ref<StyleBoxFlat> tree_panel = p_config.tree_panel_style->duplicate();
+		tree_panel->set_bg_color(Aristotle::BG_0);
+		tree_panel->set_border_width_all(0);
+		p_theme->set_stylebox(SceneStringName(panel), "Tree", tree_panel);
+	}
+
+	// Content panels (tab content area): BG_0 with no top border.
+	{
+		Ref<StyleBoxFlat> content = p_config.content_panel_style->duplicate();
+		content->set_bg_color(Aristotle::BG_0);
+		content->set_border_width_all(0);
+		p_theme->set_stylebox(SceneStringName(panel), "TabContainer", content);
+	}
+
+	// -- Buttons: flat, use BG_2/BG_3 layers, no heavy borders. ----
+	{
+		Ref<StyleBoxFlat> btn_normal = p_config.button_style->duplicate();
+		btn_normal->set_bg_color(Aristotle::BG_2);
+		btn_normal->set_border_width_all(0);
+		btn_normal->set_corner_radius_all(Aristotle::RADIUS_SM);
+
+		Ref<StyleBoxFlat> btn_hover = btn_normal->duplicate();
+		btn_hover->set_bg_color(Aristotle::BG_3);
+
+		Ref<StyleBoxFlat> btn_pressed = btn_normal->duplicate();
+		btn_pressed->set_bg_color(Aristotle::ACCENT_PRESSED);
+
+		Ref<StyleBoxFlat> btn_disabled = btn_normal->duplicate();
+		btn_disabled->set_bg_color(Aristotle::BG_1);
+
+		Ref<StyleBoxFlat> btn_focus = btn_normal->duplicate();
+		btn_focus->set_draw_center(false);
+		btn_focus->set_border_width_all(Math::round(Aristotle::FOCUS_WIDTH * MAX(1, EDSCALE)));
+		btn_focus->set_border_color(Aristotle::ACCENT);
+
+		p_theme->set_stylebox(CoreStringName(normal), "Button", btn_normal);
+		p_theme->set_stylebox(SceneStringName(hover), "Button", btn_hover);
+		p_theme->set_stylebox(SceneStringName(pressed), "Button", btn_pressed);
+		p_theme->set_stylebox("disabled", "Button", btn_disabled);
+		p_theme->set_stylebox("focus", "Button", btn_focus);
+
+		p_theme->set_color("font_pressed_color", "Button", Aristotle::TEXT_PRIMARY);
+
+		// MenuButton: transparent normal, hover shows BG_3.
+		Ref<StyleBoxFlat> menu_btn_normal = btn_normal->duplicate();
+		menu_btn_normal->set_draw_center(false);
+		menu_btn_normal->set_border_width_all(0);
+		p_theme->set_stylebox(CoreStringName(normal), "MenuButton", menu_btn_normal);
+		p_theme->set_stylebox(SceneStringName(hover), "MenuButton", btn_hover);
+		p_theme->set_stylebox(SceneStringName(pressed), "MenuButton", menu_btn_normal);
+
+		// MenuBar.
+		p_theme->set_stylebox(CoreStringName(normal), "MenuBar", btn_normal);
+		p_theme->set_stylebox(SceneStringName(hover), "MenuBar", btn_hover);
+		p_theme->set_stylebox(SceneStringName(pressed), "MenuBar", btn_pressed);
+		p_theme->set_stylebox("disabled", "MenuBar", btn_disabled);
+	}
+
+	// -- Tree rows: subtle hover/selection with accent. ----
+	{
+		Ref<StyleBoxFlat> tree_selected = p_config.base_style->duplicate();
+		tree_selected->set_bg_color(Aristotle::SELECTION);
+		tree_selected->set_border_width_all(0);
+
+		Ref<StyleBoxFlat> tree_hover = p_config.base_style->duplicate();
+		tree_hover->set_bg_color(Color(Aristotle::TEXT_PRIMARY.r, Aristotle::TEXT_PRIMARY.g, Aristotle::TEXT_PRIMARY.b, 0.04));
+		tree_hover->set_border_width_all(0);
+
+		Ref<StyleBoxFlat> tree_hover_dimmed = tree_hover->duplicate();
+		tree_hover_dimmed->set_bg_color(Color(Aristotle::TEXT_PRIMARY.r, Aristotle::TEXT_PRIMARY.g, Aristotle::TEXT_PRIMARY.b, 0.02));
+
+		Ref<StyleBoxFlat> tree_hover_selected = tree_selected->duplicate();
+		tree_hover_selected->set_bg_color(Color(Aristotle::ACCENT.r, Aristotle::ACCENT.g, Aristotle::ACCENT.b, 0.28));
+
+		p_theme->set_stylebox("selected", "Tree", tree_selected);
+		p_theme->set_stylebox("selected_focus", "Tree", tree_selected);
+		p_theme->set_stylebox("hovered", "Tree", tree_hover);
+		p_theme->set_stylebox("hovered_dimmed", "Tree", tree_hover_dimmed);
+		p_theme->set_stylebox("hovered_selected", "Tree", tree_hover_selected);
+		p_theme->set_stylebox("hovered_selected_focus", "Tree", tree_hover_selected);
+
+		// Guide lines between rows.
+		p_theme->set_color("guide_color", "Tree", Color(Aristotle::TEXT_PRIMARY.r, Aristotle::TEXT_PRIMARY.g, Aristotle::TEXT_PRIMARY.b, 0.03));
+	}
+
+	// -- TabBar / TabContainer: flat tabs. ----
+	{
+		Ref<StyleBoxFlat> tab_selected = p_config.base_style->duplicate();
+		tab_selected->set_bg_color(Aristotle::BG_1);
+		tab_selected->set_border_width_all(0);
+		tab_selected->set_border_width(SIDE_TOP, Math::round(2 * EDSCALE));
+		tab_selected->set_border_color(Aristotle::ACCENT);
+		tab_selected->set_corner_radius_all(0);
+		tab_selected->set_content_margin(SIDE_LEFT, p_config.widget_margin.x + 5 * EDSCALE);
+		tab_selected->set_content_margin(SIDE_RIGHT, p_config.widget_margin.x + 5 * EDSCALE);
+		tab_selected->set_content_margin(SIDE_BOTTOM, p_config.widget_margin.y);
+		tab_selected->set_content_margin(SIDE_TOP, p_config.widget_margin.y);
+
+		Ref<StyleBoxFlat> tab_unselected = tab_selected->duplicate();
+		tab_unselected->set_bg_color(Aristotle::BG_0);
+		tab_unselected->set_border_width_all(0);
+
+		Ref<StyleBoxFlat> tab_hovered = tab_selected->duplicate();
+		tab_hovered->set_bg_color(Aristotle::BG_2);
+		tab_hovered->set_border_width_all(0);
+
+		Ref<StyleBoxFlat> tab_disabled = tab_unselected->duplicate();
+		tab_disabled->set_bg_color(Aristotle::BG_0);
+
+		p_theme->set_stylebox("tab_selected", "TabContainer", tab_selected);
+		p_theme->set_stylebox("tab_hovered", "TabContainer", tab_hovered);
+		p_theme->set_stylebox("tab_unselected", "TabContainer", tab_unselected);
+		p_theme->set_stylebox("tab_disabled", "TabContainer", tab_disabled);
+		p_theme->set_stylebox("tab_selected", "TabBar", tab_selected);
+		p_theme->set_stylebox("tab_hovered", "TabBar", tab_hovered);
+		p_theme->set_stylebox("tab_unselected", "TabBar", tab_unselected);
+		p_theme->set_stylebox("tab_disabled", "TabBar", tab_disabled);
+
+		// Tab bar background.
+		Ref<StyleBoxFlat> tabbar_bg = make_flat_stylebox(Aristotle::BG_0, 0, 0, 0, 0, 0);
+		p_theme->set_stylebox("tabbar_background", "TabContainer", tabbar_bg);
+
+		// Unselected tab text: muted.
+		p_theme->set_color("font_unselected_color", "TabContainer", Aristotle::TEXT_MUTED);
+		p_theme->set_color("font_unselected_color", "TabBar", Aristotle::TEXT_MUTED);
+		// Selected tab highlight (drop mark).
+		p_theme->set_color("drop_mark_color", "TabContainer", Aristotle::ACCENT);
+		p_theme->set_color("drop_mark_color", "TabBar", Aristotle::ACCENT);
+	}
+
+	// -- LineEdit / TextEdit: BG_2 base, accent focus border. ----
+	{
+		Ref<StyleBoxFlat> text_style = p_config.button_style->duplicate();
+		text_style->set_bg_color(Aristotle::BG_2);
+		text_style->set_border_width_all(Math::round(EDSCALE));
+		text_style->set_border_color(Aristotle::BORDER);
+		text_style->set_corner_radius(CORNER_BOTTOM_LEFT, 0);
+		text_style->set_corner_radius(CORNER_BOTTOM_RIGHT, 0);
+		text_style->set_corner_radius(CORNER_TOP_LEFT, Aristotle::RADIUS_SM);
+		text_style->set_corner_radius(CORNER_TOP_RIGHT, Aristotle::RADIUS_SM);
+
+		Ref<StyleBoxFlat> text_focus = text_style->duplicate();
+		text_focus->set_draw_center(false);
+		text_focus->set_border_width_all(Math::round(Aristotle::FOCUS_WIDTH * MAX(1, EDSCALE)));
+		text_focus->set_border_color(Aristotle::ACCENT);
+
+		Ref<StyleBoxFlat> text_disabled = text_style->duplicate();
+		text_disabled->set_bg_color(Aristotle::BG_1);
+		text_disabled->set_border_color(Aristotle::BG_3);
+
+		p_theme->set_stylebox(CoreStringName(normal), "LineEdit", text_style);
+		p_theme->set_stylebox("focus", "LineEdit", text_focus);
+		p_theme->set_stylebox("read_only", "LineEdit", text_disabled);
+
+		p_theme->set_stylebox(CoreStringName(normal), "TextEdit", text_style);
+		p_theme->set_stylebox("focus", "TextEdit", text_focus);
+		p_theme->set_stylebox("read_only", "TextEdit", text_disabled);
+
+		p_theme->set_color("caret_color", "LineEdit", Aristotle::ACCENT);
+		p_theme->set_color("caret_color", "TextEdit", Aristotle::ACCENT);
+		p_theme->set_color("selection_color", "LineEdit", Aristotle::SELECTION);
+		p_theme->set_color("selection_color", "TextEdit", Aristotle::SELECTION);
+		p_theme->set_color("font_placeholder_color", "LineEdit", Aristotle::TEXT_MUTED);
+		p_theme->set_color("font_placeholder_color", "TextEdit", Aristotle::TEXT_MUTED);
+	}
+
+	// -- PopupMenu: BG_1 with subtle border. ----
+	{
+		Ref<StyleBoxFlat> popup = p_config.popup_border_style->duplicate();
+		popup->set_bg_color(Aristotle::BG_1);
+		popup->set_border_width_all(Math::round(EDSCALE));
+		popup->set_border_color(Aristotle::BORDER);
+		popup->set_shadow_size(6 * EDSCALE);
+		popup->set_shadow_color(Color(0, 0, 0, 0.4));
+		p_theme->set_stylebox(SceneStringName(panel), "PopupMenu", popup);
+
+		Ref<StyleBoxFlat> popup_hover = make_flat_stylebox(Aristotle::BG_3, 0, 0, 0, 0, 0);
+		p_theme->set_stylebox(SceneStringName(hover), "PopupMenu", popup_hover);
+
+		// PopupPanel.
+		p_theme->set_stylebox(SceneStringName(panel), "PopupPanel", popup);
+
+		// PopupDialog.
+		Ref<StyleBoxFlat> popup_dialog = popup->duplicate();
+		popup_dialog->set_content_margin_all(p_config.popup_margin);
+		p_theme->set_stylebox(SceneStringName(panel), "PopupDialog", popup_dialog);
+	}
+
+	// -- Separators: very subtle. ----
+	{
+		Color sep_color = Color(Aristotle::TEXT_PRIMARY.r, Aristotle::TEXT_PRIMARY.g, Aristotle::TEXT_PRIMARY.b, Aristotle::SEPARATOR_ALPHA);
+		p_theme->set_stylebox("separator", "HSeparator", make_line_stylebox(sep_color, MAX(Math::round(EDSCALE), p_config.border_width)));
+		p_theme->set_stylebox("separator", "VSeparator", make_line_stylebox(sep_color, MAX(Math::round(EDSCALE), p_config.border_width), 0, 0, true));
+	}
+
+	// -- Windows and dialogs: BG_1 base. ----
+	{
+		Ref<StyleBoxFlat> window = p_config.window_style->duplicate();
+		window->set_bg_color(Aristotle::BG_1);
+		window->set_border_color(Aristotle::BG_1);
+		p_theme->set_stylebox("embedded_border", "Window", window);
+		p_theme->set_stylebox("embedded_unfocused_border", "Window", window);
+
+		Ref<StyleBoxFlat> dialog = p_config.dialog_style->duplicate();
+		dialog->set_bg_color(Aristotle::BG_1);
+		p_theme->set_stylebox(SceneStringName(panel), "AcceptDialog", dialog);
+
+		p_theme->set_color("title_color", "Window", Aristotle::TEXT_PRIMARY);
+	}
+
+	// -- Tooltip: BG_2 with border. ----
+	{
+		Ref<StyleBoxFlat> tooltip = make_flat_stylebox(Aristotle::BG_2, p_config.base_margin * EDSCALE * 0.5, p_config.base_margin * EDSCALE * 0.5, p_config.base_margin * EDSCALE * 0.5, p_config.base_margin * EDSCALE * 0.5, Aristotle::RADIUS_SM);
+		tooltip->set_border_width_all(Math::round(EDSCALE));
+		tooltip->set_border_color(Aristotle::BORDER);
+		p_theme->set_stylebox(SceneStringName(panel), "TooltipPanel", tooltip);
+		p_theme->set_color(SceneStringName(font_color), "TooltipLabel", Aristotle::TEXT_PRIMARY);
+	}
+
+	// -- Code editor (CodeEdit): BG_0 background, accent caret. ----
+	{
+		Ref<StyleBoxFlat> code_bg = make_flat_stylebox(Aristotle::BG_0, p_config.widget_margin.x, p_config.widget_margin.y, p_config.widget_margin.x, p_config.widget_margin.y, Aristotle::RADIUS_SM);
+		p_theme->set_stylebox(CoreStringName(normal), "CodeEdit", code_bg);
+		p_theme->set_stylebox("read_only", "CodeEdit", code_bg);
+
+		p_theme->set_color("caret_color", "CodeEdit", Aristotle::ACCENT);
+		p_theme->set_color("selection_color", "CodeEdit", Aristotle::SELECTION);
+	}
+
+	// -- Override some semantic Editor colors for Aristotle consistency. ----
+	{
+		p_theme->set_color("success_color", EditorStringName(Editor), Aristotle::STATUS_SUCCESS);
+		p_theme->set_color("warning_color", EditorStringName(Editor), Aristotle::STATUS_WARNING);
+		p_theme->set_color("error_color", EditorStringName(Editor), Aristotle::STATUS_ERROR);
+	}
+
+	print_line("EditorTheme: Aristotle overrides applied.");
 }
 
 bool EditorThemeManager::is_generated_theme_outdated() {
