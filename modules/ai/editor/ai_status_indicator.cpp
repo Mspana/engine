@@ -36,6 +36,7 @@
 #include "core/input/input_event.h"
 #include "core/io/json.h"
 #include "core/os/os.h"
+#include "core/os/time.h"
 #include "core/string/ustring.h"
 #include "editor/editor_node.h"
 #include "editor/editor_undo_redo_manager.h"
@@ -1092,11 +1093,20 @@ Array AIStatusPanel::_build_model_messages() {
 	// Build messages array from start_index.
 	// "thinking" role is assistant_text from ACTION MODE — send as "assistant" so the
 	// model has full context of its previous reasoning across turns.
+	// User messages get a timestamp prefix so the model can detect session boundaries
+	// and reason about staleness of prior context.
 	for (int i = start_index; i < transcript.size(); i++) {
 		Dictionary msg;
 		String role = transcript[i].role;
 		msg["role"] = (role == "thinking") ? "assistant" : role;
-		msg["content"] = transcript[i].content;
+
+		String content = transcript[i].content;
+		if (role == "user" && transcript[i].created_at > 0) {
+			Dictionary dt = Time::get_singleton()->get_datetime_dict_from_unix_time(transcript[i].created_at / 1000);
+			String ts = vformat("[%04d-%02d-%02d %02d:%02d] ", (int)dt["year"], (int)dt["month"], (int)dt["day"], (int)dt["hour"], (int)dt["minute"]);
+			content = ts + content;
+		}
+		msg["content"] = content;
 		messages.push_back(msg);
 	}
 	
