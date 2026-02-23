@@ -24,15 +24,30 @@ static Variant ai_coerce_dict(const Dictionary &d, Variant::Type t) {
 	}
 }
 
-// If value is a Dictionary and the named property expects a math type, coerce it.
+// Coerce a JSON array to a Godot math type given the expected Variant::Type.
+static Variant ai_coerce_array(const Array &a, Variant::Type t) {
+	switch (t) {
+		case Variant::VECTOR2:  return Vector2(a.size() > 0 ? (float)a[0] : 0.0f, a.size() > 1 ? (float)a[1] : 0.0f);
+		case Variant::VECTOR3:  return Vector3(a.size() > 0 ? (float)a[0] : 0.0f, a.size() > 1 ? (float)a[1] : 0.0f, a.size() > 2 ? (float)a[2] : 0.0f);
+		case Variant::COLOR:    return Color(a.size() > 0 ? (float)a[0] : 0.0f, a.size() > 1 ? (float)a[1] : 0.0f, a.size() > 2 ? (float)a[2] : 0.0f, a.size() > 3 ? (float)a[3] : 1.0f);
+		case Variant::VECTOR2I: return Vector2i(a.size() > 0 ? (int)a[0] : 0, a.size() > 1 ? (int)a[1] : 0);
+		case Variant::VECTOR3I: return Vector3i(a.size() > 0 ? (int)a[0] : 0, a.size() > 1 ? (int)a[1] : 0, a.size() > 2 ? (int)a[2] : 0);
+		default: return a;
+	}
+}
+
+// If value is a Dictionary or Array and the named property expects a math type, coerce it.
 static Variant ai_coerce_value(Object *obj, const String &prop, const Variant &val) {
-	if (val.get_type() != Variant::DICTIONARY) {
+	if (val.get_type() != Variant::DICTIONARY && val.get_type() != Variant::ARRAY) {
 		return val;
 	}
 	List<PropertyInfo> plist;
 	obj->get_property_list(&plist);
 	for (const PropertyInfo &pi : plist) {
 		if (pi.name == prop) {
+			if (val.get_type() == Variant::ARRAY) {
+				return ai_coerce_array(Array(val), pi.type);
+			}
 			return ai_coerce_dict(Dictionary(val), pi.type);
 		}
 	}

@@ -543,6 +543,14 @@ void AIStatusPanel::_rebuild_message_list() {
 					// Fallback: render as regular message if JSON parse fails
 					ui_element = _create_message_bubble(msg);
 				}
+			} else if (msg.role == "thinking") {
+				// Thinking blocks: restore as collapsible entries
+				ThinkingCollapsibleEntry *entry = memnew(ThinkingCollapsibleEntry);
+				entry->set_text(msg.content);
+				Ref<StyleBoxEmpty> margin_style;
+				margin_style.instantiate();
+				entry->add_theme_style_override("panel", margin_style);
+				ui_element = entry;
 			} else {
 				// User/Assistant messages: render as bubbles
 				ui_element = _create_message_bubble(msg);
@@ -1289,6 +1297,11 @@ void AIStatusPanel::_on_orchestrator_started() {
 void AIStatusPanel::_append_thinking_ui(const String &p_text) {
 	if (!message_list || p_text.is_empty()) {
 		return;
+	}
+
+	// Persist to store so it survives editor reload
+	if (chat_store.is_valid()) {
+		chat_store->append_message("thinking", p_text);
 	}
 
 	ThinkingCollapsibleEntry *entry = memnew(ThinkingCollapsibleEntry);

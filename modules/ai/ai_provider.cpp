@@ -321,6 +321,7 @@ Allowed actions:
   Use dot notation in property_name to reach sub-resource properties:
     "mesh.size" sets 'size' on the BoxMesh assigned to the node's 'mesh' property
     "material.albedo_color" sets albedo_color on the material resource
+  For Vector2/Vector3/Color values, use array format: [x, y] or [x, y, z] or {"x":..,"y":..} both work.
   Supports arbitrary depth (e.g. "material.albedo_texture.flags"). If a segment is null, an error is returned — assign a resource first.
 - create_resource: Instantiate a new Resource and assign it to a node property
   Args: {"node_path": string, "property_name": string, "resource_type": string, "properties": dict (optional)}
