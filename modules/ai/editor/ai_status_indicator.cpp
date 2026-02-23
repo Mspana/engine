@@ -1079,7 +1079,7 @@ Array AIStatusPanel::_build_model_messages() {
 	for (int i = transcript.size() - 1; i >= 0; i--) {
 		total_chars += transcript[i].content.length();
 		int message_count = transcript.size() - i;
-		
+
 		if (total_chars > MAX_CONTEXT_CHARS || message_count > MAX_CONTEXT_MESSAGES) {
 			start_index = i + 1;
 			context_was_truncated = true;
@@ -1089,10 +1089,13 @@ Array AIStatusPanel::_build_model_messages() {
 		}
 	}
 	
-	// Build messages array from start_index
+	// Build messages array from start_index.
+	// "thinking" role is assistant_text from ACTION MODE — send as "assistant" so the
+	// model has full context of its previous reasoning across turns.
 	for (int i = start_index; i < transcript.size(); i++) {
 		Dictionary msg;
-		msg["role"] = transcript[i].role;
+		String role = transcript[i].role;
+		msg["role"] = (role == "thinking") ? "assistant" : role;
 		msg["content"] = transcript[i].content;
 		messages.push_back(msg);
 	}
