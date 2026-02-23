@@ -54,7 +54,7 @@ class AgenticOrchestrator : public RefCounted {
 
 public:
 	// Guardrail constants
-	static constexpr int MAX_MODEL_TURNS_PER_RUN = 6;
+	static constexpr int MAX_MODEL_TURNS_PER_RUN = 12;
 	static constexpr int MAX_ACTIONS_PER_RUN = 25;
 	static constexpr int MAX_REPAIR_CYCLES = 2;
 

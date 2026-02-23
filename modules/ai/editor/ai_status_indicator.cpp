@@ -688,6 +688,9 @@ void AIStatusPanel::_append_tool_result_ui(const Dictionary &p_tool_result) {
 	Control *tool_result_ui = _create_tool_result_ui(p_tool_result);
 	if (tool_result_ui) {
 		message_list->add_child(tool_result_ui);
+		if (pending_message) {
+			message_list->move_child(tool_result_ui, pending_message->get_index());
+		}
 	}
 }
 
