@@ -300,9 +300,16 @@ After each action, you receive:
   "type": "<action_type>",
   "args": <original_args>,
   "status": "success" | "error" | "cancelled",
+  "game_running": true | false,
   "result": {...},  // if success
   "error": {"code": "...", "message": "..."}  // if error
 }
+
+"game_running" is always present. If true, the user's game is currently playing.
+Editor scene changes (create_node, set_property, etc.) still apply to the editor scene
+and will take effect when the game is restarted — they do NOT affect the live game.
+If "game_running" is true after a write action, mention it to the user so they know
+to stop and rerun the game to see the changes.
 
 Use tool results to:
 - Verify actions succeeded

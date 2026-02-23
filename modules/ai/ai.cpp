@@ -34,6 +34,7 @@
 #include "core/io/resource_saver.h"
 #include "modules/gdscript/gdscript.h"
 #include "editor/plugins/script_editor_plugin.h"
+#include "editor/gui/editor_run_bar.h"
 
 
 // Define and initialize the static singleton pointer.
@@ -446,84 +447,90 @@ Dictionary AI::execute_single_action(const Dictionary &p_action) {
     String action_name = p_action["action"];
     Dictionary action_args = p_action["args"];
 
+    // Snapshot game state before dispatch so every result carries it.
+    EditorRunBar *run_bar = EditorRunBar::get_singleton();
+    bool game_is_running = run_bar && run_bar->is_playing();
+
     // Dispatch to appropriate action handler based on action_name
+    Dictionary action_result;
     if (action_name == "create_node") {
-        return AINodeActions::exec_create_node(action_args);
+        action_result = AINodeActions::exec_create_node(action_args);
     } else if (action_name == "set_property") {
-        return AINodeActions::exec_set_property(action_args);
+        action_result = AINodeActions::exec_set_property(action_args);
     } else if (action_name == "rename_node") {
-        return AINodeActions::exec_rename_node(action_args);
+        action_result = AINodeActions::exec_rename_node(action_args);
     } else if (action_name == "reparent_node") {
-        return AINodeActions::exec_reparent_node(action_args);
+        action_result = AINodeActions::exec_reparent_node(action_args);
     } else if (action_name == "delete_node") {
-        return AINodeActions::exec_delete_node(action_args);
+        action_result = AINodeActions::exec_delete_node(action_args);
     } else if (action_name == "duplicate_node") {
-        return AINodeActions::exec_duplicate_node(action_args);
+        action_result = AINodeActions::exec_duplicate_node(action_args);
     } else if (action_name == "create_resource") {
-        return AINodeActions::exec_create_resource(action_args);
+        action_result = AINodeActions::exec_create_resource(action_args);
     } else if (action_name == "write_dev_note") {
-        return _exec_write_dev_note(action_args);
+        action_result = _exec_write_dev_note(action_args);
     } else if (action_name == "create_script") {
-        return AIScriptActions::exec_create_script(action_args);
+        action_result = AIScriptActions::exec_create_script(action_args);
     } else if (action_name == "update_script") {
-        return AIScriptActions::exec_update_script(action_args);
+        action_result = AIScriptActions::exec_update_script(action_args);
     } else if (action_name == "attach_script") {
-        return AIScriptActions::exec_attach_script(action_args);
+        action_result = AIScriptActions::exec_attach_script(action_args);
     } else if (action_name == "detach_script") {
-        return AIScriptActions::exec_detach_script(action_args);
+        action_result = AIScriptActions::exec_detach_script(action_args);
     } else if (action_name == "rename_script") {
-        return AIScriptActions::exec_rename_script(action_args);
+        action_result = AIScriptActions::exec_rename_script(action_args);
     } else if (action_name == "delete_script") {
-        return AIScriptActions::exec_delete_script(action_args);
+        action_result = AIScriptActions::exec_delete_script(action_args);
     } else if (action_name == "create_scene") {
-        return AISceneActions::exec_create_scene(action_args);
+        action_result = AISceneActions::exec_create_scene(action_args);
     } else if (action_name == "open_scene") {
-        return AISceneActions::exec_open_scene(action_args);
+        action_result = AISceneActions::exec_open_scene(action_args);
     } else if (action_name == "save_scene") {
-        return AISceneActions::exec_save_scene(action_args);
+        action_result = AISceneActions::exec_save_scene(action_args);
     } else if (action_name == "set_main_scene") {
-        return AISceneActions::exec_set_main_scene(action_args);
+        action_result = AISceneActions::exec_set_main_scene(action_args);
     } else if (action_name == "close_scene") {
-        return AISceneActions::exec_close_scene(action_args);
+        action_result = AISceneActions::exec_close_scene(action_args);
     } else if (action_name == "set_project_setting") {
-        return AIProjectActions::exec_set_project_setting(action_args);
+        action_result = AIProjectActions::exec_set_project_setting(action_args);
     } else if (action_name == "get_project_settings") {
-        return AIProjectActions::exec_get_project_settings(action_args);
+        action_result = AIProjectActions::exec_get_project_settings(action_args);
     } else if (action_name == "create_autoload_singleton") {
-        return AIProjectActions::exec_create_autoload_singleton(action_args);
+        action_result = AIProjectActions::exec_create_autoload_singleton(action_args);
     } else if (action_name == "remove_autoload_singleton") {
-        return AIProjectActions::exec_remove_autoload_singleton(action_args);
+        action_result = AIProjectActions::exec_remove_autoload_singleton(action_args);
     } else if (action_name == "import_asset") {
-        return AIProjectActions::exec_import_asset(action_args);
+        action_result = AIProjectActions::exec_import_asset(action_args);
     } else if (action_name == "delete_asset") {
-        return AIProjectActions::exec_delete_asset(action_args);
+        action_result = AIProjectActions::exec_delete_asset(action_args);
     } else if (action_name == "run_project" || action_name == "play_test") {
-        return AIProjectActions::exec_run_project(action_args);
+        action_result = AIProjectActions::exec_run_project(action_args);
     } else if (action_name == "list_nodes") {
-        return AIReadActions::exec_list_nodes(action_args);
+        action_result = AIReadActions::exec_list_nodes(action_args);
     } else if (action_name == "get_node_info") {
-        return AIReadActions::exec_get_node_info(action_args);
+        action_result = AIReadActions::exec_get_node_info(action_args);
     } else if (action_name == "find_nodes_by_type") {
-        return AIReadActions::exec_find_nodes_by_type(action_args);
+        action_result = AIReadActions::exec_find_nodes_by_type(action_args);
     } else if (action_name == "list_files") {
-        return AIReadActions::exec_list_files(action_args);
+        action_result = AIReadActions::exec_list_files(action_args);
     } else if (action_name == "read_script") {
-        return AIReadActions::exec_read_script(action_args);
+        action_result = AIReadActions::exec_read_script(action_args);
     } else if (action_name == "connect_signal") {
-        return AISignalActions::exec_connect_signal(action_args);
+        action_result = AISignalActions::exec_connect_signal(action_args);
     } else if (action_name == "disconnect_signal") {
-        return AISignalActions::exec_disconnect_signal(action_args);
+        action_result = AISignalActions::exec_disconnect_signal(action_args);
     } else {
-        // Unknown action
-        Dictionary error_result;
-        error_result["status"] = "error";
         Dictionary error_dict;
         error_dict["code"] = "unknown_action";
         error_dict["message"] = vformat("Unknown action: %s", action_name);
         error_dict["details"] = Dictionary();
-        error_result["error"] = error_dict;
-        return error_result;
+        action_result["status"] = "error";
+        action_result["error"] = error_dict;
     }
+
+    // Inject game state into every result so the model always has situational awareness.
+    action_result["game_running"] = game_is_running;
+    return action_result;
 }
 
 void AI::_on_provider_request_completed(bool success, const String &response_json, const String &error_message) {
