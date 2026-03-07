@@ -595,16 +595,17 @@ Control *AIStatusPanel::_create_message_bubble(const ChatMessage &p_message) {
 	bool is_user = p_message.role == "user";
 
 	if (is_user) {
-		// User messages: blue accent, right aligned (no border)
-		style->set_bg_color(AIColors::ACCENT_BLUE_MUTED);
-		style->set_border_width_all(0); // Explicitly no border
-		// Add flexible spacer on left to push bubble right
+		// User messages: transparent with accent outline, right aligned
+		style->set_bg_color(Color(0, 0, 0, 0));
+		style->set_border_width_all(1);
+		style->set_border_color(AIColors::BORDER_LIGHT);
+		// Spacer on left pushes bubble right (preserves visual distinction from assistant)
 		Control *spacer = memnew(Control);
 		spacer->set_h_size_flags(SIZE_EXPAND_FILL);
-		spacer->set_stretch_ratio(0.2); // Take up to 20% of space
+		spacer->set_stretch_ratio(0.15);
 		align_container->add_child(spacer);
 		bubble->set_h_size_flags(SIZE_EXPAND_FILL);
-		bubble->set_stretch_ratio(0.8); // Bubble takes up to 80%
+		bubble->set_stretch_ratio(0.85);
 		align_container->add_child(bubble);
 	} else {
 		// Assistant messages: distinct dark with subtle border, left aligned
@@ -634,10 +635,18 @@ Control *AIStatusPanel::_create_message_bubble(const ChatMessage &p_message) {
 		header_row->set_h_size_flags(SIZE_EXPAND_FILL);
 		inner_vbox->add_child(header_row);
 
-		// Flexible spacer to push buttons to right
-		Control *header_spacer = memnew(Control);
-		header_spacer->set_h_size_flags(SIZE_EXPAND_FILL);
-		header_row->add_child(header_spacer);
+		// Rewind button (↶ unicode character) — left side
+		Button *rewind_btn = memnew(Button);
+		rewind_btn->set_flat(true);
+		rewind_btn->set_text(String::utf8("↶"));
+		rewind_btn->set_tooltip_text(TTR("Rewind to this message"));
+		rewind_btn->set_custom_minimum_size(Size2(18, 18) * EDSCALE);
+		rewind_btn->add_theme_color_override("font_color", AIColors::TEXT_MUTED);
+		rewind_btn->add_theme_color_override("font_hover_color", AIColors::ACCENT_BLUE);
+		rewind_btn->add_theme_color_override("font_pressed_color", AIColors::ACCENT_BLUE_PRESSED);
+		rewind_btn->set_meta("message_id", p_message.id);
+		rewind_btn->connect(SceneStringNames::get_singleton()->pressed, callable_mp(this, &AIStatusPanel::_on_rewind_clicked).bind(p_message.id));
+		header_row->add_child(rewind_btn);
 
 		// Edit button (✎ pencil unicode character)
 		Button *edit_btn = memnew(Button);
@@ -652,18 +661,10 @@ Control *AIStatusPanel::_create_message_bubble(const ChatMessage &p_message) {
 		edit_btn->connect(SceneStringNames::get_singleton()->pressed, callable_mp(this, &AIStatusPanel::_on_edit_clicked).bind(p_message.id));
 		header_row->add_child(edit_btn);
 
-		// Rewind button (↶ unicode character)
-		Button *rewind_btn = memnew(Button);
-		rewind_btn->set_flat(true);
-		rewind_btn->set_text(String::utf8("↶"));
-		rewind_btn->set_tooltip_text(TTR("Rewind to this message"));
-		rewind_btn->set_custom_minimum_size(Size2(18, 18) * EDSCALE);
-		rewind_btn->add_theme_color_override("font_color", AIColors::TEXT_MUTED);
-		rewind_btn->add_theme_color_override("font_hover_color", AIColors::ACCENT_BLUE);
-		rewind_btn->add_theme_color_override("font_pressed_color", AIColors::ACCENT_BLUE_PRESSED);
-		rewind_btn->set_meta("message_id", p_message.id);
-		rewind_btn->connect(SceneStringNames::get_singleton()->pressed, callable_mp(this, &AIStatusPanel::_on_rewind_clicked).bind(p_message.id));
-		header_row->add_child(rewind_btn);
+		// Flexible spacer to fill remaining space on the right
+		Control *header_spacer = memnew(Control);
+		header_spacer->set_h_size_flags(SIZE_EXPAND_FILL);
+		header_row->add_child(header_spacer);
 	}
 
 	// Create label for content
@@ -673,6 +674,13 @@ Control *AIStatusPanel::_create_message_bubble(const ChatMessage &p_message) {
 	label->set_scroll_active(false);
 	label->set_selection_enabled(true);
 	label->add_theme_color_override("default_color", AIColors::TEXT_PRIMARY);
+	label->add_theme_color_override("background_color", Color(0, 0, 0, 0));
+	label->add_theme_color_override("selection_color", Color(0, 0, 0, 0));
+	// Remove the editor theme's StyleBox so it doesn't draw its own border/bg on top of the panel
+	Ref<StyleBoxEmpty> label_empty_style;
+	label_empty_style.instantiate();
+	label->add_theme_style_override("normal", label_empty_style);
+	label->add_theme_style_override("focus", label_empty_style);
 
 	// Display content
 	label->add_text(p_message.content);
