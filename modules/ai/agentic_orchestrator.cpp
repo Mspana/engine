@@ -69,6 +69,7 @@ void AgenticOrchestrator::_bind_methods() {
 	ADD_SIGNAL(MethodInfo("tool_result_ready", PropertyInfo(Variant::DICTIONARY, "tool_result")));
 	ADD_SIGNAL(MethodInfo("run_complete", PropertyInfo(Variant::BOOL, "success"), PropertyInfo(Variant::STRING, "final_message")));
 	ADD_SIGNAL(MethodInfo("checkpoint_recommended", PropertyInfo(Variant::INT, "user_message_id")));
+	ADD_SIGNAL(MethodInfo("narration_ready", PropertyInfo(Variant::STRING, "text")));
 }
 
 void AgenticOrchestrator::run_agentic_loop(const Array &p_initial_messages, Ref<AIProvider> p_provider) {
@@ -249,6 +250,12 @@ void AgenticOrchestrator::_process_model_response_deferred() {
 }
 
 void AgenticOrchestrator::_process_model_response(const Dictionary &p_response) {
+	// Early exit for narration mode — handled before standard validation
+	if (p_response.has("mode") && String(p_response["mode"]) == "narration") {
+		_handle_narration_response(p_response);
+		return;
+	}
+
 	// Validate response structure
 	String validation_error;
 	if (!_validate_response(p_response, validation_error)) {
@@ -581,6 +588,32 @@ void AgenticOrchestrator::_handle_max_repairs_exceeded(const String &p_validatio
 	_emit_run_complete(false, message);
 	_is_running = false;
 	_waiting_for_response = false;
+}
+
+void AgenticOrchestrator::_handle_narration_response(const Dictionary &p_response) {
+	String text;
+	if (p_response.has("assistant_text") && p_response["assistant_text"].get_type() == Variant::STRING) {
+		text = String(p_response["assistant_text"]).strip_edges();
+	}
+
+	if (text.is_empty()) {
+		// Malformed narration — skip silently and continue the loop
+		print_line("AgenticOrchestrator: Narration response had empty assistant_text, skipping.");
+		_send_model_request();
+		return;
+	}
+
+	// Append to conversation history as "assistant" so model has context on next turn
+	Dictionary narration_msg;
+	narration_msg["role"] = "assistant";
+	narration_msg["content"] = text;
+	current_run.conversation_history.push_back(narration_msg);
+
+	// Emit for UI to persist and render
+	emit_signal("narration_ready", text);
+
+	// Continue the loop
+	_send_model_request();
 }
 
 void AgenticOrchestrator::_emit_progress_update(const String &p_status, int p_turn) {

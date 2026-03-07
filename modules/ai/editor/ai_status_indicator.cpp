@@ -478,6 +478,9 @@ void AIStatusPanel::_notification(int p_what) {
 						if (!orchestrator->is_connected("checkpoint_recommended", callable_mp(this, &AIStatusPanel::_on_checkpoint_recommended))) {
 							orchestrator->connect("checkpoint_recommended", callable_mp(this, &AIStatusPanel::_on_checkpoint_recommended));
 						}
+						if (!orchestrator->is_connected("narration_ready", callable_mp(this, &AIStatusPanel::_on_orchestrator_narration))) {
+							orchestrator->connect("narration_ready", callable_mp(this, &AIStatusPanel::_on_orchestrator_narration));
+						}
 					}
 				}
 			}
@@ -552,6 +555,9 @@ void AIStatusPanel::_rebuild_message_list() {
 				margin_style.instantiate();
 				entry->add_theme_style_override("panel", margin_style);
 				ui_element = entry;
+			} else if (msg.role == "narration") {
+				// Narration blocks: planning bubble with left accent stripe
+				ui_element = _create_narration_bubble(msg.content);
 			} else {
 				// User/Assistant messages: render as bubbles
 				ui_element = _create_message_bubble(msg);
@@ -1106,7 +1112,7 @@ Array AIStatusPanel::_build_model_messages() {
 	for (int i = start_index; i < transcript.size(); i++) {
 		Dictionary msg;
 		String role = transcript[i].role;
-		msg["role"] = (role == "thinking") ? "assistant" : role;
+		msg["role"] = (role == "thinking" || role == "narration") ? "assistant" : role;
 
 		String content = transcript[i].content;
 		if (role == "user" && transcript[i].created_at > 0) {
@@ -1341,6 +1347,76 @@ void AIStatusPanel::_append_thinking_ui(const String &p_text) {
 	} else {
 		message_list->add_child(entry);
 	}
+}
+
+void AIStatusPanel::_on_orchestrator_narration(const String &p_text) {
+	if (!chat_store.is_valid() || !message_list || p_text.is_empty()) {
+		return;
+	}
+
+	chat_store->append_message("narration", p_text);
+
+	Control *bubble = _create_narration_bubble(p_text);
+	if (bubble) {
+		// Insert before pending message if present, otherwise append
+		if (pending_message) {
+			int idx = pending_message->get_index();
+			message_list->add_child(bubble);
+			message_list->move_child(bubble, idx);
+		} else {
+			message_list->add_child(bubble);
+		}
+		should_auto_scroll = true;
+	}
+}
+
+Control *AIStatusPanel::_create_narration_bubble(const String &p_text) {
+	PanelContainer *bubble = memnew(PanelContainer);
+	bubble->set_h_size_flags(SIZE_EXPAND_FILL);
+	bubble->set_stretch_ratio(0.95);
+
+	Ref<StyleBoxFlat> style;
+	style.instantiate();
+	style->set_corner_radius_all(AIColors::CORNER_RADIUS_LG * EDSCALE);
+	style->set_content_margin_all(AIColors::PADDING_MD * EDSCALE);
+	style->set_bg_color(AIColors::ASSISTANT_BG);
+	style->set_border_width(SIDE_LEFT, 3 * EDSCALE);
+	style->set_border_color(AIColors::ACCENT_BLUE_MUTED);
+	bubble->add_theme_style_override("panel", style);
+
+	VBoxContainer *vbox = memnew(VBoxContainer);
+	vbox->add_theme_constant_override("separation", AIColors::PADDING_XS * EDSCALE);
+	bubble->add_child(vbox);
+
+	Label *header = memnew(Label);
+	header->set_text(TTR("Planning..."));
+	header->add_theme_color_override("font_color", AIColors::TEXT_MUTED);
+	header->add_theme_font_size_override("font_size", 11 * EDSCALE);
+	vbox->add_child(header);
+
+	RichTextLabel *label = memnew(RichTextLabel);
+	label->set_use_bbcode(true);
+	label->set_fit_content(true);
+	label->set_scroll_active(false);
+	label->set_selection_enabled(false);
+	label->add_theme_color_override("default_color", AIColors::TEXT_SECONDARY);
+	label->add_theme_color_override("background_color", Color(0, 0, 0, 0));
+	Ref<StyleBoxEmpty> empty_style;
+	empty_style.instantiate();
+	label->add_theme_style_override("normal", empty_style);
+	label->add_theme_style_override("focus", empty_style);
+	label->add_text(p_text);
+	vbox->add_child(label);
+
+	// Wrap in HBoxContainer for consistent margins (same as assistant bubbles)
+	HBoxContainer *align = memnew(HBoxContainer);
+	align->set_h_size_flags(SIZE_EXPAND_FILL);
+	align->add_child(bubble);
+	Control *spacer = memnew(Control);
+	spacer->set_h_size_flags(SIZE_EXPAND_FILL);
+	spacer->set_stretch_ratio(0.05);
+	align->add_child(spacer);
+	return align;
 }
 
 void AIStatusPanel::_on_orchestrator_progress(const String &p_status, int p_turn) {

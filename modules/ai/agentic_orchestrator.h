@@ -54,7 +54,7 @@ class AgenticOrchestrator : public RefCounted {
 
 public:
 	// Guardrail constants
-	static constexpr int MAX_MODEL_TURNS_PER_RUN = 12;
+	static constexpr int MAX_MODEL_TURNS_PER_RUN = 14; // +2 to account for narration turn
 	static constexpr int MAX_ACTIONS_PER_RUN = 25;
 	static constexpr int MAX_REPAIR_CYCLES = 2;
 
@@ -131,6 +131,9 @@ private:
 	void _emit_progress_update(const String &p_status, int p_turn);
 	void _emit_tool_result(const Dictionary &p_tool_result);
 	void _emit_run_complete(bool p_success, const String &p_final_message);
+
+	// Narration handling
+	void _handle_narration_response(const Dictionary &p_response);
 
 	// Helper to format tool result for display
 	String _format_tool_result_for_display(const Dictionary &p_tool_result);

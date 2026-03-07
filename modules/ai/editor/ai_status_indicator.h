@@ -219,6 +219,7 @@ private:
 	Control *_create_tool_result_ui(const Dictionary &p_tool_result);
 	void _append_tool_result_ui(const Dictionary &p_tool_result);
 	void _append_thinking_ui(const String &p_text);
+	Control *_create_narration_bubble(const String &p_text);
 	void _scroll_to_bottom();
 	void _on_scrollbar_range_changed();
 	void _on_vscroll_changed(float p_value);
@@ -252,6 +253,7 @@ private:
 	void _on_orchestrator_progress(const String &p_status, int p_turn);
 	void _on_orchestrator_tool_result(const Dictionary &p_tool_result);
 	void _on_orchestrator_complete(bool p_success, const String &p_final_message);
+	void _on_orchestrator_narration(const String &p_text);
 
 	// Pending message helpers
 	void _show_pending_message();
