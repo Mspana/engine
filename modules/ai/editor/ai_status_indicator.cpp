@@ -584,6 +584,140 @@ void AIStatusPanel::_append_message_ui(const ChatMessage &p_message) {
 	}
 }
 
+// ============================================================================
+// Markdown → BBCode conversion for chat message rendering
+// ============================================================================
+
+// Processes inline Markdown within a single line: **bold**, *italic*, `code`.
+// Escapes literal [ characters so they don't trigger BBCode parsing.
+static String _process_inline_md(const String &p_text) {
+	String out;
+	int i = 0;
+	int n = p_text.length();
+
+	while (i < n) {
+		char32_t c = p_text[i];
+
+		// Inline code `...` — escape brackets inside, no further processing
+		if (c == '`') {
+			int end = p_text.find("`", i + 1);
+			if (end > i) {
+				String inner = p_text.substr(i + 1, end - i - 1).replace("[", "[lb]");
+				out += "[code]" + inner + "[/code]";
+				i = end + 1;
+				continue;
+			}
+		}
+
+		// Bold **text** — check before italic so ** isn't consumed as two *
+		if (c == '*' && i + 1 < n && p_text[i + 1] == '*') {
+			int end = p_text.find("**", i + 2);
+			if (end > i + 1) {
+				out += "[b]" + _process_inline_md(p_text.substr(i + 2, end - i - 2)) + "[/b]";
+				i = end + 2;
+				continue;
+			}
+		}
+
+		// Italic *text* — single *, not part of **
+		if (c == '*' && (i + 1 >= n || p_text[i + 1] != '*')) {
+			// Find closing * that isn't part of **
+			int end = -1;
+			for (int j = i + 1; j < n; j++) {
+				if (p_text[j] == '*' && (j + 1 >= n || p_text[j + 1] != '*')) {
+					end = j;
+					break;
+				}
+			}
+			if (end > i) {
+				out += "[i]" + _process_inline_md(p_text.substr(i + 1, end - i - 1)) + "[/i]";
+				i = end + 1;
+				continue;
+			}
+		}
+
+		// Escape [ so it doesn't trigger BBCode tags
+		if (c == '[') {
+			out += "[lb]";
+			i++;
+			continue;
+		}
+
+		out += String::chr(c);
+		i++;
+	}
+	return out;
+}
+
+// Converts a Markdown string to Godot BBCode for RichTextLabel rendering.
+// Handles: fenced code blocks, headers (#/##/###), bullet lists (- * +),
+// ordered lists, horizontal rules, bold, italic, and inline code.
+static String _markdown_to_bbcode(const String &p_markdown) {
+	String out;
+	PackedStringArray lines = p_markdown.split("\n");
+	bool in_code_block = false;
+
+	for (int li = 0; li < lines.size(); li++) {
+		String line = lines[li];
+		bool last_line = (li == lines.size() - 1);
+
+		// Fenced code block open/close
+		if (line.begins_with("```")) {
+			if (!in_code_block) {
+				in_code_block = true;
+				out += "[code]";
+			} else {
+				in_code_block = false;
+				out += "[/code]";
+			}
+			if (!last_line) {
+				out += "\n";
+			}
+			continue;
+		}
+
+		// Inside code block — only escape brackets, no Markdown processing
+		if (in_code_block) {
+			out += line.replace("[", "[lb]");
+			if (!last_line) {
+				out += "\n";
+			}
+			continue;
+		}
+
+		// Headers
+		if (line.begins_with("### ")) {
+			out += "[b]" + _process_inline_md(line.substr(4)) + "[/b]";
+		} else if (line.begins_with("## ")) {
+			out += "[b]" + _process_inline_md(line.substr(3)) + "[/b]";
+		} else if (line.begins_with("# ")) {
+			out += "[b]" + _process_inline_md(line.substr(2)) + "[/b]";
+		}
+		// Unordered list: - / * / +
+		else if (line.begins_with("- ") || line.begins_with("* ") || line.begins_with("+ ")) {
+			out += String::utf8("  • ") + _process_inline_md(line.substr(2));
+		}
+		// Ordered list: 1. / 2. / etc.
+		else if (line.length() >= 3 && line[0] >= '1' && line[0] <= '9' && line[1] == '.' && line[2] == ' ') {
+			out += String::chr(line[0]) + ". " + _process_inline_md(line.substr(3));
+		}
+		// Horizontal rule
+		else if (line == "---" || line == "***" || line == "___") {
+			out += "[color=#444444]" + String::utf8("────────────────────────────────") + "[/color]";
+		}
+		// Regular line
+		else {
+			out += _process_inline_md(line);
+		}
+
+		if (!last_line) {
+			out += "\n";
+		}
+	}
+
+	return out;
+}
+
 Control *AIStatusPanel::_create_message_bubble(const ChatMessage &p_message) {
 	// Create container for alignment
 	HBoxContainer *align_container = memnew(HBoxContainer);
@@ -689,7 +823,7 @@ Control *AIStatusPanel::_create_message_bubble(const ChatMessage &p_message) {
 	label->add_theme_style_override("focus", label_empty_style);
 
 	// Display content
-	label->add_text(p_message.content);
+	label->append_text(_markdown_to_bbcode(p_message.content));
 
 	inner_vbox->add_child(label);
 
@@ -1405,7 +1539,7 @@ Control *AIStatusPanel::_create_narration_bubble(const String &p_text) {
 	empty_style.instantiate();
 	label->add_theme_style_override("normal", empty_style);
 	label->add_theme_style_override("focus", empty_style);
-	label->add_text(p_text);
+	label->append_text(_markdown_to_bbcode(p_text));
 	vbox->add_child(label);
 
 	// Wrap in HBoxContainer for consistent margins (same as assistant bubbles)
