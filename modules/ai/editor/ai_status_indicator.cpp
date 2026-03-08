@@ -548,6 +548,7 @@ void AIStatusPanel::_notification(int p_what) {
 			if (chat_store.is_valid()) {
 				chat_store->load_transcript();
 				_rebuild_message_list();
+				_refresh_context_usage();
 			}
 			// Initial connectivity check
 			check_api_connectivity();
