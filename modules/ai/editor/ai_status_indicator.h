@@ -234,6 +234,7 @@ private:
 	// Context usage indicator
 	void _update_context_usage(int p_used_chars, int p_max_chars);
 	void _reset_context_usage();
+	void _refresh_context_usage(); // Recompute from chat store (use after run complete / rewind)
 
 	// UI building methods
 	void _rebuild_message_list();

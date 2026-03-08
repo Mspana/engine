@@ -1750,6 +1750,9 @@ void AIStatusPanel::_on_orchestrator_complete(bool p_success, const String &p_fi
 		status_label->set_text(p_success ? TTR("Ready") : TTR("Cancelled"));
 	}
 
+	// Update context usage to reflect the new assistant message added to the store
+	_refresh_context_usage();
+
 	// Check for queued messages and process the next one
 	if (!message_queue.is_empty()) {
 		print_line(vformat("AIStatusPanel: Run complete, %d messages in queue. Starting next...", message_queue.size()));
@@ -1969,6 +1972,7 @@ void AIStatusPanel::_perform_rewind(const String &p_checkpoint_id, bool p_revert
 
 	// Rebuild UI
 	_rebuild_message_list();
+	_refresh_context_usage();
 
 	// Update status
 	if (status_label) {
@@ -2295,6 +2299,34 @@ void AIStatusPanel::_reset_context_usage() {
 	if (context_usage_label) {
 		context_usage_label->set_visible(false);
 	}
+}
+
+void AIStatusPanel::_refresh_context_usage() {
+	if (!chat_store.is_valid()) {
+		_reset_context_usage();
+		return;
+	}
+	int max_context_chars = DEFAULT_MAX_CONTEXT_CHARS;
+	if (Engine::get_singleton()->has_singleton("AI")) {
+		Object *ai_obj = Engine::get_singleton()->get_singleton_object("AI");
+		AI *ai_inst = Object::cast_to<AI>(ai_obj);
+		if (ai_inst && ai_inst->get_provider().is_valid()) {
+			int window_tokens = ai_inst->get_provider()->get_context_window_tokens();
+			if (window_tokens > 0) {
+				max_context_chars = (window_tokens - 10000) * 4;
+			}
+		}
+	}
+	int total_chars = 0;
+	const Vector<ChatMessage> &transcript = chat_store->get_messages();
+	for (int i = 0; i < transcript.size(); i++) {
+		total_chars += transcript[i].content.length();
+	}
+	if (total_chars == 0) {
+		_reset_context_usage();
+		return;
+	}
+	_update_context_usage(MIN(total_chars, max_context_chars), max_context_chars);
 }
 
 AIStatusPanel::AIStatusPanel() {
