@@ -70,6 +70,8 @@ void AgenticOrchestrator::_bind_methods() {
 	ADD_SIGNAL(MethodInfo("run_complete", PropertyInfo(Variant::BOOL, "success"), PropertyInfo(Variant::STRING, "final_message")));
 	ADD_SIGNAL(MethodInfo("checkpoint_recommended", PropertyInfo(Variant::INT, "user_message_id")));
 	ADD_SIGNAL(MethodInfo("narration_ready", PropertyInfo(Variant::STRING, "text")));
+	ADD_SIGNAL(MethodInfo("todos_updated", PropertyInfo(Variant::ARRAY, "todos")));
+	ClassDB::bind_method(D_METHOD("set_todos", "todos"), &AgenticOrchestrator::set_todos);
 }
 
 void AgenticOrchestrator::run_agentic_loop(const Array &p_initial_messages, Ref<AIProvider> p_provider) {
@@ -93,6 +95,8 @@ void AgenticOrchestrator::run_agentic_loop(const Array &p_initial_messages, Ref<
 	current_run.cancelled = false;
 	current_run.user_message = "";
 	current_run.user_message_id = 0;
+	current_run.todos.clear();
+	current_run.has_todos = false;
 
 	// Disconnect from old provider if any
 	if (provider.is_valid() && provider != p_provider) {
@@ -148,8 +152,25 @@ void AgenticOrchestrator::_send_model_request() {
 	// Emit progress update to indicate we're thinking
 	_emit_progress_update(vformat("Thinking... (turn %d)", current_run.model_turns), current_run.model_turns);
 
+	// Build message list, injecting current TODO state if present
+	Array messages_to_send = current_run.conversation_history;
+	if (current_run.has_todos) {
+		messages_to_send = current_run.conversation_history.duplicate();
+		String block = "[CURRENT_TODOS]\n";
+		for (int i = 0; i < current_run.todos.size(); i++) {
+			const TodoItem &t = current_run.todos[i];
+			String icon = (t.status == "completed") ? "[x]" : (t.status == "in_progress") ? "[-]" : "[ ]";
+			block += icon + " " + t.id + ": " + t.content + "\n";
+		}
+		block += "[/CURRENT_TODOS]\nUpdate this list using update_todos as you complete steps.";
+		Dictionary todos_msg;
+		todos_msg["role"] = "user";
+		todos_msg["content"] = block;
+		messages_to_send.push_back(todos_msg);
+	}
+
 	// Call provider asynchronously - response will come via _on_provider_response
-	provider->send_request_with_messages(current_run.conversation_history, "");
+	provider->send_request_with_messages(messages_to_send, "");
 }
 
 void AgenticOrchestrator::_on_provider_response(bool p_success, const String &p_response, const String &p_error) {
@@ -588,6 +609,26 @@ void AgenticOrchestrator::_handle_max_repairs_exceeded(const String &p_validatio
 	_emit_run_complete(false, message);
 	_is_running = false;
 	_waiting_for_response = false;
+}
+
+void AgenticOrchestrator::set_todos(const Array &p_todos) {
+	current_run.todos.clear();
+	current_run.has_todos = false;
+
+	for (int i = 0; i < p_todos.size(); i++) {
+		if (p_todos[i].get_type() != Variant::DICTIONARY) {
+			continue;
+		}
+		Dictionary item = p_todos[i];
+		TodoItem todo;
+		todo.id = item.get("id", "");
+		todo.content = item.get("content", "");
+		todo.status = item.get("status", "pending");
+		current_run.todos.push_back(todo);
+		current_run.has_todos = true;
+	}
+
+	emit_signal("todos_updated", p_todos);
 }
 
 void AgenticOrchestrator::_handle_narration_response(const Dictionary &p_response) {

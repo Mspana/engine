@@ -52,6 +52,7 @@ private:
 	String _current_run_id;     // Timestamp-based ID, set at run_started
 
 	Dictionary _exec_write_dev_note(const Dictionary &args);
+	Dictionary _exec_update_todos(const Dictionary &args);
 	String _get_journal_path(const String &p_filename) const;
 
 	// Helper to process and execute actions from JSON response

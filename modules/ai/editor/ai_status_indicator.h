@@ -103,6 +103,21 @@ public:
 	ToolCollapsibleEntry();
 };
 
+// Compact panel showing the AI's self-managed task list during a run
+class AITodoPanelWidget : public PanelContainer {
+	GDCLASS(AITodoPanelWidget, PanelContainer);
+
+	VBoxContainer *items_container = nullptr;
+	Label *progress_label = nullptr;
+
+protected:
+	static void _bind_methods() {}
+
+public:
+	AITodoPanelWidget();
+	void update_todos(const Array &p_todos);
+};
+
 class AIStatusIndicator : public ColorRect {
 	GDCLASS(AIStatusIndicator, ColorRect);
 
@@ -163,6 +178,9 @@ private:
 	// Message queue (in-memory, not persisted)
 	Vector<QueuedMessage> message_queue;
 	RunState run_state = STATE_IDLE;
+
+	// Todo panel (AI's self-managed task list)
+	AITodoPanelWidget *todo_panel = nullptr;
 
 	// Queue display UI (simple list above input)
 	VBoxContainer *queue_container = nullptr;
@@ -254,6 +272,7 @@ private:
 	void _on_orchestrator_tool_result(const Dictionary &p_tool_result);
 	void _on_orchestrator_complete(bool p_success, const String &p_final_message);
 	void _on_orchestrator_narration(const String &p_text);
+	void _on_todos_updated(const Array &p_todos);
 
 	// Pending message helpers
 	void _show_pending_message();

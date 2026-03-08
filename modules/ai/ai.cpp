@@ -47,6 +47,7 @@ static const Vector<String> ALLOWED_ACTIONS = {
     "rename_node","reparent_node","create_scene","open_scene","save_scene","close_scene","set_main_scene",
     "get_node_info","find_nodes_by_type","list_nodes","list_files","read_script","set_project_setting","get_project_settings","create_autoload_singleton","remove_autoload_singleton","import_asset","delete_asset",
     "write_dev_note",
+    "update_todos",
 };
 
 // New helper function to validate a command already parsed into a Dictionary
@@ -132,6 +133,11 @@ bool AI::_validate_command_dictionary(const Dictionary &cmd, String &error_msg) 
     } else if (action == "write_dev_note") {
         if (!args.has("summary") || args["summary"].get_type() != Variant::STRING) {
             error_msg = "'write_dev_note' requires string 'summary'.";
+            return false;
+        }
+    } else if (action == "update_todos") {
+        if (!args.has("todos") || args["todos"].get_type() != Variant::ARRAY) {
+            error_msg = "'update_todos' requires array 'todos'.";
             return false;
         }
     } else if (action == "create_script") {
@@ -469,6 +475,8 @@ Dictionary AI::execute_single_action(const Dictionary &p_action) {
         action_result = AINodeActions::exec_create_resource(action_args);
     } else if (action_name == "write_dev_note") {
         action_result = _exec_write_dev_note(action_args);
+    } else if (action_name == "update_todos") {
+        action_result = _exec_update_todos(action_args);
     } else if (action_name == "create_script") {
         action_result = AIScriptActions::exec_create_script(action_args);
     } else if (action_name == "update_script") {
@@ -1096,6 +1104,28 @@ Dictionary AI::_exec_write_dev_note(const Dictionary &args) {
     success_result["status"] = "success";
     success_result["result"] = result_data;
     return success_result;
+}
+
+Dictionary AI::_exec_update_todos(const Dictionary &args) {
+    if (!args.has("todos") || args["todos"].get_type() != Variant::ARRAY) {
+        Dictionary err;
+        err["code"] = "invalid_args";
+        err["message"] = "update_todos requires 'todos' array";
+        err["details"] = Dictionary();
+        Dictionary result;
+        result["status"] = "error";
+        result["error"] = err;
+        return result;
+    }
+
+    if (orchestrator.is_valid()) {
+        orchestrator->set_todos(args["todos"]);
+    }
+
+    Dictionary result;
+    result["status"] = "success";
+    result["result"] = Dictionary();
+    return result;
 }
 
 Ref<AgenticOrchestrator> AI::get_orchestrator() const {

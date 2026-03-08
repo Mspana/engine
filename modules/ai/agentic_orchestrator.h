@@ -58,6 +58,13 @@ public:
 	static constexpr int MAX_ACTIONS_PER_RUN = 25;
 	static constexpr int MAX_REPAIR_CYCLES = 2;
 
+	// Per-item in the AI's self-managed task list
+	struct TodoItem {
+		String id;
+		String content;
+		String status; // "pending" | "in_progress" | "completed"
+	};
+
 	// Run state
 	struct RunContext {
 		Array conversation_history; // Full chat transcript
@@ -68,6 +75,8 @@ public:
 		bool cancelled = false;
 		String user_message; // Original user message for context
 		int64_t user_message_id = 0; // Message ID for checkpoint anchoring
+		Vector<TodoItem> todos; // AI's self-managed task list (run-scoped)
+		bool has_todos = false;
 	};
 
 	AgenticOrchestrator();
@@ -83,6 +92,9 @@ public:
 
 	// Set the user message ID for checkpoint anchoring (call after run_agentic_loop)
 	void set_user_message_id(int64_t p_user_message_id);
+
+	// Update the AI's self-managed task list (called from _exec_update_todos)
+	void set_todos(const Array &p_todos);
 
 	// Get current run stats
 	int get_model_turns() const;

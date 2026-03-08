@@ -422,6 +422,116 @@ AIStatusIndicator::Status AIStatusIndicator::get_status() const {
 	return current_status;
 }
 
+// ============================================================
+// AITodoPanelWidget
+// ============================================================
+
+AITodoPanelWidget::AITodoPanelWidget() {
+	// Outer panel styling
+	Ref<StyleBoxFlat> panel_style;
+	panel_style.instantiate();
+	panel_style->set_bg_color(AIColors::BG_1);
+	panel_style->set_border_color(AIColors::BORDER);
+	panel_style->set_border_width_all(1);
+	panel_style->set_corner_radius_all(AIColors::CORNER_RADIUS_SM * EDSCALE);
+	panel_style->set_content_margin_all(AIColors::PADDING_SM * EDSCALE);
+	add_theme_style_override("panel", panel_style);
+	set_h_size_flags(SIZE_EXPAND_FILL);
+
+	VBoxContainer *root_vbox = memnew(VBoxContainer);
+	root_vbox->add_theme_constant_override("separation", AIColors::PADDING_XS * EDSCALE);
+	add_child(root_vbox);
+
+	// Header row
+	HBoxContainer *header_row = memnew(HBoxContainer);
+	root_vbox->add_child(header_row);
+
+	Label *tasks_label = memnew(Label);
+	tasks_label->set_text(TTR("Tasks"));
+	tasks_label->add_theme_font_size_override("font_size", 11 * EDSCALE);
+	tasks_label->add_theme_color_override("font_color", AIColors::TEXT_MUTED);
+	tasks_label->set_h_size_flags(SIZE_EXPAND_FILL);
+	header_row->add_child(tasks_label);
+
+	progress_label = memnew(Label);
+	progress_label->add_theme_font_size_override("font_size", 11 * EDSCALE);
+	progress_label->add_theme_color_override("font_color", AIColors::TEXT_MUTED);
+	header_row->add_child(progress_label);
+
+	// Items container
+	items_container = memnew(VBoxContainer);
+	items_container->add_theme_constant_override("separation", AIColors::PADDING_XS * EDSCALE);
+	root_vbox->add_child(items_container);
+}
+
+void AITodoPanelWidget::update_todos(const Array &p_todos) {
+	// Clear existing items
+	while (items_container->get_child_count() > 0) {
+		Node *child = items_container->get_child(0);
+		items_container->remove_child(child);
+		memdelete(child);
+	}
+
+	// Count completed
+	int completed = 0;
+	for (int i = 0; i < p_todos.size(); i++) {
+		if (p_todos[i].get_type() == Variant::DICTIONARY) {
+			Dictionary item = p_todos[i];
+			if (String(item.get("status", "")) == "completed") {
+				completed++;
+			}
+		}
+	}
+
+	// Update progress label
+	if (progress_label) {
+		progress_label->set_text(vformat("%d/%d done", completed, p_todos.size()));
+	}
+
+	// Rebuild items
+	for (int i = 0; i < p_todos.size(); i++) {
+		if (p_todos[i].get_type() != Variant::DICTIONARY) {
+			continue;
+		}
+		Dictionary item = p_todos[i];
+		String status = item.get("status", "pending");
+		String content = item.get("content", "");
+
+		HBoxContainer *row = memnew(HBoxContainer);
+		row->add_theme_constant_override("separation", 6 * EDSCALE);
+		items_container->add_child(row);
+
+		// Status icon
+		Label *icon_label = memnew(Label);
+		if (status == "completed") {
+			icon_label->set_text(U"\u2713"); // ✓
+			icon_label->add_theme_color_override("font_color", AIColors::SUCCESS);
+		} else if (status == "in_progress") {
+			icon_label->set_text(U"\u2192"); // →
+			icon_label->add_theme_color_override("font_color", AIColors::ACCENT_BLUE);
+		} else {
+			icon_label->set_text(U"\u00b7"); // ·
+			icon_label->add_theme_color_override("font_color", AIColors::TEXT_MUTED);
+		}
+		icon_label->add_theme_font_size_override("font_size", 12 * EDSCALE);
+		row->add_child(icon_label);
+
+		// Content label
+		Label *content_label = memnew(Label);
+		content_label->set_text(content);
+		content_label->add_theme_font_size_override("font_size", 12 * EDSCALE);
+		content_label->set_h_size_flags(SIZE_EXPAND_FILL);
+		if (status == "completed") {
+			content_label->add_theme_color_override("font_color", AIColors::TEXT_DISABLED);
+		} else {
+			content_label->add_theme_color_override("font_color", AIColors::TEXT_PRIMARY);
+		}
+		row->add_child(content_label);
+	}
+}
+
+// ============================================================
+
 AIStatusIndicator::AIStatusIndicator() {
 	set_custom_minimum_size(Size2(12, 12) * EDSCALE);
 	set_mouse_filter(MOUSE_FILTER_PASS);
@@ -481,6 +591,9 @@ void AIStatusPanel::_notification(int p_what) {
 						if (!orchestrator->is_connected("narration_ready", callable_mp(this, &AIStatusPanel::_on_orchestrator_narration))) {
 							orchestrator->connect("narration_ready", callable_mp(this, &AIStatusPanel::_on_orchestrator_narration));
 						}
+						if (!orchestrator->is_connected("todos_updated", callable_mp(this, &AIStatusPanel::_on_todos_updated))) {
+							orchestrator->connect("todos_updated", callable_mp(this, &AIStatusPanel::_on_todos_updated));
+						}
 					}
 				}
 			}
@@ -504,6 +617,7 @@ void AIStatusPanel::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("_on_orchestrator_progress", "status", "turn"), &AIStatusPanel::_on_orchestrator_progress);
 	ClassDB::bind_method(D_METHOD("_on_orchestrator_tool_result", "tool_result"), &AIStatusPanel::_on_orchestrator_tool_result);
 	ClassDB::bind_method(D_METHOD("_on_orchestrator_complete", "success", "final_message"), &AIStatusPanel::_on_orchestrator_complete);
+	ClassDB::bind_method(D_METHOD("_on_todos_updated", "todos"), &AIStatusPanel::_on_todos_updated);
 	ClassDB::bind_method(D_METHOD("_on_rewind_clicked", "message_id"), &AIStatusPanel::_on_rewind_clicked);
 	ClassDB::bind_method(D_METHOD("_on_dialog_cancel"), &AIStatusPanel::_on_dialog_cancel);
 	ClassDB::bind_method(D_METHOD("_on_dialog_continue_no_revert"), &AIStatusPanel::_on_dialog_continue_no_revert);
@@ -1453,6 +1567,17 @@ void AIStatusPanel::_on_ai_response(bool p_success, const String &p_response, co
 void AIStatusPanel::_on_orchestrator_started() {
 	print_line("AIStatusPanel: Orchestrator run started");
 	// State is already set to RUNNING by _start_run(), but this confirms orchestrator is active
+	if (todo_panel) {
+		todo_panel->set_visible(false);
+	}
+}
+
+void AIStatusPanel::_on_todos_updated(const Array &p_todos) {
+	if (!todo_panel) {
+		return;
+	}
+	todo_panel->update_todos(p_todos);
+	todo_panel->set_visible(!p_todos.is_empty());
 }
 
 void AIStatusPanel::_append_thinking_ui(const String &p_text) {
@@ -1569,6 +1694,11 @@ void AIStatusPanel::_on_orchestrator_progress(const String &p_status, int p_turn
 void AIStatusPanel::_on_orchestrator_tool_result(const Dictionary &p_tool_result) {
 	print_line(vformat("AIStatusPanel: _on_orchestrator_tool_result called - type=%s, status=%s",
 		String(p_tool_result.get("type", "unknown")), String(p_tool_result.get("status", "unknown"))));
+
+	// update_todos is reflected in the todo panel — suppress from transcript
+	if (String(p_tool_result.get("type", "")) == "update_todos") {
+		return;
+	}
 
 	// Append tool result to chat transcript
 	_append_tool_result_ui(p_tool_result);
@@ -2174,6 +2304,13 @@ AIStatusPanel::AIStatusPanel() {
 	add_child(separator);
 
 	// ========================================
+	// Todo panel (AI's self-managed task list)
+	// ========================================
+	todo_panel = memnew(AITodoPanelWidget);
+	todo_panel->set_visible(false);
+	add_child(todo_panel);
+
+	// ========================================
 	// Queue display (simple list above input)
 	// ========================================
 	queue_container = memnew(VBoxContainer);
@@ -2496,6 +2633,9 @@ AIStatusPanel::~AIStatusPanel() {
 				}
 				if (orchestrator->is_connected("checkpoint_recommended", callable_mp(this, &AIStatusPanel::_on_checkpoint_recommended))) {
 					orchestrator->disconnect("checkpoint_recommended", callable_mp(this, &AIStatusPanel::_on_checkpoint_recommended));
+				}
+				if (orchestrator->is_connected("todos_updated", callable_mp(this, &AIStatusPanel::_on_todos_updated))) {
+					orchestrator->disconnect("todos_updated", callable_mp(this, &AIStatusPanel::_on_todos_updated));
 				}
 			}
 		}
