@@ -1377,9 +1377,11 @@ Array AIStatusPanel::_build_model_messages() {
 	for (int i = start_index; i < transcript.size(); i++) {
 		final_chars += transcript[i].content.length();
 	}
-	print_line(vformat("AI: Built %d messages for context (%d chars)%s", 
+	print_line(vformat("AI: Built %d messages for context (%d chars)%s",
 		messages.size(), final_chars, context_was_truncated ? " [TRUNCATED]" : ""));
-	
+
+	_update_context_usage(final_chars, MAX_CONTEXT_CHARS);
+
 	return messages;
 }
 
@@ -1458,6 +1460,7 @@ void AIStatusPanel::_on_clear_pressed() {
 		chat_store->clear_transcript();
 	}
 	_rebuild_message_list();
+	_reset_context_usage();
 }
 
 void AIStatusPanel::_on_prompt_text_changed() {
@@ -2254,6 +2257,33 @@ void AIStatusPanel::_update_status_from_results() {
 	}
 }
 
+void AIStatusPanel::_update_context_usage(int p_used_chars, int p_max_chars) {
+	if (!context_usage_label || p_max_chars <= 0) {
+		return;
+	}
+	float fraction = (float)p_used_chars / (float)p_max_chars;
+	int percent = CLAMP((int)(fraction * 100.0f), 0, 100);
+
+	context_usage_label->set_text(vformat("| %d%%", percent));
+	context_usage_label->set_tooltip_text(
+		vformat(TTR("Context: %d / %d chars (~%d%%)"), p_used_chars, p_max_chars, percent));
+	context_usage_label->set_visible(true);
+
+	if (fraction >= 0.90f) {
+		context_usage_label->add_theme_color_override("font_color", AIColors::ERROR);
+	} else if (fraction >= 0.70f) {
+		context_usage_label->add_theme_color_override("font_color", AIColors::WARNING);
+	} else {
+		context_usage_label->add_theme_color_override("font_color", AIColors::TEXT_MUTED);
+	}
+}
+
+void AIStatusPanel::_reset_context_usage() {
+	if (context_usage_label) {
+		context_usage_label->set_visible(false);
+	}
+}
+
 AIStatusPanel::AIStatusPanel() {
 	set_name("AI");
 
@@ -2482,6 +2512,13 @@ AIStatusPanel::AIStatusPanel() {
 	status_label->set_text(TTR("Unknown"));
 	status_label->add_theme_color_override("font_color", AIColors::TEXT_MUTED);
 	status_bar->add_child(status_label);
+
+	// Context usage label - right side of status bar, hidden until first run
+	context_usage_label = memnew(Label);
+	context_usage_label->add_theme_font_size_override("font_size", 11 * EDSCALE);
+	context_usage_label->add_theme_color_override("font_color", AIColors::TEXT_MUTED);
+	context_usage_label->set_visible(false);
+	status_bar->add_child(context_usage_label);
 
 	// ========================================
 	// HTTP request nodes for connectivity checks

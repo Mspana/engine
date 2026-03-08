@@ -189,6 +189,7 @@ private:
 	// Status bar
 	AIStatusIndicator *status_indicator = nullptr;
 	Label *status_label = nullptr;
+	Label *context_usage_label = nullptr;
 
 	// HTTP requests for checking each provider
 	HTTPRequest *http_openai = nullptr;
@@ -229,6 +230,10 @@ private:
 
 	// Build messages array for API call with truncation
 	Array _build_model_messages();
+
+	// Context usage indicator
+	void _update_context_usage(int p_used_chars, int p_max_chars);
+	void _reset_context_usage();
 
 	// UI building methods
 	void _rebuild_message_list();
