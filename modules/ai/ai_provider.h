@@ -51,6 +51,11 @@ public:
 
 	// System prompt explaining the action format
 	static String get_system_prompt();
+
+	// Context window size in tokens for a given model name.
+	// Returns 0 for unknown models.
+	static int get_context_window_tokens(const String &p_model);
+	int get_context_window_tokens() const { return get_context_window_tokens(model); }
 	
 	// Main method to send request - implemented by subclasses (single message, legacy)
 	virtual void send_request(const String &user_prompt, const String &context_block = "");

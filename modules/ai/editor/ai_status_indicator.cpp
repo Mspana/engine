@@ -46,9 +46,8 @@
 #include "scene/resources/font.h"
 #include "scene/scene_string_names.h"
 
-// Truncation limits for conversation context (must match ai_provider.cpp)
-static const int MAX_CONTEXT_MESSAGES = 80;
-static const int MAX_CONTEXT_CHARS = 120000; // 120k chars
+// Fallback char budget when model context window is unknown
+static const int DEFAULT_MAX_CONTEXT_CHARS = 120000;
 
 // ============================================================================
 // Aristotle Design Tokens (shared with global editor theme)
@@ -1334,20 +1333,34 @@ Array AIStatusPanel::_build_model_messages() {
 		return messages;
 	}
 	
-	// Calculate total chars and find truncation point
-	// We work backwards from the most recent message to keep the latest context
+	// Determine char budget from the active model's context window.
+	// Reserve ~10k tokens (40k chars) for system prompt + model output.
+	int max_context_chars = DEFAULT_MAX_CONTEXT_CHARS;
+	if (Engine::get_singleton()->has_singleton("AI")) {
+		Object *ai_obj = Engine::get_singleton()->get_singleton_object("AI");
+		AI *ai_inst = Object::cast_to<AI>(ai_obj);
+		if (ai_inst && ai_inst->get_provider().is_valid()) {
+			int window_tokens = ai_inst->get_provider()->get_context_window_tokens();
+			if (window_tokens > 0) {
+				max_context_chars = (window_tokens - 10000) * 4;
+			}
+		}
+	}
+
+	// Calculate total chars and find truncation point.
+	// We work backwards from the most recent message to keep the latest context.
 	int total_chars = 0;
 	int start_index = 0;
-	
+
 	for (int i = transcript.size() - 1; i >= 0; i--) {
 		total_chars += transcript[i].content.length();
-		int message_count = transcript.size() - i;
 
-		if (total_chars > MAX_CONTEXT_CHARS || message_count > MAX_CONTEXT_MESSAGES) {
+		if (total_chars > max_context_chars) {
 			start_index = i + 1;
 			context_was_truncated = true;
-			WARN_PRINT(vformat("AI: Context truncated. Using %d of %d messages (%d chars).", 
-				transcript.size() - start_index, transcript.size(), total_chars - transcript[i].content.length()));
+			WARN_PRINT(vformat("AI: Context truncated. Using %d of %d messages (%d chars, budget %d).",
+				transcript.size() - start_index, transcript.size(),
+				total_chars - transcript[i].content.length(), max_context_chars));
 			break;
 		}
 	}
@@ -1380,7 +1393,7 @@ Array AIStatusPanel::_build_model_messages() {
 	print_line(vformat("AI: Built %d messages for context (%d chars)%s",
 		messages.size(), final_chars, context_was_truncated ? " [TRUNCATED]" : ""));
 
-	_update_context_usage(final_chars, MAX_CONTEXT_CHARS);
+	_update_context_usage(final_chars, max_context_chars);
 
 	return messages;
 }

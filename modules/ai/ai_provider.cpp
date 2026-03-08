@@ -7,10 +7,6 @@
 #include "core/os/os.h"
 #include "core/crypto/crypto.h"
 
-// Truncation limits for conversation context
-static const int MAX_CONTEXT_MESSAGES = 80;
-static const int MAX_CONTEXT_CHARS = 120000; // 120k chars
-
 // ============================================================================
 // AIProvider - Base Class Implementation
 // ============================================================================
@@ -444,6 +440,40 @@ Allowed actions:
   'parse_errors': [{line, column, message, type}, ...] — errors, fix and retry.
   'warnings': [{line, message, code}, ...] — non-fatal issues worth reviewing.
   Use after update_script to verify the written content is error-free.)";
+}
+
+int AIProvider::get_context_window_tokens(const String &p_model) {
+	// xAI / Grok
+	if (p_model == "grok-4" || p_model == "grok-4-fast" ||
+		p_model == "grok-3" || p_model == "grok-3-fast" ||
+		p_model == "grok-2") {
+		return 131072; // 128k
+	}
+	if (p_model == "grok-1") {
+		return 8192;
+	}
+
+	// OpenAI
+	if (p_model == "gpt-4o" || p_model == "gpt-4o-mini" || p_model == "gpt-4-turbo") {
+		return 128000;
+	}
+	if (p_model == "gpt-4") {
+		return 8192;
+	}
+	if (p_model == "gpt-3.5-turbo") {
+		return 16385;
+	}
+
+	// Google Gemini
+	if (p_model == "gemini-1.5-pro" || p_model == "gemini-1.5-flash" ||
+		p_model == "gemini-2.0-flash" || p_model == "gemini-2.5-pro") {
+		return 1048576; // 1M
+	}
+	if (p_model == "gemini-pro") {
+		return 32768;
+	}
+
+	return 0; // Unknown model
 }
 
 // ============================================================================
