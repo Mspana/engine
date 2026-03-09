@@ -284,6 +284,42 @@ Dictionary exec_find_nodes_by_type(const Dictionary &args) {
 #endif
 }
 
+static void _collect_tree(const String &p_dir, int p_current_depth, int p_max_depth,
+		const String &p_suffix_filter, bool p_include_hidden, Array &r_entries) {
+	Ref<DirAccess> dir = DirAccess::open(p_dir);
+	if (dir.is_null()) {
+		return;
+	}
+	String base = p_dir.trim_suffix("/") + "/";
+
+	// Directories first (no glob filter on dirs); trailing "/" signals directory
+	PackedStringArray subdirs = dir->get_directories();
+	for (int i = 0; i < subdirs.size(); i++) {
+		// On Windows, DirAccess::current_is_hidden() checks FILE_ATTRIBUTE_HIDDEN, not dot-prefix.
+		// Manually skip dot-prefixed dirs when include_hidden is false.
+		if (!p_include_hidden && subdirs[i].begins_with(".")) {
+			continue;
+		}
+		String d = base + subdirs[i] + "/";
+		r_entries.push_back(d);
+		if (p_max_depth == 0 || p_current_depth < p_max_depth) {
+			_collect_tree(d, p_current_depth + 1, p_max_depth, p_suffix_filter, p_include_hidden, r_entries);
+		}
+	}
+
+	// Files, filtered by suffix if glob provided
+	PackedStringArray files = dir->get_files();
+	for (int i = 0; i < files.size(); i++) {
+		if (!p_include_hidden && files[i].begins_with(".")) {
+			continue;
+		}
+		if (!p_suffix_filter.is_empty() && !files[i].ends_with(p_suffix_filter)) {
+			continue;
+		}
+		r_entries.push_back(base + files[i]);
+	}
+}
+
 Dictionary exec_list_files(const Dictionary &args) {
 #ifdef TOOLS_ENABLED
 	if (!args.has("directory") || args["directory"].get_type() != Variant::STRING) {
@@ -306,10 +342,7 @@ Dictionary exec_list_files(const Dictionary &args) {
 			vformat("Failed to open directory '%s'", directory));
 	}
 
-	// Get all files
-	PackedStringArray files = dir->get_files();
-
-	// Extract suffix from glob pattern if provided
+	// Extract suffix from glob pattern if provided (applied to files only)
 	String suffix_filter;
 	if (args.has("glob") && args["glob"].get_type() == Variant::STRING) {
 		String glob = args["glob"];
@@ -321,36 +354,41 @@ Dictionary exec_list_files(const Dictionary &args) {
 		}
 	}
 
-	// Filter files by suffix if glob provided
-	PackedStringArray filtered_files;
-	for (int i = 0; i < files.size(); i++) {
-		String file = files[i];
-		if (suffix_filter.is_empty() || file.ends_with(suffix_filter)) {
-			filtered_files.push_back(file);
+	// depth: 1 = top level only (default), 0 = unlimited, N = N levels deep
+	// Accept float too — JSON round numbers (0.0, 1.0) arrive as FLOAT from some providers
+	int max_depth = 1;
+	if (args.has("depth")) {
+		Variant::Type dt = args["depth"].get_type();
+		if (dt == Variant::INT) {
+			max_depth = (int)args["depth"];
+		} else if (dt == Variant::FLOAT) {
+			max_depth = (int)(float)args["depth"];
+		}
+		if (max_depth < 0) {
+			max_depth = 0;
 		}
 	}
 
-	// Build full paths array for result
-	Array full_paths;
-	int count = filtered_files.size();
-	print_line(vformat("AI: Found %d file(s) in '%s':", count, directory));
-	for (int i = 0; i < count; i++) {
-		String file_path = directory;
-		if (!file_path.ends_with("/")) {
-			file_path += "/";
-		}
-		file_path += filtered_files[i];
-		full_paths.push_back(file_path);
-		print_line(vformat("  - %s", file_path));
+	bool include_hidden = false;
+	if (args.has("include_hidden") && args["include_hidden"].get_type() == Variant::BOOL) {
+		include_hidden = (bool)args["include_hidden"];
 	}
+
+	Array objects;
+	_collect_tree(directory, 1, max_depth, suffix_filter, include_hidden, objects);
+
+	print_line(vformat("AI: list_files '%s' depth=%d → %d objects", directory, max_depth, objects.size()));
+
+	// Build resolved args for display (fills in defaults, normalises float depth → int)
+	Dictionary display_args;
+	display_args["directory"] = directory;
+	display_args["depth"] = max_depth; // always int, even if AI sent 0.0
+	display_args["glob"] = suffix_filter.is_empty() ? Variant() : Variant(suffix_filter);
+	display_args["include_hidden"] = include_hidden;
 
 	Dictionary result_data;
-	result_data["files"] = full_paths;
-	result_data["count"] = count;
-	result_data["directory"] = directory;
-	if (!suffix_filter.is_empty()) {
-		result_data["filter"] = suffix_filter;
-	}
+	result_data["objects"] = objects;
+	result_data["_display_args"] = display_args;
 
 	return ai_create_success_result(result_data);
 #else

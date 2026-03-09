@@ -350,6 +350,14 @@ bool AI::_validate_command_dictionary(const Dictionary &cmd, String &error_msg) 
             error_msg = "'list_files' optional 'glob' must be a string.";
             return false;
         }
+        // depth is optional int (also accept float — JSON round numbers like 0.0 arrive as FLOAT)
+        if (args.has("depth")) {
+            Variant::Type dt = args["depth"].get_type();
+            if (dt != Variant::INT && dt != Variant::FLOAT) {
+                error_msg = "'list_files' optional 'depth' must be a number (0 = unlimited).";
+                return false;
+            }
+        }
     } else if (action == "read_script") {
         if (!args.has("file_path") || args["file_path"].get_type() != Variant::STRING) {
             error_msg = "'read_script' requires string 'file_path'.";

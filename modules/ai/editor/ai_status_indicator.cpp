@@ -274,8 +274,17 @@ void ToolCollapsibleEntry::update_from_tool_result(const Dictionary &p_tool_resu
 
 	// Build body text with full details
 	String body_content;
+
+	// Args first (input to the tool)
+	if (p_tool_result.has("args") && p_tool_result["args"].get_type() == Variant::DICTIONARY) {
+		Dictionary args = p_tool_result["args"];
+		if (!args.is_empty()) {
+			body_content += vformat("Args: %s\n", JSON::stringify(args, "  ", false));
+		}
+	}
+
 	if (status == "success") {
-		body_content = "Status: Success";
+		body_content += "Status: Success";
 		if (p_tool_result.has("result")) {
 			Dictionary result = p_tool_result["result"];
 			if (!result.is_empty()) {
@@ -283,7 +292,7 @@ void ToolCollapsibleEntry::update_from_tool_result(const Dictionary &p_tool_resu
 			}
 		}
 	} else if (status == "error") {
-		body_content = "Status: Error";
+		body_content += "Status: Error";
 		if (p_tool_result.has("error")) {
 			Dictionary error = p_tool_result["error"];
 			String error_msg = error.get("message", "Unknown error");
@@ -303,14 +312,6 @@ void ToolCollapsibleEntry::update_from_tool_result(const Dictionary &p_tool_resu
 		}
 	} else {
 		body_content = vformat("Status: %s", status);
-	}
-
-	// Add args if available
-	if (p_tool_result.has("args") && p_tool_result["args"].get_type() == Variant::DICTIONARY) {
-		Dictionary args = p_tool_result["args"];
-		if (!args.is_empty()) {
-			body_content += vformat("\nArgs: %s", JSON::stringify(args, "  ", false));
-		}
 	}
 
 	set_body(body_content);

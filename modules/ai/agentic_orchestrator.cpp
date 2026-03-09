@@ -510,15 +510,24 @@ Dictionary AgenticOrchestrator::_create_tool_result(const String &p_action_type,
 	tool_result_data["tool_name"] = "godot_action_executor";
 	tool_result_data["action_id"] = _generate_action_id();
 	tool_result_data["type"] = p_action_type;
-	tool_result_data["args"] = p_action_args;
 
 	// Extract status and result/error from exec_result
 	String status = p_exec_result.get("status", "error");
 	tool_result_data["status"] = status;
 
+	Dictionary exec_result_inner;
 	if (status == "success") {
-		tool_result_data["result"] = p_exec_result.get("result", Dictionary());
+		exec_result_inner = p_exec_result.get("result", Dictionary());
+		// Use _display_args if the action provided resolved/defaulted args for display
+		if (exec_result_inner.has("_display_args")) {
+			tool_result_data["args"] = exec_result_inner["_display_args"];
+			exec_result_inner.erase("_display_args");
+		} else {
+			tool_result_data["args"] = p_action_args;
+		}
+		tool_result_data["result"] = exec_result_inner;
 	} else {
+		tool_result_data["args"] = p_action_args;
 		tool_result_data["error"] = p_exec_result.get("error", Dictionary());
 	}
 

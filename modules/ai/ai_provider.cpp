@@ -432,8 +432,9 @@ Allowed actions:
   Returns: {type, name, script, warnings, properties: {all primitive node properties}, sub_resources: {resource-type properties — null if unset, or {type, properties, sub_resources} if set}}
 - find_nodes_by_type: Find all nodes of a specific type in the scene tree
   Args: {"type_name": string (e.g. "CharacterBody2D")}
-- list_files: List files in a directory
-  Args: {"directory": string (e.g. "res://scripts"), "glob": string (optional, e.g. "*.gd")}
+- list_files: List files and directories. Works like `tree` — recurses to a given depth.
+  Args: {"directory": string (e.g. "res://scripts"), "depth": int (optional, default 1 = top level only, 0 = full recursion), "glob": string (optional, e.g. "*.gd" — filters files only, not directories), "include_hidden": bool (optional, default false — skips dot-prefixed files/dirs like .godot/)}
+  Returns: objects[] (flat list of all paths). Directories end with "/". Use depth=0 for the full project tree (may be large).
 - read_script: Read the current source content of an existing script file
   Args: {"file_path": string (e.g. "res://scripts/player.gd")}
   For .gd files, also validates with the full GDScript compiler (syntax + type checks).
