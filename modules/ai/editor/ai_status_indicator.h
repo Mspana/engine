@@ -41,11 +41,15 @@
 #include "scene/gui/scroll_container.h"
 #include "scene/gui/separator.h"
 #include "scene/gui/text_edit.h"
+#include "scene/gui/texture_rect.h"
 #include "scene/gui/check_box.h"
 #include "scene/gui/dialogs.h"
+#include "scene/gui/popup.h"
 #include "scene/main/http_request.h"
 #include "scene/main/timer.h"
 #include "core/input/input_event.h"
+#include "core/io/image.h"
+#include "scene/resources/image_texture.h"
 
 // Lightweight collapsible entry for agent thinking text between tool calls
 class ThinkingCollapsibleEntry : public VBoxContainer {
@@ -228,8 +232,27 @@ private:
 	int undo_target_for_edit = -1; // UndoRedo index to revert to if user chooses
 	bool undo_available_for_edit = false;
 
+	// Pending images (staged for next send, cleared after _start_run)
+	Vector<String> pending_images;          // base64-encoded PNG strings (512px max)
+	Vector<Ref<Image>> pending_images_raw;  // kept for thumbnail display in preview strip
+
+	// Image preview strip (shown above input bar when images are pending)
+	HBoxContainer *image_preview_strip = nullptr;
+
+	// Image lightbox popup (click thumbnail to enlarge)
+	PopupPanel *image_popup = nullptr;
+	TextureRect *image_popup_tex = nullptr;
+
 	// Build messages array for API call with truncation
 	Array _build_model_messages();
+
+	// Image paste and preview
+	void _add_pending_image(Ref<Image> p_image);
+	void _remove_pending_image(int p_index);
+	void _clear_pending_images();
+	void _rebuild_image_preview_strip();
+	void _show_image_popup(const String &p_base64);
+	void _on_thumbnail_gui_input(const Ref<InputEvent> &p_event, const String &p_base64);
 
 	// Context usage indicator
 	void _update_context_usage(int p_used_chars, int p_max_chars);

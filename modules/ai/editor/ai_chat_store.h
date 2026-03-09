@@ -40,7 +40,10 @@ struct ChatMessage {
 	int64_t id = 0;           // Unix timestamp ms (unique enough for single user)
 	String role;              // "user" | "assistant" | "system" | "tool"
 	String content;           // Message text (for "tool" role, this is JSON-stringified tool result)
+	Vector<String> images;    // Base64-encoded PNG strings (512px max), empty = no images
 	int64_t created_at = 0;   // Unix timestamp ms
+
+	bool has_images() const { return !images.is_empty(); }
 
 	ChatMessage() {}
 	ChatMessage(int64_t p_id, const String &p_role, const String &p_content, int64_t p_created_at)
@@ -67,7 +70,7 @@ class AIChatStore : public RefCounted {
 	GDCLASS(AIChatStore, RefCounted);
 
 private:
-	static const int TRANSCRIPT_VERSION = 2; // v2 adds checkpoints
+	static const int TRANSCRIPT_VERSION = 3; // v3 adds images to ChatMessage
 	Vector<ChatMessage> messages;
 	Vector<ChatCheckpoint> checkpoints;
 
@@ -89,7 +92,7 @@ public:
 	bool save_transcript();
 
 	// Append a new message and save. Returns the created message.
-	ChatMessage append_message(const String &p_role, const String &p_content);
+	ChatMessage append_message(const String &p_role, const String &p_content, const Vector<String> &p_images = Vector<String>());
 
 	// Append a tool result message (convenience method for agentic tool use)
 	ChatMessage append_tool_result(const Dictionary &p_tool_result);

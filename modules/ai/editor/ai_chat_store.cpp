@@ -125,6 +125,14 @@ Vector<ChatMessage> AIChatStore::load_transcript() {
 		msg.role = msg_dict.get("role", "");
 		msg.content = msg_dict.get("content", "");
 		msg.created_at = msg_dict.get("created_at", 0);
+		if (msg_dict.has("images") && msg_dict["images"].get_type() == Variant::ARRAY) {
+			Array img_array = msg_dict["images"];
+			for (int j = 0; j < img_array.size(); j++) {
+				if (img_array[j].get_type() == Variant::STRING) {
+					msg.images.push_back(img_array[j]);
+				}
+			}
+		}
 
 		if (msg.role.is_empty()) {
 			WARN_PRINT(vformat("AIChatStore: Skipping message with empty role at index %d.", i));
@@ -176,6 +184,13 @@ bool AIChatStore::save_transcript() {
 		msg_dict["role"] = msg.role;
 		msg_dict["content"] = msg.content;
 		msg_dict["created_at"] = msg.created_at;
+		if (!msg.images.is_empty()) {
+			Array img_array;
+			for (int j = 0; j < msg.images.size(); j++) {
+				img_array.push_back(msg.images[j]);
+			}
+			msg_dict["images"] = img_array;
+		}
 		msg_array.push_back(msg_dict);
 	}
 
@@ -214,12 +229,13 @@ bool AIChatStore::save_transcript() {
 	return true;
 }
 
-ChatMessage AIChatStore::append_message(const String &p_role, const String &p_content) {
+ChatMessage AIChatStore::append_message(const String &p_role, const String &p_content, const Vector<String> &p_images) {
 	int64_t now_ms = Time::get_singleton()->get_unix_time_from_system() * 1000;
 	// Add microseconds for uniqueness if multiple messages in same millisecond
 	now_ms += Time::get_singleton()->get_ticks_usec() % 1000;
 
 	ChatMessage msg(now_ms, p_role, p_content, now_ms);
+	msg.images = p_images;
 	messages.push_back(msg);
 
 	save_transcript();

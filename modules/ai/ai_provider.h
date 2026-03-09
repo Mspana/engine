@@ -52,6 +52,10 @@ public:
 	// System prompt explaining the action format
 	static String get_system_prompt();
 
+	// Vision capability check — returns true if the named model accepts image input
+	static bool model_supports_vision(const String &p_model);
+	bool supports_vision() const { return model_supports_vision(model); }
+
 	// Context window size in tokens for a given model name.
 	// Returns 0 for unknown models.
 	static int get_context_window_tokens(const String &p_model);

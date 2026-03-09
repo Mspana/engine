@@ -477,6 +477,26 @@ int AIProvider::get_context_window_tokens(const String &p_model) {
 	return 0; // Unknown model
 }
 
+bool AIProvider::model_supports_vision(const String &p_model) {
+	// OpenAI
+	if (p_model == "gpt-4o" || p_model == "gpt-4o-mini" ||
+		p_model == "gpt-4-turbo" || p_model == "gpt-4-vision-preview") {
+		return true;
+	}
+	// Gemini (1.5+ is multimodal; gemini-pro is text-only)
+	if (p_model == "gemini-1.5-pro" || p_model == "gemini-1.5-flash" ||
+		p_model == "gemini-2.0-flash" || p_model == "gemini-2.0-flash-exp" ||
+		p_model == "gemini-2.5-pro" || p_model == "gemini-pro-vision") {
+		return true;
+	}
+	// xAI Grok 4 and vision-tagged models
+	if (p_model == "grok-4" || p_model == "grok-4-fast" ||
+		p_model == "grok-2-vision-1212" || p_model == "grok-vision-beta") {
+		return true;
+	}
+	return false;
+}
+
 // ============================================================================
 // OpenAIProvider Implementation
 // ============================================================================
@@ -728,9 +748,44 @@ Dictionary OpenAIProvider::build_request_body_with_messages(const Array &p_messa
 	system_msg["content"] = system_content;
 	messages.push_back(system_msg);
 
-	// Append all conversation messages
+	// Append all conversation messages, converting image-bearing user messages to multipart content
 	for (int i = 0; i < p_messages.size(); i++) {
-		messages.push_back(p_messages[i]);
+		Dictionary in_msg = p_messages[i];
+		bool has_images = in_msg.has("_images") && !in_msg["_images"].operator Array().is_empty();
+		String role = in_msg.get("role", "");
+
+		if (has_images && role == "user" && supports_vision()) {
+			Array content_parts;
+
+			Dictionary text_part;
+			text_part["type"] = "text";
+			text_part["text"] = in_msg.get("content", "");
+			content_parts.push_back(text_part);
+
+			Array imgs = in_msg["_images"];
+			for (int j = 0; j < imgs.size(); j++) {
+				Dictionary img_url;
+				img_url["url"] = "data:image/png;base64," + String(imgs[j]);
+				img_url["detail"] = "low";
+				Dictionary img_part;
+				img_part["type"] = "image_url";
+				img_part["image_url"] = img_url;
+				content_parts.push_back(img_part);
+			}
+
+			Dictionary out_msg;
+			out_msg["role"] = role;
+			out_msg["content"] = content_parts;
+			messages.push_back(out_msg);
+		} else {
+			if (has_images) {
+				WARN_PRINT(vformat("OpenAIProvider: Model '%s' does not support vision. Dropping %d image(s) from message.", model, in_msg["_images"].operator Array().size()));
+			}
+			Dictionary out_msg;
+			out_msg["role"] = role;
+			out_msg["content"] = in_msg.get("content", "");
+			messages.push_back(out_msg);
+		}
 	}
 
 	body["messages"] = messages;
@@ -1155,8 +1210,27 @@ Dictionary GeminiProvider::build_request_body_with_messages(const Array &p_messa
 			// Skip system messages (handled above)
 			continue;
 		}
-		
+
 		parts.push_back(text_part);
+
+		// Add inline image parts for user messages (Gemini multimodal)
+		if (role == "user") {
+			bool has_images = msg.has("_images") && !msg["_images"].operator Array().is_empty();
+			if (has_images && supports_vision()) {
+				Array imgs = msg["_images"];
+				for (int j = 0; j < imgs.size(); j++) {
+					Dictionary inline_data;
+					inline_data["mimeType"] = "image/png";
+					inline_data["data"] = String(imgs[j]); // raw base64, no data: URI prefix
+					Dictionary img_part;
+					img_part["inlineData"] = inline_data;
+					parts.push_back(img_part);
+				}
+			} else if (has_images) {
+				WARN_PRINT(vformat("GeminiProvider: Model '%s' does not support vision. Dropping %d image(s) from message.", model, msg["_images"].operator Array().size()));
+			}
+		}
+
 		gemini_content["parts"] = parts;
 		contents.push_back(gemini_content);
 	}
@@ -1568,9 +1642,44 @@ Dictionary XAIProvider::build_request_body_with_messages(const Array &p_messages
 	system_msg["content"] = system_content;
 	messages.push_back(system_msg);
 
-	// Append all conversation messages
+	// Append all conversation messages, converting image-bearing user messages to multipart content
 	for (int i = 0; i < p_messages.size(); i++) {
-		messages.push_back(p_messages[i]);
+		Dictionary in_msg = p_messages[i];
+		bool has_images = in_msg.has("_images") && !in_msg["_images"].operator Array().is_empty();
+		String role = in_msg.get("role", "");
+
+		if (has_images && role == "user" && supports_vision()) {
+			Array content_parts;
+
+			Dictionary text_part;
+			text_part["type"] = "text";
+			text_part["text"] = in_msg.get("content", "");
+			content_parts.push_back(text_part);
+
+			Array imgs = in_msg["_images"];
+			for (int j = 0; j < imgs.size(); j++) {
+				Dictionary img_url;
+				img_url["url"] = "data:image/png;base64," + String(imgs[j]);
+				img_url["detail"] = "low";
+				Dictionary img_part;
+				img_part["type"] = "image_url";
+				img_part["image_url"] = img_url;
+				content_parts.push_back(img_part);
+			}
+
+			Dictionary out_msg;
+			out_msg["role"] = role;
+			out_msg["content"] = content_parts;
+			messages.push_back(out_msg);
+		} else {
+			if (has_images) {
+				WARN_PRINT(vformat("XAIProvider: Model '%s' does not support vision. Dropping %d image(s) from message.", model, in_msg["_images"].operator Array().size()));
+			}
+			Dictionary out_msg;
+			out_msg["role"] = role;
+			out_msg["content"] = in_msg.get("content", "");
+			messages.push_back(out_msg);
+		}
 	}
 
 	body["messages"] = messages;

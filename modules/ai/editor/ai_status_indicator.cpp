@@ -33,7 +33,9 @@
 #include "../ai.h"
 #include "../agentic_orchestrator.h"
 #include "core/config/engine.h"
+#include "core/core_bind.h"
 #include "core/input/input_event.h"
+#include "core/io/image.h"
 #include "core/io/json.h"
 #include "core/os/os.h"
 #include "core/os/time.h"
@@ -42,12 +44,45 @@
 #include "editor/editor_undo_redo_manager.h"
 #include "editor/themes/editor_scale.h"
 #include "scene/gui/rich_text_label.h"
+#include "scene/resources/image_texture.h"
 #include "scene/resources/style_box_flat.h"
 #include "scene/resources/font.h"
 #include "scene/scene_string_names.h"
+#include "servers/display_server.h"
 
 // Fallback char budget when model context window is unknown
 static const int DEFAULT_MAX_CONTEXT_CHARS = 120000;
+
+// Maximum image size (longest side) before downscaling for API submission.
+// Keeps base64 payload small; OpenAI "low" detail processes at 512px for 85 tokens.
+static const int IMAGE_MAX_SIDE_PX = 512;
+
+// Resize p_image in-place to fit within IMAGE_MAX_SIDE_PX, convert to RGBA8,
+// save as PNG, and return a base64-encoded string. Returns empty string on failure.
+static String _encode_image_for_api(Ref<Image> p_image) {
+	if (p_image.is_null() || p_image->is_empty()) {
+		return "";
+	}
+	// Ensure a format that PNG encoder accepts
+	Image::Format fmt = p_image->get_format();
+	if (fmt != Image::FORMAT_RGBA8 && fmt != Image::FORMAT_RGB8) {
+		p_image->convert(Image::FORMAT_RGBA8);
+	}
+	int w = p_image->get_width();
+	int h = p_image->get_height();
+	int max_side = MAX(w, h);
+	if (max_side > IMAGE_MAX_SIDE_PX) {
+		float scale = (float)IMAGE_MAX_SIDE_PX / (float)max_side;
+		int new_w = MAX(1, (int)(w * scale));
+		int new_h = MAX(1, (int)(h * scale));
+		p_image->resize(new_w, new_h, Image::INTERPOLATE_LANCZOS);
+	}
+	Vector<uint8_t> png_bytes = p_image->save_png_to_buffer();
+	if (png_bytes.is_empty()) {
+		return "";
+	}
+	return CoreBind::Marshalls::get_singleton()->raw_to_base64(png_bytes);
+}
 
 // ============================================================================
 // Aristotle Design Tokens (shared with global editor theme)
@@ -949,6 +984,36 @@ Control *AIStatusPanel::_create_message_bubble(const ChatMessage &p_message) {
 
 	inner_vbox->add_child(label);
 
+	// Image thumbnails (if any)
+	if (p_message.has_images()) {
+		HBoxContainer *img_row = memnew(HBoxContainer);
+		img_row->add_theme_constant_override("separation", AIColors::PADDING_XS * EDSCALE);
+		inner_vbox->add_child(img_row);
+
+		for (int i = 0; i < p_message.images.size(); i++) {
+			// Decode base64 → PNG bytes → Image → ImageTexture
+			PackedByteArray png_bytes = CoreBind::Marshalls::get_singleton()->base64_to_raw(p_message.images[i]);
+			if (png_bytes.is_empty()) {
+				continue;
+			}
+			Ref<Image> img;
+			img.instantiate();
+			Error err = img->load_png_from_buffer(png_bytes);
+			if (err != OK || img->is_empty()) {
+				continue;
+			}
+			Ref<ImageTexture> img_tex = ImageTexture::create_from_image(img);
+			TextureRect *tex = memnew(TextureRect);
+			tex->set_texture(img_tex);
+			tex->set_stretch_mode(TextureRect::STRETCH_KEEP_ASPECT_COVERED);
+			tex->set_custom_minimum_size(Size2(80, 80) * EDSCALE);
+			tex->set_mouse_filter(Control::MOUSE_FILTER_STOP);
+			tex->set_default_cursor_shape(Control::CURSOR_POINTING_HAND);
+			tex->connect("gui_input", callable_mp(this, &AIStatusPanel::_on_thumbnail_gui_input).bind(p_message.images[i]));
+			img_row->add_child(tex);
+		}
+	}
+
 	return align_container;
 }
 
@@ -1002,10 +1067,11 @@ void AIStatusPanel::_update_send_button_state() {
 	// Button appearance and behavior depends on run state
 	switch (run_state) {
 		case STATE_IDLE: {
-			// Send mode: enabled if there's text to send
+			// Send mode: enabled if there's text or images to send
 			send_button->set_text(TTR("Send"));
 			bool has_text = !prompt_edit->get_text().strip_edges().is_empty();
-			send_button->set_disabled(!has_text);
+			bool has_images = !pending_images.is_empty();
+			send_button->set_disabled(!has_text && !has_images);
 
 			// Apply accent blue style for Send
 			Ref<StyleBoxFlat> send_normal;
@@ -1260,10 +1326,14 @@ void AIStatusPanel::_start_run(const String &p_message) {
 		return;
 	}
 
+	// Snapshot and consume pending images before async work begins
+	Vector<String> images_for_run = pending_images;
+	_clear_pending_images();
+
 	// Append user message to store
 	current_run_user_message_id = 0;
 	if (chat_store.is_valid()) {
-		ChatMessage user_msg = chat_store->append_message("user", p_message);
+		ChatMessage user_msg = chat_store->append_message("user", p_message, images_for_run);
 		current_run_user_message_id = user_msg.id; // Store for checkpoint anchoring
 		_append_message_ui(user_msg);
 	}
@@ -1328,6 +1398,115 @@ void AIStatusPanel::_request_cancel() {
 	}
 }
 
+void AIStatusPanel::_add_pending_image(Ref<Image> p_image) {
+	// Encode (resizes to 512px max)
+	String b64 = _encode_image_for_api(p_image);
+	if (b64.is_empty()) {
+		WARN_PRINT("AI: Failed to encode clipboard image.");
+		return;
+	}
+	pending_images.push_back(b64);
+	pending_images_raw.push_back(p_image);
+	_rebuild_image_preview_strip();
+	_update_send_button_state();
+}
+
+void AIStatusPanel::_remove_pending_image(int p_index) {
+	if (p_index < 0 || p_index >= pending_images.size()) {
+		return;
+	}
+	pending_images.remove_at(p_index);
+	pending_images_raw.remove_at(p_index);
+	_rebuild_image_preview_strip();
+	_update_send_button_state();
+}
+
+void AIStatusPanel::_clear_pending_images() {
+	pending_images.clear();
+	pending_images_raw.clear();
+	_rebuild_image_preview_strip();
+}
+
+void AIStatusPanel::_rebuild_image_preview_strip() {
+	if (!image_preview_strip) {
+		return;
+	}
+	// Remove all existing thumbnails
+	while (image_preview_strip->get_child_count() > 0) {
+		Node *child = image_preview_strip->get_child(0);
+		image_preview_strip->remove_child(child);
+		child->queue_free();
+	}
+	// Rebuild from pending_images_raw
+	for (int i = 0; i < pending_images_raw.size(); i++) {
+		PanelContainer *thumb_panel = memnew(PanelContainer);
+		Ref<StyleBoxFlat> thumb_style;
+		thumb_style.instantiate();
+		thumb_style->set_bg_color(AIColors::BG_3);
+		thumb_style->set_corner_radius_all(AIColors::CORNER_RADIUS_SM * EDSCALE);
+		thumb_style->set_content_margin_all(2 * EDSCALE);
+		thumb_panel->add_theme_style_override("panel", thumb_style);
+
+		VBoxContainer *inner = memnew(VBoxContainer);
+		thumb_panel->add_child(inner);
+
+		TextureRect *tex = memnew(TextureRect);
+		Ref<ImageTexture> img_tex = ImageTexture::create_from_image(pending_images_raw[i]);
+		tex->set_texture(img_tex);
+		tex->set_stretch_mode(TextureRect::STRETCH_KEEP_ASPECT_COVERED);
+		tex->set_custom_minimum_size(Size2(64, 64) * EDSCALE);
+		inner->add_child(tex);
+
+		Button *remove_btn = memnew(Button);
+		remove_btn->set_text("x");
+		remove_btn->set_flat(true);
+		remove_btn->add_theme_color_override("font_color", AIColors::TEXT_MUTED);
+		remove_btn->connect(SceneStringNames::get_singleton()->pressed,
+				callable_mp(this, &AIStatusPanel::_remove_pending_image).bind(i));
+		inner->add_child(remove_btn);
+
+		image_preview_strip->add_child(thumb_panel);
+	}
+	image_preview_strip->set_visible(!pending_images_raw.is_empty());
+}
+
+void AIStatusPanel::_show_image_popup(const String &p_base64) {
+	if (!image_popup || !image_popup_tex) {
+		return;
+	}
+	PackedByteArray bytes = CoreBind::Marshalls::get_singleton()->base64_to_raw(p_base64);
+	if (bytes.is_empty()) {
+		return;
+	}
+	Ref<Image> img;
+	img.instantiate();
+	if (img->load_png_from_buffer(bytes) != OK || img->is_empty()) {
+		return;
+	}
+	image_popup_tex->set_texture(ImageTexture::create_from_image(img));
+
+	// Size popup to 85% of viewport, preserving image aspect ratio
+	Size2 vp = get_viewport()->get_visible_rect().size;
+	Size2 max_size = vp * 0.85f;
+	float aspect = (float)img->get_width() / (float)img->get_height();
+	Size2 popup_size = max_size;
+	if (popup_size.x / aspect > max_size.y) {
+		popup_size.x = max_size.y * aspect;
+	} else {
+		popup_size.y = popup_size.x / aspect;
+	}
+	image_popup->set_size(popup_size);
+	image_popup->popup_centered();
+}
+
+void AIStatusPanel::_on_thumbnail_gui_input(const Ref<InputEvent> &p_event, const String &p_base64) {
+	Ref<InputEventMouseButton> mb = p_event;
+	if (mb.is_valid() && mb->is_pressed() && mb->get_button_index() == MouseButton::LEFT) {
+		_show_image_popup(p_base64);
+		get_viewport()->set_input_as_handled();
+	}
+}
+
 Array AIStatusPanel::_build_model_messages() {
 	Array messages;
 	context_was_truncated = false;
@@ -1363,6 +1542,9 @@ Array AIStatusPanel::_build_model_messages() {
 
 	for (int i = transcript.size() - 1; i >= 0; i--) {
 		total_chars += transcript[i].content.length();
+		for (int j = 0; j < transcript[i].images.size(); j++) {
+			total_chars += transcript[i].images[j].length();
+		}
 
 		if (total_chars > max_context_chars) {
 			start_index = i + 1;
@@ -1391,13 +1573,26 @@ Array AIStatusPanel::_build_model_messages() {
 			content = ts + content;
 		}
 		msg["content"] = content;
+
+		// Attach images as internal key for providers to format per their wire spec
+		if (transcript[i].has_images()) {
+			Array img_array;
+			for (int j = 0; j < transcript[i].images.size(); j++) {
+				img_array.push_back(transcript[i].images[j]);
+			}
+			msg["_images"] = img_array;
+		}
+
 		messages.push_back(msg);
 	}
-	
+
 	// Log context info
 	int final_chars = 0;
 	for (int i = start_index; i < transcript.size(); i++) {
 		final_chars += transcript[i].content.length();
+		for (int j = 0; j < transcript[i].images.size(); j++) {
+			final_chars += transcript[i].images[j].length();
+		}
 	}
 	print_line(vformat("AI: Built %d messages for context (%d chars)%s",
 		messages.size(), final_chars, context_was_truncated ? " [TRUNCATED]" : ""));
@@ -1417,7 +1612,7 @@ void AIStatusPanel::_on_send_button_pressed() {
 			}
 
 			String prompt_text = prompt_edit->get_text().strip_edges();
-			if (prompt_text.is_empty()) {
+			if (prompt_text.is_empty() && pending_images.is_empty()) {
 				return;
 			}
 
@@ -1492,6 +1687,21 @@ void AIStatusPanel::_on_prompt_text_changed() {
 void AIStatusPanel::_on_prompt_gui_input(const Ref<InputEvent> &p_event) {
 	Ref<InputEventKey> key_event = p_event;
 	if (key_event.is_valid() && key_event->is_pressed()) {
+		// Ctrl+V: intercept before TextEdit if clipboard has an image
+		if (key_event->get_keycode() == Key::V && key_event->is_ctrl_pressed() &&
+				!key_event->is_shift_pressed() && !key_event->is_alt_pressed()) {
+			DisplayServer *ds = DisplayServer::get_singleton();
+			if (ds && ds->clipboard_has_image()) {
+				Ref<Image> img = ds->clipboard_get_image();
+				if (img.is_valid() && !img->is_empty()) {
+					_add_pending_image(img);
+					prompt_edit->accept_event();
+					return;
+				}
+			}
+			// No image on clipboard — fall through to normal text paste
+		}
+
 		if (key_event->get_keycode() == Key::ENTER) {
 			if (key_event->is_shift_pressed()) {
 				// Shift+Enter: insert newline explicitly
@@ -2409,6 +2619,14 @@ AIStatusPanel::AIStatusPanel() {
 	queue_container->add_child(queue_header_label);
 
 	// ========================================
+	// Image preview strip (hidden when empty)
+	// ========================================
+	image_preview_strip = memnew(HBoxContainer);
+	image_preview_strip->add_theme_constant_override("separation", AIColors::PADDING_XS * EDSCALE);
+	image_preview_strip->set_visible(false);
+	add_child(image_preview_strip);
+
+	// ========================================
 	// Input bar (bottom)
 	// ========================================
 	HBoxContainer *input_bar = memnew(HBoxContainer);
@@ -2692,6 +2910,18 @@ AIStatusPanel::AIStatusPanel() {
 	continue_revert_button->add_theme_color_override("font_hover_color", AIColors::TEXT_PRIMARY);
 	continue_revert_button->add_theme_color_override("font_disabled_color", AIColors::TEXT_DISABLED);
 	button_row->add_child(continue_revert_button);
+
+	// ========================================
+	// Image lightbox popup
+	// ========================================
+	image_popup = memnew(PopupPanel);
+	image_popup_tex = memnew(TextureRect);
+	image_popup_tex->set_stretch_mode(TextureRect::STRETCH_KEEP_ASPECT_CENTERED);
+	image_popup_tex->set_expand_mode(TextureRect::EXPAND_FIT_WIDTH_PROPORTIONAL);
+	image_popup_tex->set_h_size_flags(SIZE_EXPAND_FILL);
+	image_popup_tex->set_v_size_flags(SIZE_EXPAND_FILL);
+	image_popup->add_child(image_popup_tex);
+	add_child(image_popup);
 }
 
 AIStatusPanel::~AIStatusPanel() {
