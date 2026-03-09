@@ -376,15 +376,21 @@ Dictionary exec_list_files(const Dictionary &args) {
 
 	Array objects;
 	_collect_tree(directory, 1, max_depth, suffix_filter, include_hidden, objects);
+	objects.sort();
 
 	print_line(vformat("AI: list_files '%s' depth=%d → %d objects", directory, max_depth, objects.size()));
 
 	// Build resolved args for display (fills in defaults, normalises float depth → int)
+	// Defaulted params are shown as strings with "(default)" annotation.
+	bool depth_defaulted = !args.has("depth");
+	bool glob_defaulted = !args.has("glob");
+	bool hidden_defaulted = !args.has("include_hidden");
+
 	Dictionary display_args;
 	display_args["directory"] = directory;
-	display_args["depth"] = max_depth; // always int, even if AI sent 0.0
-	display_args["glob"] = suffix_filter.is_empty() ? Variant() : Variant(suffix_filter);
-	display_args["include_hidden"] = include_hidden;
+	display_args["depth"] = depth_defaulted ? Variant(vformat("%d (default)", max_depth)) : Variant(max_depth);
+	display_args["glob"] = glob_defaulted ? Variant(String("null (default)")) : (suffix_filter.is_empty() ? Variant() : Variant(suffix_filter));
+	display_args["include_hidden"] = hidden_defaulted ? Variant(vformat("%s (default)", include_hidden ? "true" : "false")) : Variant(include_hidden);
 
 	Dictionary result_data;
 	result_data["objects"] = objects;
