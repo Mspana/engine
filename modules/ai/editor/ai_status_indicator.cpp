@@ -257,6 +257,14 @@ void ToolCollapsibleEntry::update_from_tool_result(const Dictionary &p_tool_resu
 				body_content += vformat("\nCode: %s", error_code);
 			}
 			body_content += vformat("\nMessage: %s", error_msg);
+			// Show what the model was actually trying to say
+			if (error.has("details") && error["details"].get_type() == Variant::DICTIONARY) {
+				Dictionary details = error["details"];
+				String raw = details.get("raw_response_preview", "");
+				if (!raw.is_empty()) {
+					body_content += vformat("\n\nModel attempted:\n%s", raw);
+				}
+			}
 		}
 	} else {
 		body_content = vformat("Status: %s", status);

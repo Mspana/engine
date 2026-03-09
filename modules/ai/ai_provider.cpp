@@ -231,6 +231,7 @@ BEHAVIORAL RULES:
    - In 2-4 sentences: restate the user's goal or goals, then describe what you intend to do..
    - Skip narration only for pure Q&A (no actions at all) — go directly to FINAL MODE instead.
    - Narration does NOT execute anything. It is a brief planning statement before the action loop begins.
+   - After narration, your next response MUST be ACTION MODE. Never output mode: narration more than once per user request.
    - Example: "The user wants to add a physics ball. I'll check the current scene tree first, then create a RigidBody3D with a sphere mesh and CollisionShape3D."
 
 1. PREAMBLE (assistant_text in ACTION MODE):
@@ -710,6 +711,11 @@ Dictionary OpenAIProvider::build_request_body_with_messages(const Array &p_messa
 	body["temperature"] = temperature;
 	body["max_tokens"] = max_tokens;
 
+	// Enforce JSON output at the token-sampling level (prevents plain-text responses)
+	Dictionary response_format;
+	response_format["type"] = "json_object";
+	body["response_format"] = response_format;
+
 	// Build messages array with system prompt first
 	Array messages;
 	
@@ -1173,6 +1179,7 @@ Dictionary GeminiProvider::build_request_body_with_messages(const Array &p_messa
 	Dictionary generation_config;
 	generation_config["temperature"] = temperature;
 	generation_config["maxOutputTokens"] = max_tokens;
+	generation_config["responseMimeType"] = "application/json"; // Enforce JSON output at token level
 	body["generationConfig"] = generation_config;
 
 	return body;
@@ -1543,6 +1550,11 @@ Dictionary XAIProvider::build_request_body_with_messages(const Array &p_messages
 	body["model"] = model;
 	body["temperature"] = temperature;
 	body["max_tokens"] = max_tokens;
+
+	// Enforce JSON output at the token-sampling level (prevents plain-text responses)
+	Dictionary response_format;
+	response_format["type"] = "json_object";
+	body["response_format"] = response_format;
 
 	// Build messages array with system prompt first
 	Array messages;

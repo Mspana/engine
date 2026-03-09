@@ -277,9 +277,19 @@ void AgenticOrchestrator::_process_model_response(const Dictionary &p_response) 
 		return;
 	}
 
+	// Auto-repair: if "actions" is missing but "assistant_text" is present, treat as FINAL MODE.
+	// The model frequently forgets the empty array when summarizing completed work.
+	Dictionary response = p_response.duplicate();
+	if (!response.has("actions") && response.has("assistant_text") &&
+			response["assistant_text"].get_type() == Variant::STRING &&
+			!String(response["assistant_text"]).strip_edges().is_empty()) {
+		print_line("AgenticOrchestrator: Missing 'actions' field with non-empty 'assistant_text' — treating as FINAL MODE.");
+		response["actions"] = Array();
+	}
+
 	// Validate response structure
 	String validation_error;
-	if (!_validate_response(p_response, validation_error)) {
+	if (!_validate_response(response, validation_error)) {
 		current_run.repair_cycles++;
 		print_line(vformat("AgenticOrchestrator: Validation error (repair cycle %d/%d): %s",
 				current_run.repair_cycles, MAX_REPAIR_CYCLES, validation_error));
@@ -306,8 +316,8 @@ void AgenticOrchestrator::_process_model_response(const Dictionary &p_response) 
 	current_run.repair_cycles = 0;
 
 	// Check if final response (empty actions array)
-	if (_is_final_response(p_response)) {
-		String final_message = p_response.get("assistant_text", "");
+	if (_is_final_response(response)) {
+		String final_message = response.get("assistant_text", "");
 		print_line(vformat("AgenticOrchestrator: Final response received: %s", final_message));
 		_emit_run_complete(true, final_message);
 		_is_running = false;
@@ -315,8 +325,8 @@ void AgenticOrchestrator::_process_model_response(const Dictionary &p_response) 
 	}
 
 	// Extract actions and assistant_text
-	Array actions = p_response.get("actions", Array());
-	String assistant_text = p_response.get("assistant_text", "");
+	Array actions = response.get("actions", Array());
+	String assistant_text = response.get("assistant_text", "");
 
 	// Display assistant_text as progress update
 	if (!assistant_text.is_empty()) {
@@ -353,7 +363,7 @@ void AgenticOrchestrator::_process_model_response(const Dictionary &p_response) 
 	} else {
 		WARN_PRINT("AgenticOrchestrator: Received ACTION MODE response with no actions. Treating as validation error.");
 		String error_msg = "Response is in ACTION MODE but contains no actions. Either provide actions or use FINAL MODE with an empty 'actions' array and a non-empty 'assistant_text'.";
-		Dictionary error_tool_result_msg = _create_validation_error_result(error_msg, JSON::stringify(p_response));
+		Dictionary error_tool_result_msg = _create_validation_error_result(error_msg, JSON::stringify(response));
 		current_run.conversation_history.push_back(error_tool_result_msg);
 
 		// Extract the structured data for UI display
@@ -543,7 +553,11 @@ Dictionary AgenticOrchestrator::_create_validation_error_result(const String &p_
 		truncated_response = truncated_response.substr(0, 500) + "... (truncated)";
 	}
 	details["raw_response_preview"] = truncated_response;
-	details["hint"] = "Please output valid JSON with 'assistant_text' (string) and 'actions' (array) fields. For FINAL MODE, use empty actions array. JSON does NOT support comments (// or /* */).";
+	details["required_format"] =
+		"Your next response MUST be valid JSON in one of these exact forms:\n"
+		"  If taking actions: {\"assistant_text\": \"One sentence.\", \"actions\": [{\"action\": \"...\", \"args\": {...}}]}\n"
+		"  If done (FINAL MODE): {\"assistant_text\": \"Your complete reply.\", \"actions\": []}\n"
+		"  Do NOT output plain text. Do NOT omit 'actions'. Do NOT use JSON comments.";
 	error_dict["details"] = details;
 
 	tool_result_data["error"] = error_dict;
@@ -551,7 +565,7 @@ Dictionary AgenticOrchestrator::_create_validation_error_result(const String &p_
 	// Create API-compatible message with role="user" containing the error
 	Dictionary message;
 	message["role"] = "user";
-	message["content"] = vformat("[TOOL_RESULT - VALIDATION ERROR]\n%s\n\nPlease fix your response and try again.", JSON::stringify(tool_result_data, "  "));
+	message["content"] = vformat("[TOOL_RESULT - VALIDATION ERROR]\n%s\n\nRespond now with valid JSON only.", JSON::stringify(tool_result_data, "  "));
 
 	// Also store the structured data for UI display
 	message["_tool_result_data"] = tool_result_data;
@@ -644,10 +658,15 @@ void AgenticOrchestrator::_handle_narration_response(const Dictionary &p_respons
 		return;
 	}
 
-	// Append to conversation history as "assistant" so model has context on next turn
+	// Append to conversation history as "assistant" — store as JSON string (not plain text)
+	// so the model's history stays consistently JSON-formatted. This prevents it from
+	// narrating a second time or responding in plain text on the next turn.
+	Dictionary narration_json;
+	narration_json["mode"] = "narration";
+	narration_json["assistant_text"] = text;
 	Dictionary narration_msg;
 	narration_msg["role"] = "assistant";
-	narration_msg["content"] = text;
+	narration_msg["content"] = JSON::stringify(narration_json);
 	current_run.conversation_history.push_back(narration_msg);
 
 	// Emit for UI to persist and render
