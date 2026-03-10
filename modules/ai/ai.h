@@ -2,6 +2,7 @@
 #define AI_H
 
 #include "core/object/object.h"         // Base class
+#include "core/io/image.h"              // For Ref<Image> in receive_screenshot
 #include "core/variant/array.h"         // For Array return type
 #include "core/string/ustring.h"        // For String parameter type
 #include "core/variant/dictionary.h"    // Added for Dictionary type hint
@@ -97,6 +98,13 @@ public:
 	static void finalize_singleton();
 	// Static getter for easy C++ access to the singleton.
 	static AI *get_singleton();
+
+	// Screenshot routing: called by game_view_plugin, emits screenshot_for_chat signal
+	void receive_screenshot(Ref<Image> p_image);
+
+	// Game screenshot signal chain (for run_and_screenshot action, no cross-module deps)
+	void trigger_game_screenshot();                        // emits game_screenshot_requested
+	void deliver_game_screenshot(const String &p_b64);     // called by GameView, emits game_screenshot_ready
 
 	// Constructor and Destructor
 	AI();

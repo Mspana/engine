@@ -149,6 +149,19 @@ private:
 
 	// Helper to format tool result for display
 	String _format_tool_result_for_display(const Dictionary &p_tool_result);
+
+	// Async run_and_screenshot state (timer-based, never blocks main thread)
+	enum AsyncRnsPhase { ASYNC_RNS_INACTIVE, ASYNC_RNS_POLL_START, ASYNC_RNS_WAIT_VISUAL, ASYNC_RNS_AWAIT_CAPTURE };
+	AsyncRnsPhase _async_rns_phase = ASYNC_RNS_INACTIVE;
+	float _async_rns_wait_seconds = 2.0f;
+	String _async_rns_action_type;
+	Dictionary _async_rns_action_args;
+	uint64_t _async_rns_phase_start_ms = 0;
+
+	void _schedule_rns_tick(float p_delay = 0.05f);
+	void _run_and_screenshot_tick();
+	void _on_async_rns_capture_received(const String &p_b64);
+	void _on_async_rns_complete(const Dictionary &p_exec_result);
 };
 
 #endif // AGENTIC_ORCHESTRATOR_H

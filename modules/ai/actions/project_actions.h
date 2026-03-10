@@ -45,6 +45,11 @@ Dictionary exec_delete_asset(const Dictionary &args);
 // Returns: Dictionary with status="success"|"error", result/error fields
 Dictionary exec_run_project(const Dictionary &args);
 
+// Runs the project, waits, captures a screenshot, then stops the game.
+// Optional args: wait_seconds (float, default 2.0, clamped 0.5-10.0)
+// Returns: Dictionary with status="success"|"error", result: { screenshot (base64 PNG), wait_seconds }
+Dictionary exec_run_and_screenshot(const Dictionary &args);
+
 } // namespace AIProjectActions
 
 #endif // AI_PROJECT_ACTIONS_H

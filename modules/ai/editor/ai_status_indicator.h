@@ -38,6 +38,7 @@
 #include "scene/gui/color_rect.h"
 #include "scene/gui/label.h"
 #include "scene/gui/panel_container.h"
+#include "scene/gui/rich_text_label.h"
 #include "scene/gui/scroll_container.h"
 #include "scene/gui/separator.h"
 #include "scene/gui/text_edit.h"
@@ -58,7 +59,7 @@ class ThinkingCollapsibleEntry : public VBoxContainer {
 private:
 	bool is_collapsed = true;
 	Button *toggle_button = nullptr;
-	Label *body_label = nullptr;
+	RichTextLabel *body_label = nullptr;
 
 	void _on_toggle_pressed();
 
@@ -247,7 +248,6 @@ private:
 	Array _build_model_messages();
 
 	// Image paste and preview
-	void _add_pending_image(Ref<Image> p_image);
 	void _remove_pending_image(int p_index);
 	void _clear_pending_images();
 	void _rebuild_image_preview_strip();
@@ -334,6 +334,7 @@ protected:
 
 public:
 	void check_api_connectivity();
+	void _add_pending_image(Ref<Image> p_image); // Public: called via AI signal from game_view_plugin
 
 	AIStatusPanel();
 	~AIStatusPanel();

@@ -521,5 +521,12 @@ Dictionary exec_run_project(const Dictionary &args) {
 #endif
 }
 
+Dictionary exec_run_and_screenshot(const Dictionary &args) {
+	// In agentic mode the orchestrator intercepts this action and handles
+	// async wait + screenshot via SceneTree timers. This fallback is for
+	// direct/legacy calls only — it just starts the game.
+	return exec_run_project(Dictionary());
+}
+
 } // namespace AIProjectActions
 

@@ -175,13 +175,18 @@ ThinkingCollapsibleEntry::ThinkingCollapsibleEntry() {
 	toggle_button->connect(SceneStringNames::get_singleton()->pressed, callable_mp(this, &ThinkingCollapsibleEntry::_on_toggle_pressed));
 	add_child(toggle_button);
 
-	// Body label - hidden by default, muted color
-	body_label = memnew(Label);
+	// Body label - hidden by default, muted color, selectable via RichTextLabel
+	body_label = memnew(RichTextLabel);
 	body_label->set_visible(false);
+	body_label->set_use_bbcode(false);
+	body_label->set_fit_content(true);
+	body_label->set_scroll_active(false);
+	body_label->set_selection_enabled(true);
 	body_label->set_autowrap_mode(TextServer::AUTOWRAP_WORD_SMART);
-	body_label->add_theme_color_override("font_color", AIColors::TEXT_MUTED);
-	body_label->add_theme_font_size_override("font_size", 13 * EDSCALE);
+	body_label->add_theme_color_override("default_color", AIColors::TEXT_MUTED);
+	body_label->add_theme_font_size_override("normal_font_size", 13 * EDSCALE);
 	body_label->add_theme_constant_override("line_separation", 4);
+	body_label->add_theme_color_override("selection_color", Color(0.3f, 0.6f, 1.0f, 0.3f));
 	Ref<StyleBoxFlat> body_style;
 	body_style.instantiate();
 	body_style.ptr()->set_content_margin_all(AIColors::PADDING_SM * EDSCALE);
@@ -400,7 +405,7 @@ ToolCollapsibleEntry::ToolCollapsibleEntry() {
 	body_text->set_h_size_flags(SIZE_EXPAND_FILL);
 	body_text->set_editable(false);
 	body_text->set_context_menu_enabled(false);
-	body_text->set_shortcut_keys_enabled(false);
+	body_text->set_shortcut_keys_enabled(true); // Allow Ctrl+C to copy selected text
 	body_text->set_selecting_enabled(true);
 	body_text->set_line_wrapping_mode(TextEdit::LINE_WRAPPING_BOUNDARY);
 	body_text->set_custom_minimum_size(Size2(0, 60 * EDSCALE));
@@ -973,7 +978,7 @@ Control *AIStatusPanel::_create_message_bubble(const ChatMessage &p_message) {
 	label->set_selection_enabled(true);
 	label->add_theme_color_override("default_color", AIColors::TEXT_PRIMARY);
 	label->add_theme_color_override("background_color", Color(0, 0, 0, 0));
-	label->add_theme_color_override("selection_color", Color(0, 0, 0, 0));
+	label->add_theme_color_override("selection_color", Color(0.3f, 0.6f, 1.0f, 0.3f));
 	// Remove the editor theme's StyleBox so it doesn't draw its own border/bg on top of the panel
 	Ref<StyleBoxEmpty> label_empty_style;
 	label_empty_style.instantiate();
@@ -1893,7 +1898,7 @@ Control *AIStatusPanel::_create_narration_bubble(const String &p_text) {
 	label->set_use_bbcode(true);
 	label->set_fit_content(true);
 	label->set_scroll_active(false);
-	label->set_selection_enabled(false);
+	label->set_selection_enabled(true);
 	label->add_theme_color_override("default_color", AIColors::TEXT_SECONDARY);
 	label->add_theme_color_override("background_color", Color(0, 0, 0, 0));
 	Ref<StyleBoxEmpty> empty_style;
@@ -2975,6 +2980,15 @@ void AIStatusIndicatorPlugin::_notification(int p_what) {
 			panel = memnew(AIStatusPanel);
 			add_control_to_dock(DOCK_SLOT_RIGHT_UL, panel);
 
+			// Connect AI screenshot signal → panel's _add_pending_image
+			if (Engine::get_singleton()->has_singleton("AI")) {
+				Object *ai_obj = Engine::get_singleton()->get_singleton_object("AI");
+				if (ai_obj && panel) {
+					ai_obj->connect("screenshot_for_chat",
+							callable_mp(panel, &AIStatusPanel::_add_pending_image));
+				}
+			}
+
 			// Create fallback timer (5 minutes = 300 seconds)
 			fallback_timer = memnew(Timer);
 			fallback_timer->set_wait_time(300.0);
@@ -2990,6 +3004,16 @@ void AIStatusIndicatorPlugin::_notification(int p_what) {
 				remove_child(fallback_timer);
 				memdelete(fallback_timer);
 				fallback_timer = nullptr;
+			}
+
+			// Disconnect AI screenshot signal
+			if (Engine::get_singleton()->has_singleton("AI")) {
+				Object *ai_obj = Engine::get_singleton()->get_singleton_object("AI");
+				if (ai_obj && panel && ai_obj->is_connected("screenshot_for_chat",
+						callable_mp(panel, &AIStatusPanel::_add_pending_image))) {
+					ai_obj->disconnect("screenshot_for_chat",
+							callable_mp(panel, &AIStatusPanel::_add_pending_image));
+				}
 			}
 
 			if (panel) {

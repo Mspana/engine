@@ -48,6 +48,7 @@ static const Vector<String> ALLOWED_ACTIONS = {
     "get_node_info","find_nodes_by_type","list_nodes","list_files","read_script","set_project_setting","get_project_settings","create_autoload_singleton","remove_autoload_singleton","import_asset","delete_asset",
     "write_dev_note",
     "update_todos",
+    "run_and_screenshot",
 };
 
 // New helper function to validate a command already parsed into a Dictionary
@@ -309,6 +310,14 @@ bool AI::_validate_command_dictionary(const Dictionary &cmd, String &error_msg) 
             error_msg = "'delete_asset' requires string 'asset_path'.";
             return false;
         }
+    } else if (action == "run_and_screenshot") {
+        if (args.has("wait_seconds")) {
+            Variant::Type t = args["wait_seconds"].get_type();
+            if (t != Variant::FLOAT && t != Variant::INT) {
+                error_msg = "'run_and_screenshot' optional 'wait_seconds' must be a number.";
+                return false;
+            }
+        }
     } else if (action == "run_project" || action == "play_test") {
         // mode is optional string
         if (args.has("mode") && args["mode"].get_type() != Variant::STRING) {
@@ -521,6 +530,8 @@ Dictionary AI::execute_single_action(const Dictionary &p_action) {
         action_result = AIProjectActions::exec_delete_asset(action_args);
     } else if (action_name == "run_project" || action_name == "play_test") {
         action_result = AIProjectActions::exec_run_project(action_args);
+    } else if (action_name == "run_and_screenshot") {
+        action_result = AIProjectActions::exec_run_and_screenshot(action_args);
     } else if (action_name == "list_nodes") {
         action_result = AIReadActions::exec_list_nodes(action_args);
     } else if (action_name == "get_node_info") {
@@ -816,6 +827,15 @@ void AI::_bind_methods() {
     
     // Add properties
     ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "provider", PROPERTY_HINT_RESOURCE_TYPE, "AIProvider"), "set_provider", "get_provider");
+
+    // Screenshot routing
+    ClassDB::bind_method(D_METHOD("receive_screenshot", "image"), &AI::receive_screenshot);
+    ADD_SIGNAL(MethodInfo("screenshot_for_chat", PropertyInfo(Variant::OBJECT, "image", PROPERTY_HINT_RESOURCE_TYPE, "Image")));
+
+    // Game screenshot signal chain (run_and_screenshot action, no cross-module deps)
+    ClassDB::bind_method(D_METHOD("deliver_game_screenshot", "b64"), &AI::deliver_game_screenshot);
+    ADD_SIGNAL(MethodInfo("game_screenshot_requested"));
+    ADD_SIGNAL(MethodInfo("game_screenshot_ready", PropertyInfo(Variant::STRING, "b64")));
 }
 
 void AI::initialize_singleton() {
@@ -833,6 +853,18 @@ void AI::finalize_singleton() {
 
 AI *AI::get_singleton() {
     return singleton;
+}
+
+void AI::receive_screenshot(Ref<Image> p_image) {
+    emit_signal("screenshot_for_chat", p_image);
+}
+
+void AI::trigger_game_screenshot() {
+    emit_signal("game_screenshot_requested");
+}
+
+void AI::deliver_game_screenshot(const String &p_b64) {
+    emit_signal("game_screenshot_ready", p_b64);
 }
 
 // File operation helper implementations

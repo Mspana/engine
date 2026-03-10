@@ -425,7 +425,10 @@ Allowed actions:
   Args: {"asset_path": string (required, res://...)}
 - run_project (alias: play_test): Run/play the project
   Args: {"mode": string (optional, default "play", supported: "play", "headless_smoke"), "scene_path": string (optional)}
-- list_nodes: List nodes in the current scene tree
+- run_and_screenshot: Runs the game briefly, captures a screenshot, then stops. Use to visually verify the result of changes without asking the user.
+  Args: {"wait_seconds": float (optional, default 2.0, clamped 0.5-10.0 — Seconds to let game run before capturing. Use more time if the game needs to load or animate.)}
+  After this action, you will automatically receive the screenshot as an image. Analyze it and continue.)"
+	R"(- list_nodes: List nodes in the current scene tree
   Args: {"root_path": string (optional)}
 - get_node_info: Get detailed information about a single node
   Args: {"node_path": string, "resource_depth": int (optional, default 1; 0=type only, 1=resource primitives, 2+=recurse deeper, -1=unlimited)}

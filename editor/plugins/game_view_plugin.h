@@ -147,6 +147,8 @@ class GameView : public VBoxContainer {
 	Button *camera_override_button = nullptr;
 	MenuButton *camera_override_menu = nullptr;
 
+	Button *ai_screenshot_button = nullptr;
+
 	VSeparator *embedding_separator = nullptr;
 	Button *fixed_size_button = nullptr;
 	Button *keep_aspect_button = nullptr;
@@ -158,6 +160,9 @@ class GameView : public VBoxContainer {
 	Label *state_label = nullptr;
 
 	void _sessions_changed();
+	void _on_ai_screenshot_pressed();
+	void _on_ai_screenshot_requested();
+	void _do_ai_screenshot_capture();
 
 	void _update_debugger_buttons();
 

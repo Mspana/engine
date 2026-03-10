@@ -31,6 +31,7 @@
 #include "game_view_plugin.h"
 
 #include "core/config/project_settings.h"
+#include "core/core_bind.h"
 #include "core/debugger/debugger_marshalls.h"
 #include "core/string/translation_server.h"
 #include "editor/debugger/editor_debugger_node.h"
@@ -612,6 +613,83 @@ void GameView::_hide_selection_toggled(bool p_pressed) {
 	EditorSettings::get_singleton()->set_project_metadata("game_view", "hide_selection", p_pressed);
 }
 
+void GameView::_on_ai_screenshot_pressed() {
+	Ref<Image> img;
+
+	// Prefer rect-based capture when game is embedded and we know its screen position
+	if (embedded_process && embedded_process->is_embedding_completed()) {
+		Rect2i rect = embedded_process->get_screen_embedded_window_rect();
+		if (rect.size.x > 0 && rect.size.y > 0) {
+			img = DisplayServer::get_singleton()->screen_get_image_rect(rect);
+		}
+	}
+
+	// Fallback: full screen capture (works for floating game window)
+	if (!img.is_valid() || img->is_empty()) {
+		img = DisplayServer::get_singleton()->screen_get_image();
+	}
+
+	if (!img.is_valid() || img->is_empty()) {
+		return;
+	}
+
+	// Route to AI panel via AI singleton signal
+	if (Engine::get_singleton()->has_singleton("AI")) {
+		Object *ai_obj = Engine::get_singleton()->get_singleton_object("AI");
+		if (ai_obj) {
+			ai_obj->call("receive_screenshot", img);
+		}
+	}
+}
+
+void GameView::_on_ai_screenshot_requested() {
+	print_line("AI_DBG: _on_ai_screenshot_requested fired — deferring capture");
+	callable_mp(this, &GameView::_do_ai_screenshot_capture).call_deferred();
+}
+
+void GameView::_do_ai_screenshot_capture() {
+	print_line("AI_DBG: _do_ai_screenshot_capture called");
+	bool embedding_done = embedded_process && embedded_process->is_embedding_completed();
+	print_line(vformat("AI_DBG: embedding_completed=%s", embedding_done ? "YES" : "NO"));
+
+	Ref<Image> img;
+	if (embedding_done) {
+		Rect2i rect = embedded_process->get_screen_embedded_window_rect();
+		print_line(vformat("AI_DBG: embedded rect=%d,%d %dx%d", rect.position.x, rect.position.y, rect.size.x, rect.size.y));
+		if (rect.size.x > 0 && rect.size.y > 0) {
+			img = DisplayServer::get_singleton()->screen_get_image_rect(rect);
+			print_line(vformat("AI_DBG: screen_get_image_rect result: valid=%s empty=%s", img.is_valid() ? "YES" : "NO", (img.is_valid() && img->is_empty()) ? "YES" : "NO"));
+		}
+	}
+	if (!img.is_valid() || img->is_empty()) {
+		img = DisplayServer::get_singleton()->screen_get_image();
+		print_line(vformat("AI_DBG: screen_get_image fallback: valid=%s empty=%s", img.is_valid() ? "YES" : "NO", (img.is_valid() && img->is_empty()) ? "YES" : "NO"));
+	}
+
+	String b64;
+	if (img.is_valid() && !img->is_empty()) {
+		Vector<uint8_t> png_bytes = img->save_png_to_buffer();
+		PackedByteArray pba;
+		pba.resize(png_bytes.size());
+		memcpy(pba.ptrw(), png_bytes.ptr(), png_bytes.size());
+		b64 = CoreBind::Marshalls::get_singleton()->raw_to_base64(pba);
+		print_line(vformat("AI_DBG: encoded b64 length=%d", b64.length()));
+	} else {
+		print_line("AI_DBG: capture failed — empty image, delivering empty b64");
+	}
+
+	bool has_ai = Engine::get_singleton()->has_singleton("AI");
+	print_line(vformat("AI_DBG: has_singleton(AI)=%s", has_ai ? "YES" : "NO"));
+	if (has_ai) {
+		Object *ai_obj = Engine::get_singleton()->get_singleton_object("AI");
+		print_line(vformat("AI_DBG: ai_obj=%s", ai_obj ? "valid" : "NULL"));
+		if (ai_obj) {
+			ai_obj->call("deliver_game_screenshot", b64);
+			print_line("AI_DBG: deliver_game_screenshot called");
+		}
+	}
+}
+
 void GameView::_debug_mute_audio_button_pressed() {
 	debug_mute_audio = !debug_mute_audio;
 	debug_mute_audio_button->set_button_icon(get_editor_theme_icon(debug_mute_audio ? SNAME("AudioMute") : SNAME("AudioStreamPlayer")));
@@ -682,6 +760,8 @@ void GameView::_notification(int p_what) {
 
 			camera_override_button->set_button_icon(get_editor_theme_icon(SNAME("Camera")));
 			camera_override_menu->set_button_icon(get_editor_theme_icon(SNAME("GuiTabMenuHl")));
+
+			ai_screenshot_button->set_button_icon(get_editor_theme_icon(SNAME("Camera2D")));
 		} break;
 
 		case NOTIFICATION_READY: {
@@ -727,6 +807,36 @@ void GameView::_notification(int p_what) {
 			}
 
 			_update_ui();
+
+			// Connect to AI singleton for run_and_screenshot capture requests
+			{
+				bool has_ai = Engine::get_singleton()->has_singleton("AI");
+				print_line(vformat("AI_DBG: NOTIFICATION_READY in GameView, has_singleton(AI)=%s", has_ai ? "YES" : "NO"));
+				if (has_ai) {
+					Object *ai_obj = Engine::get_singleton()->get_singleton_object("AI");
+					print_line(vformat("AI_DBG: ai_obj=%s", ai_obj ? "valid" : "NULL"));
+					if (ai_obj) {
+						bool already = ai_obj->is_connected("game_screenshot_requested",
+								callable_mp(this, &GameView::_on_ai_screenshot_requested));
+						print_line(vformat("AI_DBG: already_connected=%s", already ? "YES" : "NO"));
+						if (!already) {
+							ai_obj->connect("game_screenshot_requested",
+									callable_mp(this, &GameView::_on_ai_screenshot_requested));
+							print_line("AI_DBG: connected game_screenshot_requested -> _on_ai_screenshot_requested");
+						}
+					}
+				}
+			}
+		} break;
+		case NOTIFICATION_EXIT_TREE: {
+			if (Engine::get_singleton()->has_singleton("AI")) {
+				Object *ai_obj = Engine::get_singleton()->get_singleton_object("AI");
+				if (ai_obj && ai_obj->is_connected("game_screenshot_requested",
+						callable_mp(this, &GameView::_on_ai_screenshot_requested))) {
+					ai_obj->disconnect("game_screenshot_requested",
+							callable_mp(this, &GameView::_on_ai_screenshot_requested));
+				}
+			}
 		} break;
 		case NOTIFICATION_WM_POSITION_CHANGED: {
 			if (window_wrapper->get_window_enabled()) {
@@ -1032,6 +1142,17 @@ GameView::GameView(Ref<GameViewDebugger> p_debugger, WindowWrapper *p_wrapper) {
 	menu->add_radio_check_item(TTR("Manipulate In-Game"), CAMERA_MODE_INGAME);
 	menu->set_item_checked(menu->get_item_index(CAMERA_MODE_INGAME), true);
 	menu->add_radio_check_item(TTR("Manipulate From Editors"), CAMERA_MODE_EDITORS);
+
+	main_menu_hbox->add_child(memnew(VSeparator));
+
+	ai_screenshot_button = memnew(Button);
+	main_menu_hbox->add_child(ai_screenshot_button);
+	ai_screenshot_button->set_theme_type_variation("FlatButton");
+	ai_screenshot_button->set_tooltip_text(TTRC("Capture screenshot and send to AI chat. (F2)"));
+	ai_screenshot_button->set_accessibility_name(TTRC("AI Screenshot"));
+	ai_screenshot_button->set_shortcut(ED_SHORTCUT("game_view/ai_screenshot", TTRC("AI Screenshot"), Key::F2));
+	ai_screenshot_button->set_shortcut_context(this);
+	ai_screenshot_button->connect(SceneStringName(pressed), callable_mp(this, &GameView::_on_ai_screenshot_pressed));
 
 	embedding_separator = memnew(VSeparator);
 	main_menu_hbox->add_child(embedding_separator);
