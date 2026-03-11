@@ -157,8 +157,10 @@ private:
 	String _async_rns_action_type;
 	Dictionary _async_rns_action_args;
 	uint64_t _async_rns_phase_start_ms = 0;
+	uint32_t _rns_tick_gen = 0; // incremented each _schedule_rns_tick; stale timers are dropped
 
 	void _schedule_rns_tick(float p_delay = 0.05f);
+	void _run_and_screenshot_tick_gen(uint32_t p_gen); // entry point from timer
 	void _run_and_screenshot_tick();
 	void _on_async_rns_capture_received(const String &p_b64);
 	void _on_async_rns_complete(const Dictionary &p_exec_result);

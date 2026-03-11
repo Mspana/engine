@@ -211,6 +211,9 @@ protected:
 	void _notification(int p_what);
 
 public:
+	static GameView *get_singleton() { return singleton; }
+	void request_ai_screenshot();
+
 	void set_state(const Dictionary &p_state);
 	Dictionary get_state() const;
 

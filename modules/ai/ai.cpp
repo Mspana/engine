@@ -34,6 +34,7 @@
 #include "core/io/resource_saver.h"
 #include "modules/gdscript/gdscript.h"
 #include "editor/plugins/script_editor_plugin.h"
+#include "editor/plugins/game_view_plugin.h"
 #include "editor/gui/editor_run_bar.h"
 
 
@@ -833,7 +834,10 @@ void AI::_bind_methods() {
     ADD_SIGNAL(MethodInfo("screenshot_for_chat", PropertyInfo(Variant::OBJECT, "image", PROPERTY_HINT_RESOURCE_TYPE, "Image")));
 
     // Game screenshot signal chain (run_and_screenshot action, no cross-module deps)
+    ClassDB::bind_method(D_METHOD("trigger_game_screenshot"), &AI::trigger_game_screenshot);
     ClassDB::bind_method(D_METHOD("deliver_game_screenshot", "b64"), &AI::deliver_game_screenshot);
+    ClassDB::bind_method(D_METHOD("get_game_is_running"), &AI::get_game_is_running);
+    ClassDB::bind_method(D_METHOD("stop_game"), &AI::stop_game);
     ADD_SIGNAL(MethodInfo("game_screenshot_requested"));
     ADD_SIGNAL(MethodInfo("game_screenshot_ready", PropertyInfo(Variant::STRING, "b64")));
 }
@@ -860,11 +864,37 @@ void AI::receive_screenshot(Ref<Image> p_image) {
 }
 
 void AI::trigger_game_screenshot() {
-    emit_signal("game_screenshot_requested");
+#ifdef TOOLS_ENABLED
+    GameView *gv = GameView::get_singleton();
+    print_line(vformat("AI_DBG: trigger_game_screenshot — GameView found=%s", gv ? "YES" : "NO"));
+    if (gv) {
+        gv->request_ai_screenshot();
+        return;
+    }
+#endif
+    emit_signal("game_screenshot_requested"); // fallback
 }
 
 void AI::deliver_game_screenshot(const String &p_b64) {
     emit_signal("game_screenshot_ready", p_b64);
+}
+
+bool AI::get_game_is_running() const {
+#ifdef TOOLS_ENABLED
+    EditorRunBar *run_bar = EditorRunBar::get_singleton();
+    return run_bar && run_bar->is_playing();
+#else
+    return false;
+#endif
+}
+
+void AI::stop_game() {
+#ifdef TOOLS_ENABLED
+    EditorRunBar *run_bar = EditorRunBar::get_singleton();
+    if (run_bar && run_bar->is_playing()) {
+        run_bar->stop_playing();
+    }
+#endif
 }
 
 // File operation helper implementations

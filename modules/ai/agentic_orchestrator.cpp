@@ -33,7 +33,10 @@
 #include "ai_provider.h"
 
 #include "core/io/json.h"
+#include "core/os/os.h"
 #include "core/os/time.h"
+#include "scene/main/scene_tree.h"
+#include "scene/main/timer.h"
 
 AgenticOrchestrator::AgenticOrchestrator() {
 	_is_running = false;
@@ -63,6 +66,10 @@ void AgenticOrchestrator::_bind_methods() {
 
 	// Bind deferred processing method (called on next frame to avoid ProgressDialog issues)
 	ClassDB::bind_method(D_METHOD("_process_model_response_deferred"), &AgenticOrchestrator::_process_model_response_deferred);
+
+	// Async run_and_screenshot callbacks
+	ClassDB::bind_method(D_METHOD("_run_and_screenshot_tick_gen", "gen"), &AgenticOrchestrator::_run_and_screenshot_tick_gen);
+	ClassDB::bind_method(D_METHOD("_on_async_rns_capture_received", "b64"), &AgenticOrchestrator::_on_async_rns_capture_received);
 
 	ADD_SIGNAL(MethodInfo("run_started"));
 	ADD_SIGNAL(MethodInfo("progress_update", PropertyInfo(Variant::STRING, "status"), PropertyInfo(Variant::INT, "turn")));
@@ -345,6 +352,12 @@ void AgenticOrchestrator::_process_model_response(const Dictionary &p_response) 
 			return;
 		}
 
+		// If run_and_screenshot intercepted the action, _execute_actions returned empty
+		// and the async state machine is now running — do NOT continue the loop here.
+		if (_async_rns_phase != ASYNC_RNS_INACTIVE) {
+			return;
+		}
+
 		// Append tool results to conversation history
 		for (int i = 0; i < tool_results.size(); i++) {
 			Dictionary tool_result_msg = tool_results[i];
@@ -491,6 +504,36 @@ Array AgenticOrchestrator::_execute_actions(const Array &p_actions) {
 		Dictionary action_args = action.get("args", Dictionary());
 
 		print_line(vformat("  - Executing action %d/%d: %s", i + 1, p_actions.size(), action_type));
+
+		// run_and_screenshot is handled asynchronously via SceneTree timers.
+		// Store the action and suspend the loop — the timer chain will resume it.
+		if (action_type == "run_and_screenshot") {
+			_async_rns_action_type = action_type;
+			_async_rns_action_args = action_args;
+			_async_rns_wait_seconds = (float)action_args.get("wait_seconds", 2.0f);
+			_async_rns_phase = ASYNC_RNS_POLL_START;
+			_async_rns_phase_start_ms = Time::get_singleton()->get_ticks_msec();
+
+			// Flush any tool results collected before this action, then start the game.
+			// First emit whatever we have so far.
+			for (int j = 0; j < tool_results.size(); j++) {
+				Dictionary tr = tool_results[j];
+				current_run.conversation_history.push_back(tr);
+				current_run.run_messages.push_back(tr);
+				if (tr.has("_tool_result_data")) {
+					_emit_tool_result(tr["_tool_result_data"]);
+				}
+			}
+			tool_results.clear();
+
+			// Launch the game via command palette (same as exec_run_project)
+			Dictionary run_result = ai->execute_single_action(action); // runs exec_run_and_screenshot → exec_run_project
+			print_line(vformat("AI_RNS: game launch result status=%s", (String)run_result.get("status", "?")));
+
+			_schedule_rns_tick(0.1f);
+			// Return empty — _on_async_rns_complete will resume the loop.
+			return Array();
+		}
 
 		// Call AI singleton's action executor
 		Dictionary exec_result = ai->execute_single_action(action);
@@ -779,4 +822,124 @@ int64_t AgenticOrchestrator::get_user_message_id() const {
 
 void AgenticOrchestrator::set_user_message_id(int64_t p_user_message_id) {
 	current_run.user_message_id = p_user_message_id;
+}
+
+// ---------------------------------------------------------------------------
+// Async run_and_screenshot state machine
+// ---------------------------------------------------------------------------
+
+void AgenticOrchestrator::_schedule_rns_tick(float p_delay) {
+	_rns_tick_gen++;
+	SceneTree *tree = Object::cast_to<SceneTree>(OS::get_singleton()->get_main_loop());
+	ERR_FAIL_NULL(tree);
+	Ref<SceneTreeTimer> timer = tree->create_timer(p_delay);
+	timer->connect("timeout", callable_mp(this, &AgenticOrchestrator::_run_and_screenshot_tick_gen).bind(_rns_tick_gen), CONNECT_ONE_SHOT);
+}
+
+void AgenticOrchestrator::_run_and_screenshot_tick_gen(uint32_t p_gen) {
+	if (p_gen != _rns_tick_gen) {
+		return; // Stale timer from a prior schedule — discard silently
+	}
+	_run_and_screenshot_tick();
+}
+
+void AgenticOrchestrator::_run_and_screenshot_tick() {
+	AI *ai = AI::get_singleton();
+	uint64_t now_ms = Time::get_singleton()->get_ticks_msec();
+
+	if (_async_rns_phase == ASYNC_RNS_POLL_START) {
+		// Wait until the game reports it is running (up to 8s).
+		bool game_running = ai && (bool)ai->call("get_game_is_running");
+		print_line(vformat("AI_RNS: POLL_START game_running=%s elapsed=%dms",
+				game_running ? "YES" : "NO", (int)(now_ms - _async_rns_phase_start_ms)));
+		if (game_running) {
+			_async_rns_phase = ASYNC_RNS_WAIT_VISUAL;
+			_async_rns_phase_start_ms = now_ms;
+			_schedule_rns_tick(0.1f);
+		} else if (now_ms - _async_rns_phase_start_ms > 8000) {
+			_async_rns_phase = ASYNC_RNS_INACTIVE;
+			Dictionary err;
+			err["status"] = "error";
+			Dictionary ed; ed["code"] = "operation_failed"; ed["message"] = "Game did not start within 8 seconds."; ed["details"] = Dictionary();
+			err["error"] = ed;
+			_on_async_rns_complete(err);
+		} else {
+			_schedule_rns_tick(0.15f);
+		}
+
+	} else if (_async_rns_phase == ASYNC_RNS_WAIT_VISUAL) {
+		float elapsed = (now_ms - _async_rns_phase_start_ms) / 1000.0f;
+		print_line(vformat("AI_RNS: WAIT_VISUAL elapsed=%.2fs / %.2fs", elapsed, _async_rns_wait_seconds));
+		if (elapsed >= _async_rns_wait_seconds) {
+			// Time to capture. Connect one-shot listener then trigger.
+			_async_rns_phase = ASYNC_RNS_AWAIT_CAPTURE;
+			_async_rns_phase_start_ms = now_ms;
+
+			Callable cb = callable_mp(this, &AgenticOrchestrator::_on_async_rns_capture_received);
+			ai->connect("game_screenshot_ready", cb, CONNECT_ONE_SHOT);
+			print_line("AI_RNS: triggering game screenshot");
+			ai->trigger_game_screenshot();
+
+			// Schedule a timeout tick (10s).
+			_schedule_rns_tick(10.0f);
+		} else {
+			_schedule_rns_tick(0.1f);
+		}
+
+	} else if (_async_rns_phase == ASYNC_RNS_AWAIT_CAPTURE) {
+		// Real timeout — screenshot never arrived (generation counter ensures this tick is the scheduled 10s one).
+		print_line("AI_RNS: AWAIT_CAPTURE timed out");
+		Callable cb = callable_mp(this, &AgenticOrchestrator::_on_async_rns_capture_received);
+		if (ai && ai->is_connected("game_screenshot_ready", cb)) {
+			ai->disconnect("game_screenshot_ready", cb);
+		}
+		_async_rns_phase = ASYNC_RNS_INACTIVE;
+		Dictionary err;
+		err["status"] = "error";
+		Dictionary ed; ed["code"] = "operation_failed"; ed["message"] = "Screenshot capture timed out (10s)."; ed["details"] = Dictionary();
+		err["error"] = ed;
+		_on_async_rns_complete(err);
+	}
+}
+
+void AgenticOrchestrator::_on_async_rns_capture_received(const String &p_b64) {
+	print_line(vformat("AI_RNS: capture received, b64 len=%d", p_b64.length()));
+	_async_rns_phase = ASYNC_RNS_INACTIVE;
+
+	// Stop the game.
+	AI *ai = AI::get_singleton();
+	if (ai) {
+		ai->call("stop_game");
+	}
+
+	Dictionary exec_result;
+	if (p_b64.is_empty()) {
+		exec_result["status"] = "error";
+		Dictionary ed; ed["code"] = "operation_failed"; ed["message"] = "Screenshot capture failed: empty image."; ed["details"] = Dictionary();
+		exec_result["error"] = ed;
+	} else {
+		exec_result["status"] = "success";
+		Dictionary rd; rd["screenshot_b64"] = p_b64; rd["format"] = "png";
+		exec_result["result"] = rd;
+	}
+	_on_async_rns_complete(exec_result);
+}
+
+void AgenticOrchestrator::_on_async_rns_complete(const Dictionary &p_exec_result) {
+	Dictionary tool_result = _create_tool_result(_async_rns_action_type, _async_rns_action_args, p_exec_result);
+
+	current_run.conversation_history.push_back(tool_result);
+	current_run.run_messages.push_back(tool_result);
+	current_run.total_actions++;
+
+	if (tool_result.has("_tool_result_data")) {
+		_emit_tool_result(tool_result["_tool_result_data"]);
+	}
+
+	if (current_run.cancelled) {
+		_handle_cancellation();
+		return;
+	}
+
+	_send_model_request();
 }

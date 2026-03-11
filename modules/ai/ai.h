@@ -105,6 +105,8 @@ public:
 	// Game screenshot signal chain (for run_and_screenshot action, no cross-module deps)
 	void trigger_game_screenshot();                        // emits game_screenshot_requested
 	void deliver_game_screenshot(const String &p_b64);     // called by GameView, emits game_screenshot_ready
+	bool get_game_is_running() const;                      // returns true if game is currently playing
+	void stop_game();                                      // stops the running game
 
 	// Constructor and Destructor
 	AI();

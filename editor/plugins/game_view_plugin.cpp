@@ -642,6 +642,10 @@ void GameView::_on_ai_screenshot_pressed() {
 	}
 }
 
+void GameView::request_ai_screenshot() {
+	callable_mp(this, &GameView::_do_ai_screenshot_capture).call_deferred();
+}
+
 void GameView::_on_ai_screenshot_requested() {
 	print_line("AI_DBG: _on_ai_screenshot_requested fired — deferring capture");
 	callable_mp(this, &GameView::_do_ai_screenshot_capture).call_deferred();
@@ -807,36 +811,6 @@ void GameView::_notification(int p_what) {
 			}
 
 			_update_ui();
-
-			// Connect to AI singleton for run_and_screenshot capture requests
-			{
-				bool has_ai = Engine::get_singleton()->has_singleton("AI");
-				print_line(vformat("AI_DBG: NOTIFICATION_READY in GameView, has_singleton(AI)=%s", has_ai ? "YES" : "NO"));
-				if (has_ai) {
-					Object *ai_obj = Engine::get_singleton()->get_singleton_object("AI");
-					print_line(vformat("AI_DBG: ai_obj=%s", ai_obj ? "valid" : "NULL"));
-					if (ai_obj) {
-						bool already = ai_obj->is_connected("game_screenshot_requested",
-								callable_mp(this, &GameView::_on_ai_screenshot_requested));
-						print_line(vformat("AI_DBG: already_connected=%s", already ? "YES" : "NO"));
-						if (!already) {
-							ai_obj->connect("game_screenshot_requested",
-									callable_mp(this, &GameView::_on_ai_screenshot_requested));
-							print_line("AI_DBG: connected game_screenshot_requested -> _on_ai_screenshot_requested");
-						}
-					}
-				}
-			}
-		} break;
-		case NOTIFICATION_EXIT_TREE: {
-			if (Engine::get_singleton()->has_singleton("AI")) {
-				Object *ai_obj = Engine::get_singleton()->get_singleton_object("AI");
-				if (ai_obj && ai_obj->is_connected("game_screenshot_requested",
-						callable_mp(this, &GameView::_on_ai_screenshot_requested))) {
-					ai_obj->disconnect("game_screenshot_requested",
-							callable_mp(this, &GameView::_on_ai_screenshot_requested));
-				}
-			}
 		} break;
 		case NOTIFICATION_WM_POSITION_CHANGED: {
 			if (window_wrapper->get_window_enabled()) {
