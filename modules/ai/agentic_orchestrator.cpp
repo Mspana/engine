@@ -115,6 +115,7 @@ void AgenticOrchestrator::run_agentic_loop(const Array &p_initial_messages, Ref<
 	provider = p_provider;
 	_is_running = true;
 	_waiting_for_response = false;
+	_validation_retry_count = 0;
 
 	// Emit run_started signal
 	emit_signal("run_started");
@@ -208,11 +209,28 @@ void AgenticOrchestrator::_on_provider_response(bool p_success, const String &p_
 	JSON json;
 	Error err = json.parse(p_response);
 	if (err != OK) {
-		// JSON parse error - this is a validation error that can be repaired
+		// JSON parse error — model returned plain text instead of JSON
 		String validation_error = vformat("Invalid JSON in response: %s", json.get_error_message());
-		current_run.repair_cycles++;
 
-		print_line(vformat("AgenticOrchestrator: JSON parse error (repair cycle %d/%d): %s",
+		print_line(vformat("AgenticOrchestrator: JSON parse error (validation_retry_count=%d): %s",
+				_validation_retry_count, validation_error));
+
+		if (_validation_retry_count < 1) {
+			// First failure: send a plain reminder message and retry
+			_validation_retry_count++;
+
+			Dictionary reminder_msg;
+			reminder_msg["role"] = "user";
+			reminder_msg["content"] = "Your last response was not valid JSON. You must respond with a JSON action array only — no prose, no explanation. Try again.";
+			current_run.conversation_history.push_back(reminder_msg);
+
+			_send_model_request();
+			return;
+		}
+
+		// Second failure: fall through to the existing repair_cycles mechanism
+		current_run.repair_cycles++;
+		print_line(vformat("AgenticOrchestrator: JSON parse error persists (repair cycle %d/%d): %s",
 				current_run.repair_cycles, MAX_REPAIR_CYCLES, validation_error));
 
 		if (current_run.repair_cycles >= MAX_REPAIR_CYCLES) {
@@ -220,14 +238,13 @@ void AgenticOrchestrator::_on_provider_response(bool p_success, const String &p_
 			return;
 		}
 
-		// Send error back to model and retry
+		// Send full validation error tool result and retry
 		Dictionary error_tool_result_msg = _create_validation_error_result(validation_error, p_response);
 		current_run.conversation_history.push_back(error_tool_result_msg);
 		if (error_tool_result_msg.has("_tool_result_data")) {
 			_emit_tool_result(error_tool_result_msg["_tool_result_data"]);
 		}
 
-		// Request again
 		_send_model_request();
 		return;
 	}

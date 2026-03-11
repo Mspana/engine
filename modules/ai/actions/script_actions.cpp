@@ -58,10 +58,57 @@ Dictionary exec_create_script(const Dictionary &args) {
 	undo_redo->add_undo_method(ai_singleton, "_delete_script_file", abs_path);
 	undo_redo->commit_action();
 
+	// Validate written script: parser + analyzer mirrors full editor error feedback.
+	Array parse_errors;
+	Array warnings;
+	{
+		GDScriptParser parser;
+		Error parse_err = parser.parse(content, abs_path, false);
+
+		for (const GDScriptParser::ParserError &e : parser.get_errors()) {
+			Dictionary err_dict;
+			err_dict["line"] = e.line;
+			err_dict["column"] = e.column;
+			err_dict["message"] = e.message;
+			err_dict["type"] = "syntax";
+			parse_errors.push_back(err_dict);
+		}
+
+		// Only run analyzer if parse succeeded — analyzer requires a valid parse tree
+		if (parse_err == OK && parser.get_errors().is_empty()) {
+			GDScriptAnalyzer analyzer(&parser);
+			analyzer.analyze();
+			for (const GDScriptParser::ParserError &e : parser.get_errors()) {
+				Dictionary err_dict;
+				err_dict["line"] = e.line;
+				err_dict["column"] = e.column;
+				err_dict["message"] = e.message;
+				err_dict["type"] = "semantic";
+				parse_errors.push_back(err_dict);
+			}
+		}
+
+#ifdef DEBUG_ENABLED
+		for (const GDScriptWarning &w : parser.get_warnings()) {
+			Dictionary warn_dict;
+			warn_dict["line"] = w.start_line;
+			warn_dict["message"] = w.get_message();
+			warn_dict["code"] = w.get_name();
+			warnings.push_back(warn_dict);
+		}
+#endif
+	}
+
 	Dictionary result_data;
 	result_data["file_path"] = file_path;
 	result_data["language"] = language;
 	result_data["size"] = content.length();
+	if (!parse_errors.is_empty()) {
+		result_data["parse_errors"] = parse_errors;
+	}
+	if (!warnings.is_empty()) {
+		result_data["warnings"] = warnings;
+	}
 
 	print_line(vformat("AI: Executed create_script. File: %s, Language: %s", file_path, language));
 	return ai_create_success_result(result_data);

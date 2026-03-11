@@ -87,6 +87,8 @@ private:
 	// Body (hidden when collapsed)
 	PanelContainer *body_container = nullptr;
 	TextEdit *body_text = nullptr;
+	TextureRect *body_screenshot = nullptr;
+	String screenshot_b64;
 
 	void _on_toggle_pressed();
 	void _on_header_gui_input(const Ref<InputEvent> &p_event);
@@ -104,6 +106,9 @@ public:
 
 	// Convenience: update from tool result dictionary
 	void update_from_tool_result(const Dictionary &p_tool_result);
+
+	TextureRect *get_screenshot_widget() const { return body_screenshot; }
+	String get_screenshot_b64() const { return screenshot_b64; }
 
 	ToolCollapsibleEntry();
 };

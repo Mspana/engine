@@ -115,6 +115,9 @@ private:
 	// Pending response for deferred processing (avoids ProgressDialog issues)
 	Dictionary _pending_response;
 
+	// Retry counter for plain-text (non-JSON) model responses; reset each run
+	int _validation_retry_count = 0;
+
 	// Async provider callback
 	void _on_provider_response(bool p_success, const String &p_response, const String &p_error);
 
