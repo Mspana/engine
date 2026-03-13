@@ -589,6 +589,10 @@ void AgenticOrchestrator::set_user_message_id(int64_t p_user_message_id) {
 	current_run.user_message_id = p_user_message_id;
 }
 
+Array AgenticOrchestrator::get_conversation_history() const {
+	return current_run.conversation_history;
+}
+
 // ---------------------------------------------------------------------------
 // Async run_and_screenshot state machine
 // ---------------------------------------------------------------------------

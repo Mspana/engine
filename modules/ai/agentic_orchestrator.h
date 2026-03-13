@@ -104,6 +104,9 @@ public:
 	String get_user_message() const;
 	int64_t get_user_message_id() const;
 
+	// Get conversation history (for validation checks like read-before-write)
+	Array get_conversation_history() const;
+
 protected:
 	static void _bind_methods();
 

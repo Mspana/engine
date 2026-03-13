@@ -736,7 +736,7 @@ Array AIProvider::build_tools_array() {
 		Array req;
 		req.push_back("file_path");
 		req.push_back("patch");
-		tools.push_back(_make_tool("update_script", "Update an existing script with new content. Validates with compiler; check parse_errors in result.", props, req));
+		tools.push_back(_make_tool("update_script", "Update an existing script with new content. You MUST call read_script first — this tool will fail if you did not read the file first. Validates with compiler; check parse_errors in result.", props, req));
 	}
 	{
 		Dictionary props;

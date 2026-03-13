@@ -75,7 +75,9 @@ private:
 	// Helper to get active scene path
 	String _get_active_scene_path() const;
 
-	
+	// Check conversation history for a prior read_script call on this file
+	bool _was_file_read_in_history(const String &file_path) const;
+
 	// File operation helpers for UndoRedo
 	void _create_script_file(const String &abs_path, const String &content);
 	void _write_script_file(const String &abs_path, const String &content);
@@ -117,6 +119,9 @@ public:
 
 	// Game session context (auto-captured on stop, injected into next AI turn)
 	Dictionary consume_session_context();                  // returns and clears stored session data
+
+	// Check if a file was read via read_script in the current conversation
+	bool was_file_read(const String &file_path) const;
 
 	// Constructor and Destructor
 	AI();

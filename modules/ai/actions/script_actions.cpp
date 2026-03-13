@@ -139,6 +139,12 @@ Dictionary exec_update_script(const Dictionary &args) {
 			vformat("File does not exist at '%s'", file_path));
 	}
 
+	// Require read_script before update_script (prevents blind overwrites)
+	if (!ai_singleton->was_file_read(file_path)) {
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			vformat("You must call read_script on '%s' before updating it. Read the file first to understand its current contents.", file_path));
+	}
+
 	// Read existing content for undo
 	Ref<FileAccess> file = FileAccess::open(abs_path, FileAccess::READ);
 	if (file.is_null()) {

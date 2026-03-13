@@ -663,6 +663,53 @@ void AI::_process_and_execute_actions(const String &ai_json_response) {
     }
 }
 
+bool AI::_was_file_read_in_history(const String &file_path) const {
+	if (orchestrator.is_valid()) {
+		Array history = orchestrator->get_conversation_history();
+
+		for (int i = 0; i < history.size(); i++) {
+			Dictionary msg = history[i];
+			if (!msg.has("role")) {
+				continue;
+			}
+
+			String role = msg["role"];
+
+			if (role == "assistant" && msg.has("tool_calls")) {
+				Array tool_calls = msg["tool_calls"];
+				for (int j = 0; j < tool_calls.size(); j++) {
+					Dictionary tool_call = tool_calls[j];
+					if (!tool_call.has("function")) {
+						continue;
+					}
+					Dictionary func = tool_call["function"];
+					String func_name = func.get("name", "");
+					if (func_name != "read_script" && func_name != "create_script") {
+						continue;
+					}
+					if (!func.has("arguments")) {
+						continue;
+					}
+					String args_str = func["arguments"];
+					JSON parser;
+					if (parser.parse(args_str) == OK) {
+						Dictionary parsed_args = parser.get_data();
+						if (String(parsed_args.get("file_path", "")) == file_path) {
+							return true;
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return false;
+}
+
+bool AI::was_file_read(const String &file_path) const {
+	return _was_file_read_in_history(file_path);
+}
+
 String AI::_get_active_scene_path() const {
 	EditorInterface *ei = EditorInterface::get_singleton();
 	if (!ei) {
