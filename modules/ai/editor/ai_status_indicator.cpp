@@ -757,8 +757,10 @@ void AIStatusPanel::_rebuild_message_list() {
 				entry->add_theme_style_override("panel", margin_style);
 				ui_element = entry;
 			} else if (msg.role == "narration") {
-				// Narration blocks: planning bubble with left accent stripe
-				ui_element = _create_narration_bubble(msg.content);
+				// Narration from mid-turn assistant text: render as normal assistant bubble
+				ChatMessage as_assistant = msg;
+				as_assistant.role = "assistant";
+				ui_element = _create_message_bubble(as_assistant);
 			} else {
 				// User/Assistant messages: render as bubbles
 				ui_element = _create_message_bubble(msg);
@@ -1902,9 +1904,9 @@ void AIStatusPanel::_on_orchestrator_narration(const String &p_text) {
 		return;
 	}
 
-	chat_store->append_message("narration", p_text);
+	ChatMessage stored = chat_store->append_message("assistant", p_text.strip_edges());
 
-	Control *bubble = _create_narration_bubble(p_text);
+	Control *bubble = _create_message_bubble(stored);
 	if (bubble) {
 		// Insert before pending message if present, otherwise append
 		if (pending_message) {
