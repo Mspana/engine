@@ -306,6 +306,7 @@ private:
 	void _on_orchestrator_tool_result(const Dictionary &p_tool_result);
 	void _on_orchestrator_complete(bool p_success, const String &p_final_message);
 	void _on_orchestrator_narration(const String &p_text);
+	void _on_orchestrator_thinking(const String &p_text);
 	void _on_todos_updated(const Array &p_todos);
 
 	// Pending message helpers

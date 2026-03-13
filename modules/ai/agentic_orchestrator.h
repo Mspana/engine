@@ -54,9 +54,10 @@ class AgenticOrchestrator : public RefCounted {
 
 public:
 	// Guardrail constants
-	static constexpr int MAX_MODEL_TURNS_PER_RUN = 14; // +2 to account for narration turn
+	static constexpr int MAX_MODEL_TURNS_PER_RUN = 12;
+	static constexpr int MAX_ACTIONS_PER_RESPONSE = 12;
 	static constexpr int MAX_ACTIONS_PER_RUN = 25;
-	static constexpr int MAX_REPAIR_CYCLES = 2;
+	// MAX_REPAIR_CYCLES removed — native tool-calling handles validation via the API
 
 	// Per-item in the AI's self-managed task list
 	struct TodoItem {
@@ -71,7 +72,7 @@ public:
 		Array run_messages; // Messages added during this run (tool results)
 		int model_turns = 0;
 		int total_actions = 0;
-		int repair_cycles = 0;
+		// repair_cycles removed — native tool-calling
 		bool cancelled = false;
 		String user_message; // Original user message for context
 		int64_t user_message_id = 0; // Message ID for checkpoint anchoring
@@ -115,9 +116,6 @@ private:
 	// Pending response for deferred processing (avoids ProgressDialog issues)
 	Dictionary _pending_response;
 
-	// Retry counter for plain-text (non-JSON) model responses; reset each run
-	int _validation_retry_count = 0;
-
 	// Async provider callback
 	void _on_provider_response(bool p_success, const String &p_response, const String &p_error);
 
@@ -126,44 +124,34 @@ private:
 
 	// Response processing (deferred to next frame to avoid message queue conflicts)
 	void _process_model_response_deferred();
-	void _process_model_response(const Dictionary &p_response);
 
-	// Internal processing methods
-	bool _validate_response(const Dictionary &p_response, String &r_error);
-	bool _is_final_response(const Dictionary &p_response);
-	Array _execute_actions(const Array &p_actions);
-	Dictionary _create_tool_result(const String &p_action_type, const Dictionary &p_action_args, const Dictionary &p_exec_result);
-	Dictionary _create_validation_error_result(const String &p_error_message, const String &p_raw_response);
-	String _generate_action_id();
+	// Native tool-calling response processing
+	void _process_native_tool_response(const Dictionary &p_api_response);
+
+	// Execute a single tool call and return the result as a tool message
+	Dictionary _execute_tool_call(const String &p_call_id, const String &p_tool_name, const Dictionary &p_args);
 
 	// Guardrail handlers
 	void _handle_cancellation();
 	void _handle_max_turns_exceeded();
 	void _handle_max_actions_exceeded();
-	void _handle_max_repairs_exceeded(const String &p_validation_error);
 
 	// Signal emissions
 	void _emit_progress_update(const String &p_status, int p_turn);
 	void _emit_tool_result(const Dictionary &p_tool_result);
 	void _emit_run_complete(bool p_success, const String &p_final_message);
 
-	// Narration handling
-	void _handle_narration_response(const Dictionary &p_response);
-
-	// Helper to format tool result for display
-	String _format_tool_result_for_display(const Dictionary &p_tool_result);
-
 	// Async run_and_screenshot state (timer-based, never blocks main thread)
 	enum AsyncRnsPhase { ASYNC_RNS_INACTIVE, ASYNC_RNS_POLL_START, ASYNC_RNS_WAIT_VISUAL, ASYNC_RNS_AWAIT_CAPTURE };
 	AsyncRnsPhase _async_rns_phase = ASYNC_RNS_INACTIVE;
 	float _async_rns_wait_seconds = 2.0f;
-	String _async_rns_action_type;
+	String _async_rns_tool_call_id; // tool_call_id for native format
 	Dictionary _async_rns_action_args;
 	uint64_t _async_rns_phase_start_ms = 0;
-	uint32_t _rns_tick_gen = 0; // incremented each _schedule_rns_tick; stale timers are dropped
+	uint32_t _rns_tick_gen = 0;
 
 	void _schedule_rns_tick(float p_delay = 0.05f);
-	void _run_and_screenshot_tick_gen(uint32_t p_gen); // entry point from timer
+	void _run_and_screenshot_tick_gen(uint32_t p_gen);
 	void _run_and_screenshot_tick();
 	void _on_async_rns_capture_received(const String &p_b64);
 	void _on_async_rns_complete(const Dictionary &p_exec_result);

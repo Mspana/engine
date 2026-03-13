@@ -49,8 +49,14 @@ public:
 	virtual PackedStringArray get_request_headers() const;
 	virtual String get_request_url() const;
 
-	// System prompt explaining the action format
+	// System prompt explaining the action format (legacy JSON format)
 	static String get_system_prompt();
+
+	// System prompt for native tool-calling (no JSON schema, tools defined in API request)
+	static String get_system_prompt_native_tools();
+
+	// Build OpenAI-compatible tools array for native tool-calling
+	static Array build_tools_array();
 
 	// Vision capability check — returns true if the named model accepts image input
 	static bool model_supports_vision(const String &p_model);

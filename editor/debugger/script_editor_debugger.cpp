@@ -1428,6 +1428,25 @@ void ScriptEditorDebugger::set_move_to_foreground(const bool &p_move_to_foregrou
 	move_to_foreground = p_move_to_foreground;
 }
 
+String ScriptEditorDebugger::get_errors_text() const {
+	String result;
+	if (!error_tree) {
+		return result;
+	}
+	TreeItem *root = error_tree->get_root();
+	if (!root) {
+		return result;
+	}
+	TreeItem *item = root->get_first_child();
+	while (item) {
+		bool is_warning = item->has_meta("_is_warning") && (bool)item->get_meta("_is_warning");
+		String prefix = is_warning ? "WARNING" : "ERROR";
+		result += vformat("[%s] %s %s\n", prefix, item->get_text(0), item->get_text(1));
+		item = item->get_next();
+	}
+	return result;
+}
+
 String ScriptEditorDebugger::get_stack_script_file() const {
 	TreeItem *ti = stack_dump->get_selected();
 	if (!ti) {

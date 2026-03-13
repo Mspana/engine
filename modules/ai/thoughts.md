@@ -31,3 +31,5 @@
 - **Git / version control integration**: Necessary for tracking changes made by the model.
 
 Should think about merging the plan with commentary. allow commentary w/o tasks. would really need to ensure that the prompt is rock solid so we don't get just commentary hallucinating. this wouldn't be a new thing though, it already does this.
+
+Screenshot logic doesn't properly screenshot if the game isn't focused. if it's not focused, it just screenshots whatever happens to be on that portion of the screen.

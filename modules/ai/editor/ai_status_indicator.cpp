@@ -675,6 +675,9 @@ void AIStatusPanel::_notification(int p_what) {
 						if (!orchestrator->is_connected("narration_ready", callable_mp(this, &AIStatusPanel::_on_orchestrator_narration))) {
 							orchestrator->connect("narration_ready", callable_mp(this, &AIStatusPanel::_on_orchestrator_narration));
 						}
+						if (!orchestrator->is_connected("thinking_ready", callable_mp(this, &AIStatusPanel::_on_orchestrator_thinking))) {
+							orchestrator->connect("thinking_ready", callable_mp(this, &AIStatusPanel::_on_orchestrator_thinking));
+						}
 						if (!orchestrator->is_connected("todos_updated", callable_mp(this, &AIStatusPanel::_on_todos_updated))) {
 							orchestrator->connect("todos_updated", callable_mp(this, &AIStatusPanel::_on_todos_updated));
 						}
@@ -1964,17 +1967,15 @@ Control *AIStatusPanel::_create_narration_bubble(const String &p_text) {
 	return align;
 }
 
-void AIStatusPanel::_on_orchestrator_progress(const String &p_status, int p_turn) {
-	// If it's actual assistant reasoning text (not a status message), show as thinking dropdown
-	if (!p_status.begins_with("Thinking...") && !p_status.begins_with("Cancelling")) {
-		_append_thinking_ui(p_status);
-	}
+void AIStatusPanel::_on_orchestrator_thinking(const String &p_text) {
+	_append_thinking_ui(p_text);
+}
 
-	// Always update status label
+void AIStatusPanel::_on_orchestrator_progress(const String &p_status, int p_turn) {
+	// Progress now only handles status bar updates — thinking comes via thinking_ready signal
 	if (status_label) {
-		status_label->set_text(vformat("Turn %d: %s", p_turn, p_status.begins_with("Thinking...") ? p_status : TTR("Thinking...")));
+		status_label->set_text(vformat("Turn %d: %s", p_turn, p_status));
 	}
-	// Refresh context usage to reflect accumulated thinking messages added to the store
 	_refresh_context_usage();
 
 	print_verbose(vformat("AI Chat Panel: Agentic progress (turn %d): %s", p_turn, p_status));
@@ -3011,6 +3012,9 @@ AIStatusPanel::~AIStatusPanel() {
 				}
 				if (orchestrator->is_connected("checkpoint_recommended", callable_mp(this, &AIStatusPanel::_on_checkpoint_recommended))) {
 					orchestrator->disconnect("checkpoint_recommended", callable_mp(this, &AIStatusPanel::_on_checkpoint_recommended));
+				}
+				if (orchestrator->is_connected("thinking_ready", callable_mp(this, &AIStatusPanel::_on_orchestrator_thinking))) {
+					orchestrator->disconnect("thinking_ready", callable_mp(this, &AIStatusPanel::_on_orchestrator_thinking));
 				}
 				if (orchestrator->is_connected("todos_updated", callable_mp(this, &AIStatusPanel::_on_todos_updated))) {
 					orchestrator->disconnect("todos_updated", callable_mp(this, &AIStatusPanel::_on_todos_updated));

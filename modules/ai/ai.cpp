@@ -36,6 +36,10 @@
 #include "editor/plugins/script_editor_plugin.h"
 #include "editor/plugins/game_view_plugin.h"
 #include "editor/gui/editor_run_bar.h"
+#include "editor/editor_log.h"
+#include "editor/editor_node.h"
+#include "editor/debugger/editor_debugger_node.h"
+#include "editor/debugger/script_editor_debugger.h"
 
 
 // Define and initialize the static singleton pointer.
@@ -835,6 +839,7 @@ void AI::_bind_methods() {
 
     // Game screenshot signal chain (run_and_screenshot action, no cross-module deps)
     ClassDB::bind_method(D_METHOD("trigger_game_screenshot"), &AI::trigger_game_screenshot);
+    ClassDB::bind_method(D_METHOD("_connect_debugger_signals"), &AI::_connect_debugger_signals);
     ClassDB::bind_method(D_METHOD("deliver_game_screenshot", "b64"), &AI::deliver_game_screenshot);
     ClassDB::bind_method(D_METHOD("get_game_is_running"), &AI::get_game_is_running);
     ClassDB::bind_method(D_METHOD("stop_game"), &AI::stop_game);
@@ -845,6 +850,7 @@ void AI::_bind_methods() {
 void AI::initialize_singleton() {
     ERR_FAIL_COND_MSG(singleton != nullptr, "AI singleton already initialized.");
     singleton = memnew(AI);
+    singleton->call_deferred("_connect_debugger_signals");
 }
 
 void AI::finalize_singleton() {
@@ -876,6 +882,12 @@ void AI::trigger_game_screenshot() {
 }
 
 void AI::deliver_game_screenshot(const String &p_b64) {
+    if (_session_screenshot_pending) {
+        // Captured for session context (game stopped), not for run_and_screenshot
+        _session_screenshot_pending = false;
+        _last_session_screenshot_b64 = p_b64;
+        return;
+    }
     emit_signal("game_screenshot_ready", p_b64);
 }
 
@@ -895,6 +907,59 @@ void AI::stop_game() {
         run_bar->stop_playing();
     }
 #endif
+}
+
+void AI::_connect_debugger_signals() {
+#ifdef TOOLS_ENABLED
+    EditorDebuggerNode *edn = EditorDebuggerNode::get_singleton();
+    if (!edn) {
+        return;
+    }
+    ScriptEditorDebugger *dbg = edn->get_default_debugger();
+    if (dbg && !dbg->is_connected("stopped", callable_mp(this, &AI::_on_game_session_stopped))) {
+        dbg->connect("stopped", callable_mp(this, &AI::_on_game_session_stopped));
+    }
+#endif
+}
+
+void AI::_on_game_session_stopped() {
+#ifdef TOOLS_ENABLED
+    // Capture a screenshot of the game view immediately before it transitions
+    GameView *gv = GameView::get_singleton();
+    if (gv) {
+        _session_screenshot_pending = true;
+        gv->request_ai_screenshot();
+    }
+#endif
+}
+
+Dictionary AI::consume_session_context() {
+    Dictionary ctx;
+#ifdef TOOLS_ENABLED
+    // Output log — still populated until next session clears it
+    EditorLog *el = EditorNode::get_log();
+    if (el) {
+        String log_text = el->get_text();
+        if (!log_text.is_empty()) {
+            ctx["output_log"] = log_text;
+        }
+    }
+    // Errors from the debugger error tree
+    EditorDebuggerNode *edn = EditorDebuggerNode::get_singleton();
+    if (edn) {
+        ScriptEditorDebugger *dbg = edn->get_default_debugger();
+        if (dbg && dbg->get_error_count() > 0) {
+            ctx["errors"] = dbg->get_errors_text();
+            ctx["error_count"] = dbg->get_error_count();
+        }
+    }
+    // Screenshot captured at session end (async, may arrive slightly after)
+    if (!_last_session_screenshot_b64.is_empty()) {
+        ctx["screenshot_b64"] = _last_session_screenshot_b64;
+        _last_session_screenshot_b64 = "";
+    }
+#endif
+    return ctx;
 }
 
 // File operation helper implementations

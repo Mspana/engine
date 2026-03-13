@@ -46,6 +46,13 @@ private:
 	void _on_agentic_progress(const String &p_status, int p_turn);
 	void _on_agentic_complete(bool p_success, const String &p_final_message);
 
+	// Game session context storage (populated on debugger stop, cleared after AI consumes it)
+	String _last_session_screenshot_b64;
+	bool _session_screenshot_pending = false;
+
+	void _connect_debugger_signals();
+	void _on_game_session_stopped();
+
 	// Journal
 	AIJournalWriter *_journal_writer = nullptr;
 	Array _run_action_buffer;   // Cleared at run start, accumulates _tool_result_data dicts
@@ -107,6 +114,9 @@ public:
 	void deliver_game_screenshot(const String &p_b64);     // called by GameView, emits game_screenshot_ready
 	bool get_game_is_running() const;                      // returns true if game is currently playing
 	void stop_game();                                      // stops the running game
+
+	// Game session context (auto-captured on stop, injected into next AI turn)
+	Dictionary consume_session_context();                  // returns and clears stored session data
 
 	// Constructor and Destructor
 	AI();

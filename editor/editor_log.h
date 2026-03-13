@@ -185,6 +185,7 @@ public:
 	void deinit();
 
 	void clear();
+	String get_text() const { return log ? log->get_parsed_text() : String(); }
 
 	EditorLog();
 	~EditorLog();

@@ -77,6 +77,7 @@ void AgenticOrchestrator::_bind_methods() {
 	ADD_SIGNAL(MethodInfo("run_complete", PropertyInfo(Variant::BOOL, "success"), PropertyInfo(Variant::STRING, "final_message")));
 	ADD_SIGNAL(MethodInfo("checkpoint_recommended", PropertyInfo(Variant::INT, "user_message_id")));
 	ADD_SIGNAL(MethodInfo("narration_ready", PropertyInfo(Variant::STRING, "text")));
+	ADD_SIGNAL(MethodInfo("thinking_ready", PropertyInfo(Variant::STRING, "text")));
 	ADD_SIGNAL(MethodInfo("todos_updated", PropertyInfo(Variant::ARRAY, "todos")));
 	ClassDB::bind_method(D_METHOD("set_todos", "todos"), &AgenticOrchestrator::set_todos);
 }
@@ -95,10 +96,49 @@ void AgenticOrchestrator::run_agentic_loop(const Array &p_initial_messages, Ref<
 
 	// Initialize run context
 	current_run.conversation_history = p_initial_messages.duplicate();
+
+	// Inject game session context (output log + errors + screenshot) if available from last run
+	{
+		AI *ai_singleton = AI::get_singleton();
+		if (ai_singleton) {
+			Dictionary session_ctx = ai_singleton->consume_session_context();
+			if (!session_ctx.is_empty()) {
+				String ctx_text = "[LAST GAME SESSION]\n";
+				if (session_ctx.has("error_count")) {
+					ctx_text += vformat("Errors: %d\n", (int)session_ctx["error_count"]);
+				}
+				if (session_ctx.has("errors")) {
+					ctx_text += vformat("Error details:\n%s\n", (String)session_ctx["errors"]);
+				}
+				if (session_ctx.has("output_log")) {
+					// Trim to last 100 lines to avoid blowing context
+					String log = session_ctx["output_log"];
+					PackedStringArray lines = log.split("\n");
+					int start = MAX(0, lines.size() - 100);
+					String trimmed;
+					for (int i = start; i < lines.size(); i++) {
+						trimmed += lines[i] + "\n";
+					}
+					ctx_text += vformat("Output log:\n%s", trimmed);
+				}
+				Dictionary ctx_msg;
+				ctx_msg["role"] = "user";
+				ctx_msg["content"] = ctx_text;
+				if (session_ctx.has("screenshot_b64")) {
+					Array imgs;
+					imgs.push_back(session_ctx["screenshot_b64"]);
+					ctx_msg["_images"] = imgs;
+				}
+				// Insert before the last user message (the current prompt)
+				current_run.conversation_history.insert(
+						MAX(0, current_run.conversation_history.size() - 1), ctx_msg);
+			}
+		}
+	}
+
 	current_run.run_messages.clear();
 	current_run.model_turns = 0;
 	current_run.total_actions = 0;
-	current_run.repair_cycles = 0;
 	current_run.cancelled = false;
 	current_run.user_message = "";
 	current_run.user_message_id = 0;
@@ -115,7 +155,6 @@ void AgenticOrchestrator::run_agentic_loop(const Array &p_initial_messages, Ref<
 	provider = p_provider;
 	_is_running = true;
 	_waiting_for_response = false;
-	_validation_retry_count = 0;
 
 	// Emit run_started signal
 	emit_signal("run_started");
@@ -177,6 +216,18 @@ void AgenticOrchestrator::_send_model_request() {
 		messages_to_send.push_back(todos_msg);
 	}
 
+	// Debug: print full conversation being sent
+	print_line("====== AI REQUEST (full conversation) ======");
+	for (int i = 0; i < messages_to_send.size(); i++) {
+		Dictionary msg = messages_to_send[i];
+		String role = msg.get("role", "?");
+		String content = msg.get("content", "");
+		bool has_images = msg.has("_images") && !msg["_images"].operator Array().is_empty();
+		String preview = content.length() > 500 ? content.substr(0, 500) + "... [TRUNCATED]" : content;
+		print_line(vformat("  [%d] role=%s images=%s\n%s", i, role, has_images ? "YES" : "no", preview));
+	}
+	print_line("============================================");
+
 	// Call provider asynchronously - response will come via _on_provider_response
 	provider->send_request_with_messages(messages_to_send, "");
 }
@@ -184,20 +235,27 @@ void AgenticOrchestrator::_send_model_request() {
 void AgenticOrchestrator::_on_provider_response(bool p_success, const String &p_response, const String &p_error) {
 	_waiting_for_response = false;
 
-	// Check if we're still supposed to be running (might have been cancelled)
+	// Debug: print response summary
+	print_line("====== AI RESPONSE ======");
+	if (p_success) {
+		String preview = p_response.length() > 2000 ? p_response.substr(0, 2000) + "... [TRUNCATED]" : p_response;
+		print_line(preview);
+	} else {
+		print_line(vformat("ERROR: %s", p_error));
+	}
+	print_line("=========================");
+
 	if (!_is_running) {
 		print_line("AgenticOrchestrator: Received response but run was already stopped. Ignoring.");
 		return;
 	}
 
-	// Check cancellation
 	if (current_run.cancelled) {
 		print_line("AgenticOrchestrator: Received response but cancellation was requested.");
 		_handle_cancellation();
 		return;
 	}
 
-	// Handle request failure
 	if (!p_success) {
 		ERR_PRINT(vformat("AgenticOrchestrator: Provider request failed: %s", p_error));
 		_emit_run_complete(false, vformat("Error: Model request failed - %s", p_error));
@@ -205,469 +263,228 @@ void AgenticOrchestrator::_on_provider_response(bool p_success, const String &p_
 		return;
 	}
 
-	// Parse the JSON response
+	// Parse the full API response JSON
 	JSON json;
 	Error err = json.parse(p_response);
 	if (err != OK) {
-		// JSON parse error — model returned plain text instead of JSON
-		String validation_error = vformat("Invalid JSON in response: %s", json.get_error_message());
-
-		print_line(vformat("AgenticOrchestrator: JSON parse error (validation_retry_count=%d): %s",
-				_validation_retry_count, validation_error));
-
-		if (_validation_retry_count < 1) {
-			// First failure: send a plain reminder message and retry
-			_validation_retry_count++;
-
-			Dictionary reminder_msg;
-			reminder_msg["role"] = "user";
-			reminder_msg["content"] = "Your last response was not valid JSON. You must respond with a JSON action array only — no prose, no explanation. Try again.";
-			current_run.conversation_history.push_back(reminder_msg);
-
-			_send_model_request();
-			return;
-		}
-
-		// Second failure: fall through to the existing repair_cycles mechanism
-		current_run.repair_cycles++;
-		print_line(vformat("AgenticOrchestrator: JSON parse error persists (repair cycle %d/%d): %s",
-				current_run.repair_cycles, MAX_REPAIR_CYCLES, validation_error));
-
-		if (current_run.repair_cycles >= MAX_REPAIR_CYCLES) {
-			_handle_max_repairs_exceeded(validation_error);
-			return;
-		}
-
-		// Send full validation error tool result and retry
-		Dictionary error_tool_result_msg = _create_validation_error_result(validation_error, p_response);
-		current_run.conversation_history.push_back(error_tool_result_msg);
-		if (error_tool_result_msg.has("_tool_result_data")) {
-			_emit_tool_result(error_tool_result_msg["_tool_result_data"]);
-		}
-
-		_send_model_request();
+		ERR_PRINT(vformat("AgenticOrchestrator: Failed to parse API response JSON: %s", json.get_error_message()));
+		_emit_run_complete(false, "Error: Invalid JSON in API response");
+		_is_running = false;
 		return;
 	}
 
 	Variant parsed_data = json.get_data();
 	if (parsed_data.get_type() != Variant::DICTIONARY) {
-		String validation_error = "Response is not a JSON object";
-		current_run.repair_cycles++;
-
-		if (current_run.repair_cycles >= MAX_REPAIR_CYCLES) {
-			_handle_max_repairs_exceeded(validation_error);
-			return;
-		}
-
-		Dictionary error_tool_result_msg = _create_validation_error_result(validation_error, p_response);
-		current_run.conversation_history.push_back(error_tool_result_msg);
-		if (error_tool_result_msg.has("_tool_result_data")) {
-			_emit_tool_result(error_tool_result_msg["_tool_result_data"]);
-		}
-
-		_send_model_request();
+		ERR_PRINT("AgenticOrchestrator: API response is not a JSON object");
+		_emit_run_complete(false, "Error: API response is not a JSON object");
+		_is_running = false;
 		return;
 	}
 
-	// Store the parsed response and defer processing to next frame
-	// This avoids ProgressDialog conflicts when actions like save_scene trigger dialogs
+	// Store and defer processing to next frame (avoids ProgressDialog conflicts)
 	_pending_response = parsed_data;
 	call_deferred("_process_model_response_deferred");
 }
 
 void AgenticOrchestrator::_process_model_response_deferred() {
-	// Check if we're still supposed to be running
 	if (!_is_running) {
 		print_line("AgenticOrchestrator: Deferred processing but run was already stopped. Ignoring.");
 		return;
 	}
 
-	// Check cancellation
 	if (current_run.cancelled) {
 		print_line("AgenticOrchestrator: Deferred processing but cancellation was requested.");
 		_handle_cancellation();
 		return;
 	}
 
-	// Process the stored response
-	_process_model_response(_pending_response);
+	_process_native_tool_response(_pending_response);
 	_pending_response.clear();
 }
 
-void AgenticOrchestrator::_process_model_response(const Dictionary &p_response) {
-	// Early exit for narration mode — handled before standard validation
-	if (p_response.has("mode") && String(p_response["mode"]) == "narration") {
-		_handle_narration_response(p_response);
-		return;
-	}
-
-	// Auto-repair: if "actions" is missing but "assistant_text" is present, treat as FINAL MODE.
-	// The model frequently forgets the empty array when summarizing completed work.
-	Dictionary response = p_response.duplicate();
-	if (!response.has("actions") && response.has("assistant_text") &&
-			response["assistant_text"].get_type() == Variant::STRING &&
-			!String(response["assistant_text"]).strip_edges().is_empty()) {
-		print_line("AgenticOrchestrator: Missing 'actions' field with non-empty 'assistant_text' — treating as FINAL MODE.");
-		response["actions"] = Array();
-	}
-
-	// Validate response structure
-	String validation_error;
-	if (!_validate_response(response, validation_error)) {
-		current_run.repair_cycles++;
-		print_line(vformat("AgenticOrchestrator: Validation error (repair cycle %d/%d): %s",
-				current_run.repair_cycles, MAX_REPAIR_CYCLES, validation_error));
-
-		if (current_run.repair_cycles >= MAX_REPAIR_CYCLES) {
-			_handle_max_repairs_exceeded(validation_error);
-			return;
-		}
-
-		// Append validation error as tool result
-		String raw_response = JSON::stringify(p_response);
-		Dictionary error_tool_result_msg = _create_validation_error_result(validation_error, raw_response);
-		current_run.conversation_history.push_back(error_tool_result_msg);
-		if (error_tool_result_msg.has("_tool_result_data")) {
-			_emit_tool_result(error_tool_result_msg["_tool_result_data"]);
-		}
-
-		// Retry
-		_send_model_request();
-		return;
-	}
-
-	// Reset repair cycles on successful validation
-	current_run.repair_cycles = 0;
-
-	// Check if final response (empty actions array)
-	if (_is_final_response(response)) {
-		String final_message = response.get("assistant_text", "");
-		print_line(vformat("AgenticOrchestrator: Final response received: %s", final_message));
-		_emit_run_complete(true, final_message);
+void AgenticOrchestrator::_process_native_tool_response(const Dictionary &p_api_response) {
+	// Extract from OpenAI-compatible response: choices[0].message + choices[0].finish_reason
+	if (!p_api_response.has("choices")) {
+		ERR_PRINT("AgenticOrchestrator: API response missing 'choices' array");
+		_emit_run_complete(false, "Error: Unexpected API response format (no choices)");
 		_is_running = false;
 		return;
 	}
 
-	// Extract actions and assistant_text
-	Array actions = response.get("actions", Array());
-	String assistant_text = response.get("assistant_text", "");
-
-	// Display assistant_text as progress update
-	if (!assistant_text.is_empty()) {
-		_emit_progress_update(assistant_text, current_run.model_turns);
+	Array choices = p_api_response["choices"];
+	if (choices.is_empty()) {
+		ERR_PRINT("AgenticOrchestrator: API response has empty choices array");
+		_emit_run_complete(false, "Error: API returned empty choices");
+		_is_running = false;
+		return;
 	}
 
-	// Execute actions and capture results
-	if (actions.size() > 0) {
-		print_line(vformat("AgenticOrchestrator: Executing %d action(s)...", actions.size()));
-		Array tool_results = _execute_actions(actions);
-		current_run.total_actions += actions.size();
+	Dictionary choice = choices[0];
+	String finish_reason = choice.get("finish_reason", "stop");
+	Dictionary message = choice.get("message", Dictionary());
 
-		// Check for cancellation during action execution
-		if (current_run.cancelled) {
-			_handle_cancellation();
-			return;
-		}
+	String content = message.get("content", "");
+	Array tool_calls = message.get("tool_calls", Array());
 
-		// If run_and_screenshot intercepted the action, _execute_actions returned empty
-		// and the async state machine is now running — do NOT continue the loop here.
-		if (_async_rns_phase != ASYNC_RNS_INACTIVE) {
-			return;
-		}
+	print_line(vformat("AgenticOrchestrator: finish_reason=%s, content_len=%d, tool_calls=%d",
+			finish_reason, content.length(), tool_calls.size()));
 
-		// Append tool results to conversation history
-		for (int i = 0; i < tool_results.size(); i++) {
-			Dictionary tool_result_msg = tool_results[i];
-			current_run.conversation_history.push_back(tool_result_msg);
-			current_run.run_messages.push_back(tool_result_msg);
-
-			// Extract the structured data for UI display
-			if (tool_result_msg.has("_tool_result_data")) {
-				Dictionary tool_result_data = tool_result_msg["_tool_result_data"];
-				_emit_tool_result(tool_result_data);
-			}
-		}
-
-		// Continue the loop by sending next request
-		_send_model_request();
+	// Store assistant message in conversation history (preserving tool_calls for API round-trip)
+	Dictionary assistant_msg;
+	assistant_msg["role"] = "assistant";
+	if (!content.is_empty()) {
+		assistant_msg["content"] = content;
 	} else {
-		WARN_PRINT("AgenticOrchestrator: Received ACTION MODE response with no actions. Treating as validation error.");
-		String error_msg = "Response is in ACTION MODE but contains no actions. Either provide actions or use FINAL MODE with an empty 'actions' array and a non-empty 'assistant_text'.";
-		Dictionary error_tool_result_msg = _create_validation_error_result(error_msg, JSON::stringify(response));
-		current_run.conversation_history.push_back(error_tool_result_msg);
-
-		// Extract the structured data for UI display
-		if (error_tool_result_msg.has("_tool_result_data")) {
-			Dictionary tool_result_data = error_tool_result_msg["_tool_result_data"];
-			_emit_tool_result(tool_result_data);
-		}
-
-		// Continue loop
-		_send_model_request();
+		assistant_msg["content"] = Variant(); // null — required by OpenAI format
 	}
-}
+	if (!tool_calls.is_empty()) {
+		assistant_msg["tool_calls"] = tool_calls;
+	}
+	current_run.conversation_history.push_back(assistant_msg);
 
-bool AgenticOrchestrator::_validate_response(const Dictionary &p_response, String &r_error) {
-	// Check for required field: "actions"
-	if (!p_response.has("actions")) {
-		r_error = "Response missing required field: 'actions'. Your response MUST contain an 'actions' array (empty for FINAL MODE, non-empty for ACTION MODE).";
-		return false;
+	// Emit text content to UI as narration (only if not the final turn — final turn goes via run_complete)
+	if (!content.is_empty() && (finish_reason == "tool_calls" || !tool_calls.is_empty())) {
+		emit_signal("narration_ready", content);
 	}
 
-	// Check actions is an Array
-	if (p_response["actions"].get_type() != Variant::ARRAY) {
-		r_error = "Field 'actions' must be an Array";
-		return false;
+	// Check if turn is done (no tool calls)
+	if (finish_reason == "stop" || (finish_reason != "tool_calls" && tool_calls.is_empty())) {
+		print_line(vformat("AgenticOrchestrator: Final response (finish_reason=%s): %s",
+				finish_reason, content.length() > 200 ? content.substr(0, 200) + "..." : content));
+		_emit_run_complete(true, content);
+		_is_running = false;
+		return;
 	}
 
-	Array actions = p_response["actions"];
+	// finish_reason == "tool_calls" — execute each tool call
+	_emit_progress_update(vformat("Executing %d tool(s)...", tool_calls.size()), current_run.model_turns);
+	print_line(vformat("AgenticOrchestrator: Executing %d tool call(s)...", tool_calls.size()));
 
-	// Check for assistant_text field (optional but recommended)
-	if (!p_response.has("assistant_text")) {
-		// This is optional, just warn
-		print_verbose("AgenticOrchestrator: Response missing optional field 'assistant_text'");
-	}
-
-	// If actions is empty, this should be FINAL MODE - require assistant_text
-	if (actions.size() == 0) {
-		if (!p_response.has("assistant_text") || p_response["assistant_text"].get_type() != Variant::STRING) {
-			r_error = "FINAL MODE requires 'assistant_text' field with non-empty string. You provided an empty 'actions' array which signals FINAL MODE, but 'assistant_text' is missing or invalid.";
-			return false;
-		}
-		String text = p_response["assistant_text"];
-		if (text.strip_edges().is_empty()) {
-			r_error = "FINAL MODE requires non-empty 'assistant_text'. Your 'actions' array is empty (FINAL MODE) but 'assistant_text' is empty.";
-			return false;
-		}
-	}
-
-	// Validate each action in the array
-	for (int i = 0; i < actions.size(); i++) {
-		if (actions[i].get_type() != Variant::DICTIONARY) {
-			r_error = vformat("Action at index %d is not a Dictionary", i);
-			return false;
-		}
-
-		Dictionary action = actions[i];
-		if (!action.has("action")) {
-			r_error = vformat("Action at index %d missing 'action' field", i);
-			return false;
-		}
-		if (!action.has("args")) {
-			r_error = vformat("Action at index %d missing 'args' field", i);
-			return false;
-		}
-		if (action["args"].get_type() != Variant::DICTIONARY) {
-			r_error = vformat("Action at index %d 'args' field must be a Dictionary", i);
-			return false;
-		}
-	}
-
-	return true;
-}
-
-bool AgenticOrchestrator::_is_final_response(const Dictionary &p_response) {
-	if (!p_response.has("actions")) {
-		return false;
-	}
-
-	Array actions = p_response["actions"];
-	if (actions.size() == 0) {
-		// Empty actions array = FINAL MODE
-		// We already validated that assistant_text exists and is non-empty
-		return true;
-	}
-
-	return false;
-}
-
-Array AgenticOrchestrator::_execute_actions(const Array &p_actions) {
-	Array tool_results;
-
-	// Get the AI singleton to execute actions
-	AI *ai = Object::cast_to<AI>(Engine::get_singleton()->get_singleton_object("AI"));
-	if (!ai) {
-		ERR_PRINT("AgenticOrchestrator::_execute_actions - AI singleton not found.");
-		// Return error tool results for all actions
-		for (int i = 0; i < p_actions.size(); i++) {
-			Dictionary action = p_actions[i];
-			String action_type = action.get("action", "unknown");
-			Dictionary action_args = action.get("args", Dictionary());
-
-			Dictionary exec_result;
-			exec_result["status"] = "error";
-			Dictionary error_dict;
-			error_dict["code"] = "internal_error";
-			error_dict["message"] = "AI singleton not available";
-			error_dict["details"] = Dictionary();
-			exec_result["error"] = error_dict;
-
-			Dictionary tool_result = _create_tool_result(action_type, action_args, exec_result);
-			tool_results.push_back(tool_result);
-		}
-		return tool_results;
-	}
-
-	// Execute each action sequentially
-	for (int i = 0; i < p_actions.size(); i++) {
-		// Check for cancellation between actions
+	for (int i = 0; i < tool_calls.size(); i++) {
 		if (current_run.cancelled) {
-			print_line("AgenticOrchestrator: Cancelled during action execution.");
 			break;
 		}
 
-		Dictionary action = p_actions[i];
-		String action_type = action.get("action", "unknown");
-		Dictionary action_args = action.get("args", Dictionary());
+		Dictionary tc = tool_calls[i];
+		String call_id = tc.get("id", "");
+		Dictionary function = tc.get("function", Dictionary());
+		String tool_name = function.get("name", "");
+		String arguments_json = function.get("arguments", "{}");
 
-		print_line(vformat("  - Executing action %d/%d: %s", i + 1, p_actions.size(), action_type));
+		// Parse the arguments JSON string
+		JSON args_parser;
+		Dictionary args;
+		if (args_parser.parse(arguments_json) == OK && args_parser.get_data().get_type() == Variant::DICTIONARY) {
+			args = args_parser.get_data();
+		} else {
+			WARN_PRINT(vformat("AgenticOrchestrator: Failed to parse tool call arguments for %s: %s", tool_name, arguments_json));
+		}
 
-		// run_and_screenshot is handled asynchronously via SceneTree timers.
-		// Store the action and suspend the loop — the timer chain will resume it.
-		if (action_type == "run_and_screenshot") {
-			_async_rns_action_type = action_type;
-			_async_rns_action_args = action_args;
-			_async_rns_wait_seconds = (float)action_args.get("wait_seconds", 2.0f);
+		print_line(vformat("  - Tool call %d/%d: %s (id=%s)", i + 1, tool_calls.size(), tool_name, call_id));
+
+		// Handle run_and_screenshot asynchronously
+		if (tool_name == "run_and_screenshot") {
+			_async_rns_tool_call_id = call_id;
+			_async_rns_action_args = args;
+			_async_rns_wait_seconds = (float)args.get("wait_seconds", 2.0f);
 			_async_rns_phase = ASYNC_RNS_POLL_START;
 			_async_rns_phase_start_ms = Time::get_singleton()->get_ticks_msec();
 
-			// Flush any tool results collected before this action, then start the game.
-			// First emit whatever we have so far.
-			for (int j = 0; j < tool_results.size(); j++) {
-				Dictionary tr = tool_results[j];
-				current_run.conversation_history.push_back(tr);
-				current_run.run_messages.push_back(tr);
-				if (tr.has("_tool_result_data")) {
-					_emit_tool_result(tr["_tool_result_data"]);
-				}
-			}
-			tool_results.clear();
+			// Build action dict for execute_single_action
+			Dictionary action;
+			action["action"] = tool_name;
+			action["args"] = args;
 
-			// Launch the game via command palette (same as exec_run_project)
-			Dictionary run_result = ai->execute_single_action(action); // runs exec_run_and_screenshot → exec_run_project
-			print_line(vformat("AI_RNS: game launch result status=%s", (String)run_result.get("status", "?")));
+			AI *ai = AI::get_singleton();
+			if (ai) {
+				Dictionary run_result = ai->execute_single_action(action);
+				print_line(vformat("AI_RNS: game launch result status=%s", (String)run_result.get("status", "?")));
+			}
 
 			_schedule_rns_tick(0.1f);
-			// Return empty — _on_async_rns_complete will resume the loop.
-			return Array();
+			// Async — loop will be resumed by _on_async_rns_complete
+			return;
 		}
 
-		// Call AI singleton's action executor
-		Dictionary exec_result = ai->execute_single_action(action);
+		// Execute the tool call
+		Dictionary tool_result_msg = _execute_tool_call(call_id, tool_name, args);
+		current_run.conversation_history.push_back(tool_result_msg);
+		current_run.run_messages.push_back(tool_result_msg);
+		current_run.total_actions++;
 
-		// Create tool result from execution result
-		Dictionary tool_result = _create_tool_result(action_type, action_args, exec_result);
-		tool_results.push_back(tool_result);
+		// Emit for UI display
+		if (tool_result_msg.has("_tool_result_data")) {
+			_emit_tool_result(tool_result_msg["_tool_result_data"]);
+		}
 	}
 
-	return tool_results;
+	if (current_run.cancelled) {
+		_handle_cancellation();
+		return;
+	}
+
+	// Continue the loop
+	_send_model_request();
 }
 
-Dictionary AgenticOrchestrator::_create_tool_result(const String &p_action_type, const Dictionary &p_action_args, const Dictionary &p_exec_result) {
-	// Format tool result as a "user" message that the API can understand
-	// The content is JSON describing what happened
-	Dictionary tool_result_data;
-	tool_result_data["tool_name"] = "godot_action_executor";
-	tool_result_data["action_id"] = _generate_action_id();
-	tool_result_data["type"] = p_action_type;
+Dictionary AgenticOrchestrator::_execute_tool_call(const String &p_call_id, const String &p_tool_name, const Dictionary &p_args) {
+	AI *ai = AI::get_singleton();
 
-	// Extract status and result/error from exec_result
-	String status = p_exec_result.get("status", "error");
+	Dictionary exec_result;
+	if (!ai) {
+		exec_result["status"] = "error";
+		Dictionary error_dict;
+		error_dict["code"] = "internal_error";
+		error_dict["message"] = "AI singleton not available";
+		exec_result["error"] = error_dict;
+	} else {
+		// Build action dict compatible with execute_single_action
+		Dictionary action;
+		action["action"] = p_tool_name;
+		action["args"] = p_args;
+		exec_result = ai->execute_single_action(action);
+	}
+
+	// Build tool result data for UI display
+	Dictionary tool_result_data;
+	tool_result_data["tool_name"] = p_tool_name;
+	tool_result_data["action_id"] = p_call_id;
+	tool_result_data["type"] = p_tool_name;
+	tool_result_data["args"] = p_args;
+
+	String status = exec_result.get("status", "error");
 	tool_result_data["status"] = status;
 
-	Dictionary exec_result_inner;
 	if (status == "success") {
-		exec_result_inner = p_exec_result.get("result", Dictionary());
-		// Use _display_args if the action provided resolved/defaulted args for display
-		if (exec_result_inner.has("_display_args")) {
-			tool_result_data["args"] = exec_result_inner["_display_args"];
-			exec_result_inner.erase("_display_args");
-		} else {
-			tool_result_data["args"] = p_action_args;
+		Dictionary result_inner = exec_result.get("result", Dictionary());
+		// Use _display_args if provided
+		if (result_inner.has("_display_args")) {
+			tool_result_data["args"] = result_inner["_display_args"];
+			result_inner.erase("_display_args");
 		}
-		tool_result_data["result"] = exec_result_inner;
+		tool_result_data["result"] = result_inner;
 	} else {
-		tool_result_data["args"] = p_action_args;
-		tool_result_data["error"] = p_exec_result.get("error", Dictionary());
+		tool_result_data["error"] = exec_result.get("error", Dictionary());
 	}
 
-	// Create API-compatible message with role="user" containing tool result
+	// Build native tool result message (role="tool" with tool_call_id)
 	Dictionary message;
-	message["role"] = "user";
-	message["content"] = vformat("[TOOL_RESULT]\n%s", JSON::stringify(tool_result_data, "  "));
+	message["role"] = "tool";
+	message["tool_call_id"] = p_call_id;
+	message["content"] = JSON::stringify(exec_result);
 
-	// Also store the structured data for UI display (separate from API message)
+	// Attach structured data for UI (not sent to API, just for display)
 	message["_tool_result_data"] = tool_result_data;
 
 	return message;
 }
 
-Dictionary AgenticOrchestrator::_create_validation_error_result(const String &p_error_message, const String &p_raw_response) {
-	// Format validation error as a "user" message that the API can understand
-	Dictionary tool_result_data;
-	tool_result_data["tool_name"] = "godot_action_executor";
-	tool_result_data["action_id"] = _generate_action_id();
-	tool_result_data["type"] = "validation_error";
-	tool_result_data["args"] = Variant(); // null
-	tool_result_data["status"] = "error";
+// Old validation/legacy methods removed — native tool-calling handles this via the API
 
-	Dictionary error_dict;
-	error_dict["code"] = "validation_error";
-	error_dict["message"] = p_error_message;
-
-	Dictionary details;
-	// Truncate raw_response to avoid huge messages
-	String truncated_response = p_raw_response;
-	if (truncated_response.length() > 500) {
-		truncated_response = truncated_response.substr(0, 500) + "... (truncated)";
-	}
-	details["raw_response_preview"] = truncated_response;
-	details["required_format"] =
-		"Your next response MUST be valid JSON in one of these exact forms:\n"
-		"  If taking actions: {\"assistant_text\": \"One sentence.\", \"actions\": [{\"action\": \"...\", \"args\": {...}}]}\n"
-		"  If done (FINAL MODE): {\"assistant_text\": \"Your complete reply.\", \"actions\": []}\n"
-		"  Do NOT output plain text. Do NOT omit 'actions'. Do NOT use JSON comments.";
-	error_dict["details"] = details;
-
-	tool_result_data["error"] = error_dict;
-
-	// Create API-compatible message with role="user" containing the error
-	Dictionary message;
-	message["role"] = "user";
-	message["content"] = vformat("[TOOL_RESULT - VALIDATION ERROR]\n%s\n\nRespond now with valid JSON only.", JSON::stringify(tool_result_data, "  "));
-
-	// Also store the structured data for UI display
-	message["_tool_result_data"] = tool_result_data;
-
-	return message;
-}
-
-String AgenticOrchestrator::_generate_action_id() {
-	// Generate a simple timestamp-based ID
-	// Format: timestamp_ms + random component
-	uint64_t time_ms = Time::get_singleton()->get_ticks_msec();
-	uint32_t random_component = Math::rand();
-
-	return vformat("%d_%x", time_ms, random_component);
-}
+// (Old _validate_response, _is_final_response, _execute_actions, _create_tool_result,
+//  _create_validation_error_result, _generate_action_id removed — native tool-calling replaces them)
 
 void AgenticOrchestrator::_handle_cancellation() {
-	// Create cancelled tool result
-	Dictionary cancel_result;
-	cancel_result["role"] = "tool";
-	cancel_result["tool_name"] = "godot_action_executor";
-	cancel_result["action_id"] = _generate_action_id();
-	cancel_result["type"] = "cancellation";
-	cancel_result["args"] = Variant();
-	cancel_result["status"] = "cancelled";
-
-	Dictionary error_dict;
-	error_dict["code"] = "user_cancelled";
-	error_dict["message"] = "User cancelled the operation";
-	error_dict["details"] = Dictionary();
-	cancel_result["error"] = error_dict;
-
-	_emit_tool_result(cancel_result);
 	_emit_run_complete(false, "Cancelled. Tell me what to do next.");
 	_is_running = false;
 	_waiting_for_response = false;
@@ -682,13 +499,6 @@ void AgenticOrchestrator::_handle_max_turns_exceeded() {
 
 void AgenticOrchestrator::_handle_max_actions_exceeded() {
 	String message = vformat("Reached maximum actions (%d). I've executed %d actions so far. What should I do next?", MAX_ACTIONS_PER_RUN, current_run.total_actions);
-	_emit_run_complete(false, message);
-	_is_running = false;
-	_waiting_for_response = false;
-}
-
-void AgenticOrchestrator::_handle_max_repairs_exceeded(const String &p_validation_error) {
-	String message = vformat("Validation error persists after %d repair attempts: %s. Please rephrase your request or try a different approach.", MAX_REPAIR_CYCLES, p_validation_error);
 	_emit_run_complete(false, message);
 	_is_running = false;
 	_waiting_for_response = false;
@@ -714,37 +524,6 @@ void AgenticOrchestrator::set_todos(const Array &p_todos) {
 	emit_signal("todos_updated", p_todos);
 }
 
-void AgenticOrchestrator::_handle_narration_response(const Dictionary &p_response) {
-	String text;
-	if (p_response.has("assistant_text") && p_response["assistant_text"].get_type() == Variant::STRING) {
-		text = String(p_response["assistant_text"]).strip_edges();
-	}
-
-	if (text.is_empty()) {
-		// Malformed narration — skip silently and continue the loop
-		print_line("AgenticOrchestrator: Narration response had empty assistant_text, skipping.");
-		_send_model_request();
-		return;
-	}
-
-	// Append to conversation history as "assistant" — store as JSON string (not plain text)
-	// so the model's history stays consistently JSON-formatted. This prevents it from
-	// narrating a second time or responding in plain text on the next turn.
-	Dictionary narration_json;
-	narration_json["mode"] = "narration";
-	narration_json["assistant_text"] = text;
-	Dictionary narration_msg;
-	narration_msg["role"] = "assistant";
-	narration_msg["content"] = JSON::stringify(narration_json);
-	current_run.conversation_history.push_back(narration_msg);
-
-	// Emit for UI to persist and render
-	emit_signal("narration_ready", text);
-
-	// Continue the loop
-	_send_model_request();
-}
-
 void AgenticOrchestrator::_emit_progress_update(const String &p_status, int p_turn) {
 	emit_signal("progress_update", p_status, p_turn);
 }
@@ -761,37 +540,6 @@ void AgenticOrchestrator::_emit_run_complete(bool p_success, const String &p_fin
 	if (p_success && current_run.user_message_id != 0) {
 		emit_signal("checkpoint_recommended", current_run.user_message_id);
 	}
-}
-
-String AgenticOrchestrator::_format_tool_result_for_display(const Dictionary &p_tool_result) {
-	String status = p_tool_result.get("status", "unknown");
-	String type = p_tool_result.get("type", "unknown");
-	Dictionary args = p_tool_result.get("args", Dictionary());
-
-	String result_str;
-
-	if (status == "success") {
-		result_str = vformat("[Result] %s succeeded", type);
-		if (p_tool_result.has("result")) {
-			Dictionary result_data = p_tool_result["result"];
-			if (!result_data.is_empty()) {
-				result_str += vformat(": %s", JSON::stringify(result_data));
-			}
-		}
-	} else if (status == "error") {
-		result_str = vformat("[Result] %s failed", type);
-		if (p_tool_result.has("error")) {
-			Dictionary error_dict = p_tool_result["error"];
-			String error_msg = error_dict.get("message", "Unknown error");
-			result_str += vformat(": %s", error_msg);
-		}
-	} else if (status == "cancelled") {
-		result_str = "[Result] Cancelled by user";
-	} else {
-		result_str = vformat("[Result] %s: unknown status", type);
-	}
-
-	return result_str;
 }
 
 void AgenticOrchestrator::cancel_run() {
@@ -826,7 +574,7 @@ int AgenticOrchestrator::get_total_actions() const {
 }
 
 int AgenticOrchestrator::get_repair_cycles() const {
-	return current_run.repair_cycles;
+	return 0; // No longer used — kept for API compat
 }
 
 String AgenticOrchestrator::get_user_message() const {
@@ -943,15 +691,33 @@ void AgenticOrchestrator::_on_async_rns_capture_received(const String &p_b64) {
 }
 
 void AgenticOrchestrator::_on_async_rns_complete(const Dictionary &p_exec_result) {
-	Dictionary tool_result = _create_tool_result(_async_rns_action_type, _async_rns_action_args, p_exec_result);
+	// Build tool result directly (don't re-execute — we already have the result from async capture)
+	Dictionary tool_result_data;
+	tool_result_data["tool_name"] = "run_and_screenshot";
+	tool_result_data["action_id"] = _async_rns_tool_call_id;
+	tool_result_data["type"] = "run_and_screenshot";
+	tool_result_data["args"] = _async_rns_action_args;
 
-	current_run.conversation_history.push_back(tool_result);
-	current_run.run_messages.push_back(tool_result);
+	String status = p_exec_result.get("status", "error");
+	tool_result_data["status"] = status;
+	if (status == "success") {
+		tool_result_data["result"] = p_exec_result.get("result", Dictionary());
+	} else {
+		tool_result_data["error"] = p_exec_result.get("error", Dictionary());
+	}
+
+	// Build native tool result message
+	Dictionary message;
+	message["role"] = "tool";
+	message["tool_call_id"] = _async_rns_tool_call_id;
+	message["content"] = JSON::stringify(p_exec_result);
+	message["_tool_result_data"] = tool_result_data;
+
+	current_run.conversation_history.push_back(message);
+	current_run.run_messages.push_back(message);
 	current_run.total_actions++;
 
-	if (tool_result.has("_tool_result_data")) {
-		_emit_tool_result(tool_result["_tool_result_data"]);
-	}
+	_emit_tool_result(tool_result_data);
 
 	if (current_run.cancelled) {
 		_handle_cancellation();
