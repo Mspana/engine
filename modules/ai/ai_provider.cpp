@@ -732,11 +732,14 @@ Array AIProvider::build_tools_array() {
 	{
 		Dictionary props;
 		props["file_path"] = _make_prop("string", "Path of the script to update (e.g. res://scripts/player.gd)");
-		props["patch"] = _make_prop("string", "Full replacement content for the script file");
+		props["old_string"] = _make_prop("string", "The exact text to find and replace");
+		props["new_string"] = _make_prop("string", "The replacement text (must differ from old_string)");
+		props["replace_all"] = _make_prop("boolean", "Replace all occurrences (default false)");
 		Array req;
 		req.push_back("file_path");
-		req.push_back("patch");
-		tools.push_back(_make_tool("update_script", "Update an existing script with new content. You MUST call read_script first — this tool will fail if you did not read the file first. Validates with compiler; check parse_errors in result.", props, req));
+		req.push_back("old_string");
+		req.push_back("new_string");
+		tools.push_back(_make_tool("update_script", "Performs exact string replacement in a script file. You MUST have called read_script or create_script on this file first — this tool will fail otherwise. The edit will FAIL if old_string is not found or is not unique in the file (provide more surrounding context to disambiguate, or set replace_all to true). Validates with compiler; check parse_errors in result.", props, req));
 	}
 	{
 		Dictionary props;

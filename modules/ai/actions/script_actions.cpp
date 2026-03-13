@@ -128,7 +128,14 @@ Dictionary exec_update_script(const Dictionary &args) {
 	}
 
 	String file_path = args["file_path"];
-	String patch_content = args["patch"];
+	String old_string = args["old_string"];
+	String new_string = args["new_string"];
+	bool replace_all = args.get("replace_all", false);
+
+	if (old_string == new_string) {
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			"old_string and new_string are identical — nothing to change.");
+	}
 
 	// Convert to absolute path if it's a resource path
 	String abs_path = ProjectSettings::get_singleton()->globalize_path(file_path);
@@ -142,7 +149,7 @@ Dictionary exec_update_script(const Dictionary &args) {
 	// Require read_script before update_script (prevents blind overwrites)
 	if (!ai_singleton->was_file_read(file_path)) {
 		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
-			vformat("You must call read_script on '%s' before updating it. Read the file first to understand its current contents.", file_path));
+			vformat("You must call read_script or create_script on '%s' before updating it. Read the file first to understand its current contents.", file_path));
 	}
 
 	// Read existing content for undo
@@ -152,7 +159,7 @@ Dictionary exec_update_script(const Dictionary &args) {
 			vformat("Failed to open file for reading at '%s'", file_path));
 	}
 	String original_content = file->get_as_text();
-	file.unref(); // Close the file
+	file.unref();
 
 	// Check if game is running (file will be locked by the running process)
 	EditorRunBar *run_bar = EditorRunBar::get_singleton();
@@ -161,20 +168,51 @@ Dictionary exec_update_script(const Dictionary &args) {
 			"Cannot update script while the game is running. Stop the game (F8) first.");
 	}
 
-	ai_log_verbose(vformat("Updating script at '%s'. Old size: %d bytes, New size: %d bytes", abs_path, original_content.length(), patch_content.length()));
+	// Count occurrences of old_string in file content
+	int occurrence_count = 0;
+	int search_from = 0;
+	while (true) {
+		int pos = original_content.find(old_string, search_from);
+		if (pos == -1) {
+			break;
+		}
+		occurrence_count++;
+		search_from = pos + old_string.length();
+	}
+
+	if (occurrence_count == 0) {
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			vformat("old_string not found in '%s'. Make sure you are matching the file content exactly (including whitespace and indentation).", file_path));
+	}
+
+	if (occurrence_count > 1 && !replace_all) {
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			vformat("old_string matches %d locations in '%s'. Provide more surrounding context to make it unique, or set replace_all to true.", occurrence_count, file_path));
+	}
+
+	// Perform the replacement
+	String new_content;
+	if (replace_all) {
+		new_content = original_content.replace(old_string, new_string);
+	} else {
+		int pos = original_content.find(old_string);
+		new_content = original_content.substr(0, pos) + new_string + original_content.substr(pos + old_string.length());
+	}
+
+	ai_log_verbose(vformat("Updating script at '%s'. Replaced %d occurrence(s). Old size: %d, New size: %d",
+			abs_path, replace_all ? occurrence_count : 1, original_content.length(), new_content.length()));
 
 	undo_redo->create_action("AI Update Script");
-	undo_redo->add_do_method(ai_singleton, "_write_script_file", abs_path, patch_content);
+	undo_redo->add_do_method(ai_singleton, "_write_script_file", abs_path, new_content);
 	undo_redo->add_undo_method(ai_singleton, "_write_script_file", abs_path, original_content);
 	undo_redo->commit_action();
 
 	// Validate written script: parser + analyzer mirrors full editor error feedback.
-	// Runs post-write so base-class resolution works on the saved file.
 	Array parse_errors;
 	Array warnings;
 	{
 		GDScriptParser parser;
-		Error parse_err = parser.parse(patch_content, abs_path, false);
+		Error parse_err = parser.parse(new_content, abs_path, false);
 
 		for (const GDScriptParser::ParserError &e : parser.get_errors()) {
 			Dictionary err_dict;
@@ -185,7 +223,6 @@ Dictionary exec_update_script(const Dictionary &args) {
 			parse_errors.push_back(err_dict);
 		}
 
-		// Only run analyzer if parse succeeded — analyzer requires a valid parse tree
 		if (parse_err == OK && parser.get_errors().is_empty()) {
 			GDScriptAnalyzer analyzer(&parser);
 			analyzer.analyze();
@@ -212,8 +249,9 @@ Dictionary exec_update_script(const Dictionary &args) {
 
 	Dictionary result_data;
 	result_data["file_path"] = file_path;
+	result_data["replacements"] = replace_all ? occurrence_count : 1;
 	result_data["old_size"] = original_content.length();
-	result_data["new_size"] = patch_content.length();
+	result_data["new_size"] = new_content.length();
 	if (!parse_errors.is_empty()) {
 		result_data["parse_errors"] = parse_errors;
 	}
@@ -221,7 +259,7 @@ Dictionary exec_update_script(const Dictionary &args) {
 		result_data["warnings"] = warnings;
 	}
 
-	print_line(vformat("AI: Executed update_script. File: %s", file_path));
+	print_line(vformat("AI: Executed update_script. File: %s, %d replacement(s)", file_path, replace_all ? occurrence_count : 1));
 	return ai_create_success_result(result_data);
 }
 

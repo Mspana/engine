@@ -164,8 +164,12 @@ bool AI::_validate_command_dictionary(const Dictionary &cmd, String &error_msg) 
             error_msg = "'update_script' requires string 'file_path'.";
             return false;
         }
-        if (!args.has("patch") || args["patch"].get_type() != Variant::STRING) {
-            error_msg = "'update_script' requires string 'patch'.";
+        if (!args.has("old_string") || args["old_string"].get_type() != Variant::STRING) {
+            error_msg = "'update_script' requires string 'old_string'.";
+            return false;
+        }
+        if (!args.has("new_string") || args["new_string"].get_type() != Variant::STRING) {
+            error_msg = "'update_script' requires string 'new_string'.";
             return false;
         }
     } else if (action == "attach_script") {

@@ -241,10 +241,11 @@ Allowed actions:
   After writing, validates with the full GDScript compiler (syntax + type checks). Result may include:
   'parse_errors': [{line, column, message, type}, ...] — errors, fix immediately with update_script.
   'warnings': [{line, message, code}, ...] — non-fatal issues worth reviewing.
-- update_script: Update an existing script file with new content
-  Args: {"file_path": string, "patch": string (full file content)}
-  IMPORTANT: You MUST call read_script on the file first. This action will FAIL if you haven't read the file yet.
-  After writing, validates with the full GDScript compiler (syntax + type checks). Result may include:
+- update_script: Edit an existing script file by exact string replacement
+  Args: {"file_path": string, "old_string": string, "new_string": string, "replace_all": boolean (optional, default false)}
+  IMPORTANT: You MUST have called read_script or create_script on the file first. This action will FAIL if you haven't.
+  The edit will FAIL if old_string is not found or matches multiple locations (provide more surrounding context to make it unique, or set replace_all to true).
+  Validates with GDScript compiler after writing; result may include:
   'parse_errors': [{line, column, message, type}, ...] — errors, fix and retry.
   'warnings': [{line, message, code}, ...] — non-fatal issues worth reviewing.
 - attach_script: Attach a script to a node
