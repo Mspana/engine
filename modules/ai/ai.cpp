@@ -54,6 +54,7 @@ static const Vector<String> ALLOWED_ACTIONS = {
     "write_dev_note",
     "update_todos",
     "run_and_screenshot",
+    "list_open_scenes","stop_game",
 };
 
 // New helper function to validate a command already parsed into a Dictionary
@@ -525,6 +526,10 @@ Dictionary AI::execute_single_action(const Dictionary &p_action) {
         action_result = AISceneActions::exec_set_main_scene(action_args);
     } else if (action_name == "close_scene") {
         action_result = AISceneActions::exec_close_scene(action_args);
+    } else if (action_name == "list_open_scenes") {
+        action_result = AISceneActions::exec_list_open_scenes(action_args);
+    } else if (action_name == "stop_game") {
+        action_result = AISceneActions::exec_stop_game(action_args);
     } else if (action_name == "set_project_setting") {
         action_result = AIProjectActions::exec_set_project_setting(action_args);
     } else if (action_name == "get_project_settings") {
@@ -984,26 +989,36 @@ void AI::_on_game_session_stopped() {
 #endif
 }
 
+void AI::set_debug_context_enabled(bool p_enabled) {
+    _debug_context_enabled = p_enabled;
+}
+
 Dictionary AI::consume_session_context() {
     Dictionary ctx;
 #ifdef TOOLS_ENABLED
-    // Output log — still populated until next session clears it
-    EditorLog *el = EditorNode::get_log();
-    if (el) {
-        String log_text = el->get_text();
-        if (!log_text.is_empty()) {
-            ctx["output_log"] = log_text;
-        }
-    }
-    // Errors from the debugger error tree
+    // Always report game running state
+    EditorRunBar *run_bar = EditorRunBar::get_singleton();
+    bool is_running = run_bar && run_bar->is_playing();
+    ctx["game_is_running"] = is_running;
+    ctx["include"] = _debug_context_enabled;
+
+    // Always report error count from the debugger stack trace tab
     EditorDebuggerNode *edn = EditorDebuggerNode::get_singleton();
     if (edn) {
         ScriptEditorDebugger *dbg = edn->get_default_debugger();
-        if (dbg && dbg->get_error_count() > 0) {
-            ctx["errors"] = dbg->get_errors_text();
-            ctx["error_count"] = dbg->get_error_count();
+        if (dbg) {
+            int err_count = dbg->get_error_count();
+            ctx["error_count"] = err_count;
+            if (err_count > 0) {
+                ctx["errors"] = dbg->get_errors_text();
+            }
+        } else {
+            ctx["error_count"] = 0;
         }
+    } else {
+        ctx["error_count"] = 0;
     }
+
     // Screenshot captured at session end (async, may arrive slightly after)
     if (!_last_session_screenshot_b64.is_empty()) {
         ctx["screenshot_b64"] = _last_session_screenshot_b64;
@@ -1244,12 +1259,17 @@ void AI::_on_agentic_complete(bool p_success, const String &p_final_message) {
         run_entry["success"] = p_success;
         run_entry["final_message"] = p_final_message;
         run_entry["actions"] = _run_action_buffer;
-        _journal_writer->enqueue(_get_journal_path("runs.jsonl"), run_entry);
+        String journal_path = _get_journal_path("runs.jsonl");
+        print_line(vformat("AI: Writing journal entry to: %s", journal_path));
+        _journal_writer->enqueue(journal_path, run_entry);
+    } else {
+        print_line("AI: Journal writer is null — skipping journal write");
     }
 }
 
 String AI::_get_journal_path(const String &p_filename) const {
     String base = ProjectSettings::get_singleton()->globalize_path("user://ai_journal");
+    print_line(vformat("AI: Journal base path: '%s'", base));
     return base + "/" + p_filename;
 }
 

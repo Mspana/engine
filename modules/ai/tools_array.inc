@@ -207,6 +207,11 @@
 	req.push_back("scene_path");
 	tools.push_back(_make_tool("set_main_scene", "Set the project's main scene", props, req));
 }
+{
+	Dictionary props;
+	Array req;
+	tools.push_back(_make_tool("list_open_scenes", "List all currently open scene tabs in the editor", props, req));
+}
 
 // ==========================================================================
 // Project actions
@@ -286,6 +291,11 @@
 	props["wait_seconds"] = _make_prop("number", "Seconds to let game run before capturing (default 2.0, range 0.5-10.0)");
 	Array req;
 	tools.push_back(_make_tool("run_and_screenshot", "Run the game briefly, capture a screenshot, then stop. Use to visually verify changes.", props, req));
+}
+{
+	Dictionary props;
+	Array req;
+	tools.push_back(_make_tool("stop_game", "Stop the currently running game. No-op if the game is not running. Returns was_playing bool.", props, req));
 }
 
 // ==========================================================================

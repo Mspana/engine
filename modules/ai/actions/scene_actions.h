@@ -34,6 +34,16 @@ Dictionary exec_set_main_scene(const Dictionary &args);
 // Returns: Dictionary with status="success"|"error", result/error fields
 Dictionary exec_close_scene(const Dictionary &args);
 
+// Lists all currently open scene tabs in the editor.
+// Args: none
+// Returns: scenes array with path + is_current, count, current_scene
+Dictionary exec_list_open_scenes(const Dictionary &args);
+
+// Stops the running game. No-op if game is not running.
+// Args: none
+// Returns: Dictionary with was_playing bool
+Dictionary exec_stop_game(const Dictionary &args);
+
 } // namespace AISceneActions
 
 #endif // AI_SCENE_ACTIONS_H

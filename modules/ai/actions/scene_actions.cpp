@@ -8,6 +8,7 @@
 #include "editor/editor_command_palette.h"
 #include "editor/editor_node.h"
 #include "editor/editor_undo_redo_manager.h"
+#include "editor/gui/editor_run_bar.h"
 #include "core/string/ustring.h"
 #include "core/object/class_db.h"
 #include "scene/resources/packed_scene.h"
@@ -236,6 +237,62 @@ Dictionary exec_close_scene(const Dictionary &args) {
 	editor_node->trigger_menu_option(EditorNode::FILE_CLOSE, true);
 
 	print_line("AI: Executed close_scene.");
+	return ai_create_success_result(result_data);
+#else
+	return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+		"Editor API not available in non-editor builds");
+#endif
+}
+
+Dictionary exec_list_open_scenes(const Dictionary &args) {
+#ifdef TOOLS_ENABLED
+	EditorInterface *ei = EditorInterface::get_singleton();
+	if (!ei) {
+		return ai_create_error_result(AIErrorCodes::OPERATION_FAILED, "EditorInterface not available");
+	}
+
+	PackedStringArray open_paths = ei->get_open_scenes();
+	Node *edited_root = ei->get_edited_scene_root();
+	String current_scene = edited_root ? edited_root->get_scene_file_path() : String();
+
+	Array scenes;
+	for (int i = 0; i < open_paths.size(); i++) {
+		Dictionary entry;
+		entry["path"] = open_paths[i];
+		entry["is_current"] = (open_paths[i] == current_scene);
+		scenes.push_back(entry);
+	}
+
+	Dictionary result_data;
+	result_data["scenes"] = scenes;
+	result_data["count"] = scenes.size();
+	result_data["current_scene"] = current_scene;
+	return ai_create_success_result(result_data);
+#else
+	return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+		"Editor API not available in non-editor builds");
+#endif
+}
+
+Dictionary exec_stop_game(const Dictionary &args) {
+#ifdef TOOLS_ENABLED
+	EditorRunBar *run_bar = EditorRunBar::get_singleton();
+	if (!run_bar) {
+		return ai_create_error_result(AIErrorCodes::INTERNAL_ERROR,
+			"EditorRunBar singleton not found");
+	}
+
+	bool was_playing = run_bar->is_playing();
+	Dictionary result_data;
+	result_data["was_playing"] = was_playing;
+
+	if (was_playing) {
+		run_bar->stop_playing();
+		print_line("AI: Executed stop_game.");
+	} else {
+		ai_log_verbose("Execute 'stop_game': Game was not running, no-op.");
+	}
+
 	return ai_create_success_result(result_data);
 #else
 	return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
