@@ -132,10 +132,11 @@ Dictionary exec_update_script(const Dictionary &args) {
 	String new_string = args["new_string"];
 	bool replace_all = args.get("replace_all", false);
 
-	// Normalize escape sequences: the model sometimes sends \\n/\\t (literal two-char sequences)
-	// instead of real newlines/tabs. Unescape them so they match actual file content.
-	old_string = old_string.replace("\\n", "\n").replace("\\t", "\t");
-	new_string = new_string.replace("\\n", "\n").replace("\\t", "\t");
+	// Normalize escape sequences: the model sometimes over-escapes (sends literal \\n, \\t, \"
+	// instead of real newlines, tabs, or plain quotes). Unescape them so they match actual file content.
+	// Note: \" → " strips one level; \\" → \" (backslash stays, matching corrupted files too).
+	old_string = old_string.replace("\\n", "\n").replace("\\t", "\t").replace("\\\"", "\"");
+	new_string = new_string.replace("\\n", "\n").replace("\\t", "\t").replace("\\\"", "\"");
 
 	if (old_string == new_string) {
 		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
