@@ -20,9 +20,10 @@ static void ai_collect_nodes_dfs(Node *root, Node *relative_root, Array &out_nod
 	}
 
 	// Compute path relative to the chosen root.
+	// Root node uses "" so it doesn't collide with a child that shares the root's name.
 	String path;
 	if (root == relative_root) {
-		path = relative_root->get_name();
+		path = "";
 	} else {
 		NodePath rel_path = relative_root->get_path_to(root);
 		path = String(rel_path);
@@ -38,6 +39,7 @@ static void ai_collect_nodes_dfs(Node *root, Node *relative_root, Array &out_nod
 
 	Dictionary entry;
 	entry["path"] = path;
+	entry["name"] = String(root->get_name());
 	entry["type"] = type_name;
 	if (!script_path.is_empty()) {
 		entry["script"] = script_path;
@@ -346,11 +348,13 @@ Dictionary exec_list_files(const Dictionary &args) {
 	String suffix_filter;
 	if (args.has("glob") && args["glob"].get_type() == Variant::STRING) {
 		String glob = args["glob"];
-		if (glob.begins_with("*.")) {
+		if (glob == "*" || glob == "*.*") {
+			// Wildcard: no filter, include all files
+		} else if (glob.begins_with("*.")) {
 			suffix_filter = glob.substr(1); // Remove "*" prefix, keep ".ext"
 		} else {
 			return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
-				vformat("Unsupported glob pattern '%s'. Only patterns like '*.gd' are supported", glob));
+				vformat("Unsupported glob pattern '%s'. Use '*.gd', '*.*', or '*' to match all files", glob));
 		}
 	}
 
