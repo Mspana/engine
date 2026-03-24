@@ -132,6 +132,11 @@ Dictionary exec_update_script(const Dictionary &args) {
 	String new_string = args["new_string"];
 	bool replace_all = args.get("replace_all", false);
 
+	// Normalize escape sequences: the model sometimes sends \\n/\\t (literal two-char sequences)
+	// instead of real newlines/tabs. Unescape them so they match actual file content.
+	old_string = old_string.replace("\\n", "\n").replace("\\t", "\t");
+	new_string = new_string.replace("\\n", "\n").replace("\\t", "\t");
+
 	if (old_string == new_string) {
 		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
 			"old_string and new_string are identical — nothing to change.");
@@ -181,8 +186,11 @@ Dictionary exec_update_script(const Dictionary &args) {
 	}
 
 	if (occurrence_count == 0) {
+		Dictionary details;
+		details["current_file_content"] = original_content;
 		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
-			vformat("old_string not found in '%s'. Make sure you are matching the file content exactly (including whitespace and indentation).", file_path));
+			vformat("old_string not found in '%s'. The current file content is included in details — use it to construct an exact match.", file_path),
+			details);
 	}
 
 	if (occurrence_count > 1 && !replace_all) {
