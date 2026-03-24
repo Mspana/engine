@@ -54,9 +54,9 @@ class AgenticOrchestrator : public RefCounted {
 
 public:
 	// Guardrail constants
-	static constexpr int MAX_MODEL_TURNS_PER_RUN = 12;
+	static constexpr int MAX_MODEL_TURNS_PER_RUN = 20;
 	static constexpr int MAX_ACTIONS_PER_RESPONSE = 12;
-	static constexpr int MAX_ACTIONS_PER_RUN = 25;
+	static constexpr int MAX_ACTIONS_PER_RUN = 50;
 	// MAX_REPAIR_CYCLES removed — native tool-calling handles validation via the API
 
 	// Per-item in the AI's self-managed task list
