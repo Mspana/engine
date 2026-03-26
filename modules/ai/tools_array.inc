@@ -37,7 +37,7 @@
 	props["property_name"] = _make_prop("string", "Property name. Use dot notation for sub-resource properties (e.g. 'mesh.size', 'material.albedo_color')");
 	// value can be any type, but JSON schema requires a type — use object-level description
 	Dictionary value_prop;
-	value_prop["description"] = "The value to set. For Vector2/Vector3/Color use arrays: [x,y] or [x,y,z].";
+	value_prop["description"] = "The value to set. Pass raw values — strings as \"hello\", numbers as 1.0, bools as true. For Vector2/Vector3/Color use arrays: [x,y] or [x,y,z]. Do NOT wrap values in {type, value} objects.";
 	props["value"] = value_prop;
 	Array req;
 	req.push_back("node_path");

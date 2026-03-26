@@ -38,6 +38,15 @@ static Variant ai_coerce_array(const Array &a, Variant::Type t) {
 
 // If value is a Dictionary or Array and the named property expects a math type, coerce it.
 static Variant ai_coerce_value(Object *obj, const String &prop, const Variant &val) {
+	// Unwrap {type, value} objects — the model sometimes wraps plain values (e.g. strings)
+	// in a type-annotation dict like {"type": "String", "value": "hello"}.
+	if (val.get_type() == Variant::DICTIONARY) {
+		Dictionary d = val;
+		if (d.size() == 2 && d.has("type") && d.has("value")) {
+			return ai_coerce_value(obj, prop, d["value"]);
+		}
+	}
+
 	if (val.get_type() != Variant::DICTIONARY && val.get_type() != Variant::ARRAY) {
 		return val;
 	}
