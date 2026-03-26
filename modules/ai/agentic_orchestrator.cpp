@@ -72,6 +72,7 @@ void AgenticOrchestrator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("_on_async_rns_capture_received", "b64"), &AgenticOrchestrator::_on_async_rns_capture_received);
 
 	ADD_SIGNAL(MethodInfo("run_started"));
+	ADD_SIGNAL(MethodInfo("api_round_started", PropertyInfo(Variant::INT, "turn")));
 	ADD_SIGNAL(MethodInfo("progress_update", PropertyInfo(Variant::STRING, "status"), PropertyInfo(Variant::INT, "turn")));
 	ADD_SIGNAL(MethodInfo("tool_result_ready", PropertyInfo(Variant::DICTIONARY, "tool_result")));
 	ADD_SIGNAL(MethodInfo("run_complete", PropertyInfo(Variant::BOOL, "success"), PropertyInfo(Variant::STRING, "final_message")));
@@ -97,30 +98,27 @@ void AgenticOrchestrator::run_agentic_loop(const Array &p_initial_messages, Ref<
 	// Initialize run context
 	current_run.conversation_history = p_initial_messages.duplicate();
 
-	// Inject game session context (output log + errors + screenshot) if available from last run
+	// Always inject game session context (running state + stack trace errors + screenshot)
 	{
 		AI *ai_singleton = AI::get_singleton();
 		if (ai_singleton) {
 			Dictionary session_ctx = ai_singleton->consume_session_context();
-			if (!session_ctx.is_empty()) {
-				String ctx_text = "[LAST GAME SESSION]\n";
-				if (session_ctx.has("error_count")) {
-					ctx_text += vformat("Errors: %d\n", (int)session_ctx["error_count"]);
-				}
-				if (session_ctx.has("errors")) {
-					ctx_text += vformat("Error details:\n%s\n", (String)session_ctx["errors"]);
-				}
-				if (session_ctx.has("output_log")) {
-					// Trim to last 100 lines to avoid blowing context
-					String log = session_ctx["output_log"];
-					PackedStringArray lines = log.split("\n");
-					int start = MAX(0, lines.size() - 100);
-					String trimmed;
-					for (int i = start; i < lines.size(); i++) {
-						trimmed += lines[i] + "\n";
+
+			if ((bool)session_ctx.get("include", true)) {
+				bool game_running = session_ctx.get("game_is_running", false);
+				int error_count = session_ctx.get("error_count", 0);
+
+				String ctx_text = "[GAME SESSION]\n";
+				ctx_text += vformat("Status: %s\n", game_running ? "Running" : "Not running");
+				if (error_count == 0) {
+					ctx_text += "Errors: 0 (none)\n";
+				} else {
+					ctx_text += vformat("Errors: %d\n", error_count);
+					if (session_ctx.has("errors")) {
+						ctx_text += vformat("%s\n", (String)session_ctx["errors"]);
 					}
-					ctx_text += vformat("Output log:\n%s", trimmed);
 				}
+
 				Dictionary ctx_msg;
 				ctx_msg["role"] = "user";
 				ctx_msg["content"] = ctx_text;
@@ -193,6 +191,7 @@ void AgenticOrchestrator::_send_model_request() {
 	// Increment turn counter
 	current_run.model_turns++;
 	_waiting_for_response = true;
+	emit_signal("api_round_started", current_run.model_turns);
 
 	print_line(vformat("AgenticOrchestrator: Sending model request (turn %d/%d)...", current_run.model_turns, MAX_MODEL_TURNS_PER_RUN));
 

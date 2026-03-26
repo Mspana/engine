@@ -43,7 +43,7 @@ void initialize_ai_module(ModuleInitializationLevel p_level) {
 		GDREGISTER_CLASS(AIChatStore);
 		GDREGISTER_CLASS(ThinkingCollapsibleEntry);
 		GDREGISTER_CLASS(ToolCollapsibleEntry);
-		GDREGISTER_CLASS(AIStatusIndicator);
+GDREGISTER_CLASS(AIStatusIndicator);
 		GDREGISTER_CLASS(AIStatusPanel);
 		GDREGISTER_CLASS(AIStatusIndicatorPlugin);
 		EditorPlugins::add_by_type<AIStatusIndicatorPlugin>();

@@ -73,8 +73,9 @@ private:
 	static const int TRANSCRIPT_VERSION = 3; // v3 adds images to ChatMessage
 	Vector<ChatMessage> messages;
 	Vector<ChatCheckpoint> checkpoints;
+	String _file_path; // Full path like "user://ai_chat/chat_123456789.json"
+	String _chat_id;   // Just "chat_123456789"
 
-	String _get_transcript_dir() const;
 	bool _ensure_directory_exists() const;
 	String _generate_checkpoint_id() const;
 
@@ -82,8 +83,19 @@ protected:
 	static void _bind_methods();
 
 public:
-	// Returns the path to the transcript file
-	String get_transcript_path() const;
+	// Static helpers for multi-chat support
+	static String get_chat_dir() { return "user://ai_chat"; }
+	static String make_chat_path(const String &p_id) { return "user://ai_chat/" + p_id + ".json"; }
+	static String generate_chat_id();
+	static Vector<String> list_chat_ids(); // Newest first
+
+	// Set which chat file this store operates on; clears in-memory state
+	void set_file_path(const String &p_path);
+	String get_file_path() const { return _file_path; }
+	String get_chat_id() const { return _chat_id; }
+
+	// Returns the path to the transcript file (same as get_file_path)
+	String get_transcript_path() const { return _file_path; }
 
 	// Load transcript from disk. Returns empty vector if file missing/corrupt.
 	Vector<ChatMessage> load_transcript();

@@ -1,5 +1,37 @@
 # AI Module — Backlog
 
+Enhanced AI Panel UI
+1. Input/output, colorized. Same color on success, red output on failure
+2. Debug Button + shortcut to see full input/output (current approach)
+
+Support changing AI panel colors w/ theme
+
+Consistent Aristotle branding
+
+Better renaming in file explorer
+1. Doesn't fully reload when renamed
+2. Click to edit like in file explorer
+
+AI cannot see everything. When you ask it to look at my game, it just looks at the nodes in the current scene. It should look at all scenes, all nodes, and all your files too.
+
+AI may want to know the vals of properties while running the game (transform of player, etc). Could add a way for it to specify this, so it tells the game what to monitor. Then it's got a good view. Idea would be list the properties + time delta to record those properties. 'Screenshot' could also be a property. Give it examples too.
+
+DONE: AI cannot see everything. When you ask it to look at my game, it just looks at the nodes in the current scene. It should look at all scenes, all nodes, and all your files too.
+
+DONE: There's a bug where list nodes isn't showing all files in the correct way. It's not resolving the paths right.
+
+DONE: There's a bug where list files isn't providing a list of any files.
+
+DONE: The AI should be able to close a running game.
+
+System Prompt Updates:
+
+DONE: A the beginning of your conversation, you don't have any project context. Explore all scenes and files necessary to understand the game enough to answer.
+
+DONE: The user is testing, so their commands are relative to the game, not the engine. For example, if the user says 'Center it' they probably mean centered to the camera.
+
+DONE: The AI should heavily prefer to edit elements direclty in the scene rather than use scripting. This is more transparent, checks for errors before runtime, and leverages existing infrastrucutre.
+
 ## Bugs
 
 - ~~**Context indicator wrong during run**: Context counter drops while model is running, rises when done — should be opposite.~~

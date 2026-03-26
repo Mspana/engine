@@ -49,6 +49,7 @@ private:
 	// Game session context storage (populated on debugger stop, cleared after AI consumes it)
 	String _last_session_screenshot_b64;
 	bool _session_screenshot_pending = false;
+	bool _debug_context_enabled = true;
 
 	void _connect_debugger_signals();
 	void _on_game_session_stopped();
@@ -119,6 +120,8 @@ public:
 
 	// Game session context (auto-captured on stop, injected into next AI turn)
 	Dictionary consume_session_context();                  // returns and clears stored session data
+	void set_debug_context_enabled(bool p_enabled);        // UI pill toggle
+	bool get_debug_context_enabled() const { return _debug_context_enabled; }
 
 	// Check if a file was read via read_script in the current conversation
 	bool was_file_read(const String &file_path) const;

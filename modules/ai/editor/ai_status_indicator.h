@@ -128,6 +128,42 @@ public:
 	void update_todos(const Array &p_todos);
 };
 
+// ============================================================================
+// DebugContextPill — shows game session error state above the input box
+// ============================================================================
+
+class DebugContextPill : public VBoxContainer {
+	GDCLASS(DebugContextPill, VBoxContainer);
+
+	PanelContainer *_pill_container = nullptr;
+	HBoxContainer *_header_row = nullptr;
+	HBoxContainer *_click_area = nullptr;
+	RichTextLabel *_main_label = nullptr;
+	Button *_dropdown_btn = nullptr;
+	VBoxContainer *_error_details = nullptr;
+	RichTextLabel *_error_label = nullptr;
+
+	bool _enabled = true;
+	bool _expanded = false;
+	int _error_count = 0;
+	String _errors_text;
+	bool _game_running = false;
+
+	void _on_click_area_input(const Ref<InputEvent> &p_event);
+	void _on_dropdown_pressed();
+	void _rebuild_label();
+
+protected:
+	static void _bind_methods();
+
+public:
+	void update_state(bool p_game_running, int p_error_count, const String &p_errors);
+	bool is_enabled() const { return _enabled; }
+	bool has_content() const { return _error_count > 0 || _game_running; }
+	String get_context_summary() const;
+	DebugContextPill();
+};
+
 class AIStatusIndicator : public ColorRect {
 	GDCLASS(AIStatusIndicator, ColorRect);
 
@@ -179,11 +215,26 @@ private:
 	ScrollContainer *transcript_scroll = nullptr;
 	VBoxContainer *message_list = nullptr;
 	Control *pending_message = nullptr;
+	Label *pending_label = nullptr;
+	Timer *thinking_dot_timer = nullptr;
+	int thinking_dot_state = 0;
 
 	// Input area
 	TextEdit *prompt_edit = nullptr;
 	Button *send_button = nullptr;  // Toggles between Send/Stop
-	Button *clear_button = nullptr;
+
+	// Chat toolbar (top of panel)
+	HBoxContainer *chat_toolbar = nullptr;
+	Button *new_chat_button = nullptr;
+	Button *history_button = nullptr;
+
+	// History popup
+	PopupPanel *history_popup = nullptr;
+	VBoxContainer *history_list = nullptr;
+
+	// Delete chat dialog
+	ConfirmationDialog *delete_chat_dialog = nullptr;
+	String pending_delete_chat_id;
 
 	// Message queue (in-memory, not persisted)
 	Vector<QueuedMessage> message_queue;
@@ -218,6 +269,7 @@ private:
 	// Chat state
 	bool is_waiting_for_response = false;
 	bool context_was_truncated = false;
+	bool context_exhausted = false; // Set when context truncation detected; blocks further sends
 	int64_t current_run_user_message_id = 0; // User message ID for checkpoint anchoring
 
 	// Rewind/Edit UI - custom dialog with three buttons
@@ -241,6 +293,14 @@ private:
 	// Pending images (staged for next send, cleared after _start_run)
 	Vector<String> pending_images;          // base64-encoded PNG strings (512px max)
 	Vector<Ref<Image>> pending_images_raw;  // kept for thumbnail display in preview strip
+
+	// Debug context pill (shown above input bar when game has errors or is running)
+	DebugContextPill *debug_pill = nullptr;
+	Timer *debug_pill_update_timer = nullptr;
+	void _update_debug_pill();
+	void _on_debug_pill_update_tick();
+	void _on_debug_context_toggled(bool p_enabled);
+	Control *_create_debug_context_bubble();
 
 	// Image preview strip (shown above input bar when images are pending)
 	HBoxContainer *image_preview_strip = nullptr;
@@ -293,9 +353,17 @@ private:
 	void _start_run(const String &p_message);
 	void _request_cancel();
 
+	// Multi-chat management
+	void _new_chat();
+	void _show_history_popup();
+	void _rebuild_history_popup();
+	String _get_chat_display_name(const String &p_id) const;
+	void _switch_to_chat(const String &p_id);
+	void _delete_chat(const String &p_id);
+	void _on_delete_chat_confirmed();
+
 	// Event handlers
 	void _on_send_button_pressed();  // Handles both Send and Stop
-	void _on_clear_pressed();
 	void _on_prompt_text_changed();
 	void _on_prompt_gui_input(const Ref<InputEvent> &p_event);
 	void _on_ai_response(bool p_success, const String &p_response, const String &p_error);
@@ -308,10 +376,12 @@ private:
 	void _on_orchestrator_narration(const String &p_text);
 	void _on_orchestrator_thinking(const String &p_text);
 	void _on_todos_updated(const Array &p_todos);
+	void _on_api_round_started(int p_turn);
 
 	// Pending message helpers
 	void _show_pending_message();
 	void _remove_pending_message();
+	void _on_thinking_dot_tick();
 
 	// Rewind functionality
 	void _on_rewind_clicked(int64_t p_message_id);

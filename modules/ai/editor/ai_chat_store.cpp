@@ -37,19 +37,47 @@
 
 void AIChatStore::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_transcript_path"), &AIChatStore::get_transcript_path);
+	ClassDB::bind_method(D_METHOD("get_file_path"), &AIChatStore::get_file_path);
+	ClassDB::bind_method(D_METHOD("get_chat_id"), &AIChatStore::get_chat_id);
 	ClassDB::bind_method(D_METHOD("clear_transcript"), &AIChatStore::clear_transcript);
+	ClassDB::bind_method(D_METHOD("set_file_path", "path"), &AIChatStore::set_file_path);
 }
 
-String AIChatStore::_get_transcript_dir() const {
-	return "user://ai_chat";
+String AIChatStore::generate_chat_id() {
+	int64_t now_ms = (int64_t)(Time::get_singleton()->get_unix_time_from_system() * 1000.0);
+	return vformat("chat_%d", now_ms);
 }
 
-String AIChatStore::get_transcript_path() const {
-	return _get_transcript_dir().path_join("transcript.json");
+Vector<String> AIChatStore::list_chat_ids() {
+	Vector<String> ids;
+	Ref<DirAccess> da = DirAccess::open("user://ai_chat");
+	if (da.is_null()) {
+		return ids;
+	}
+	da->list_dir_begin();
+	String fname = da->get_next();
+	while (!fname.is_empty()) {
+		if (!da->current_is_dir() && fname.begins_with("chat_") && fname.ends_with(".json")) {
+			ids.push_back(fname.get_basename()); // e.g. "chat_1711200000000"
+		}
+		fname = da->get_next();
+	}
+	da->list_dir_end();
+	// Sort newest first (lexicographic works since "chat_" prefix is constant and timestamp follows)
+	ids.sort();
+	ids.reverse();
+	return ids;
+}
+
+void AIChatStore::set_file_path(const String &p_path) {
+	_file_path = p_path;
+	_chat_id = p_path.get_file().get_basename(); // "user://ai_chat/chat_123.json" → "chat_123"
+	messages.clear();
+	checkpoints.clear();
 }
 
 bool AIChatStore::_ensure_directory_exists() const {
-	String dir_path = _get_transcript_dir();
+	String dir_path = "user://ai_chat";
 	if (!DirAccess::exists(dir_path)) {
 		// Use DirAccess with ACCESS_USERDATA for user:// paths
 		Ref<DirAccess> da = DirAccess::open("user://");
@@ -71,8 +99,8 @@ Vector<ChatMessage> AIChatStore::load_transcript() {
 	messages.clear();
 	checkpoints.clear();
 
-	String path = get_transcript_path();
-	if (!FileAccess::exists(path)) {
+	String path = _file_path;
+	if (path.is_empty() || !FileAccess::exists(path)) {
 		print_verbose("AIChatStore: No transcript file found, starting with empty transcript.");
 		return messages;
 	}
@@ -215,7 +243,11 @@ bool AIChatStore::save_transcript() {
 
 	String json_text = JSON::stringify(root, "\t");
 
-	String path = get_transcript_path();
+	String path = _file_path;
+	if (path.is_empty()) {
+		ERR_PRINT("AIChatStore: Cannot save — no file path set.");
+		return false;
+	}
 	Ref<FileAccess> file = FileAccess::open(path, FileAccess::WRITE);
 	if (file.is_null()) {
 		ERR_PRINT(vformat("AIChatStore: Failed to open transcript file for writing '%s'.", path));
@@ -253,16 +285,19 @@ void AIChatStore::clear_transcript() {
 	messages.clear();
 	checkpoints.clear();
 
-	String path = get_transcript_path();
-	if (FileAccess::exists(path)) {
-		// Use DirAccess for user:// paths
-		Ref<DirAccess> da = DirAccess::open(_get_transcript_dir());
+	if (_file_path.is_empty()) {
+		return;
+	}
+	if (FileAccess::exists(_file_path)) {
+		String dir = _file_path.get_base_dir();
+		String filename = _file_path.get_file();
+		Ref<DirAccess> da = DirAccess::open(dir);
 		if (da.is_valid()) {
-			Error err = da->remove("transcript.json");
+			Error err = da->remove(filename);
 			if (err != OK) {
-				WARN_PRINT(vformat("AIChatStore: Failed to delete transcript file '%s'. Error: %d", path, err));
+				WARN_PRINT(vformat("AIChatStore: Failed to delete transcript file '%s'. Error: %d", _file_path, err));
 			} else {
-				print_verbose("AIChatStore: Deleted transcript file.");
+				print_verbose(vformat("AIChatStore: Deleted transcript file '%s'.", _file_path));
 			}
 		}
 	}
@@ -397,7 +432,9 @@ bool AIChatStore::truncate_to_index(int p_index) {
 	return true;
 }
 
-AIChatStore::AIChatStore() {
+AIChatStore::AIChatStore() :
+		_file_path(""),
+		_chat_id("") {
 }
 
 AIChatStore::~AIChatStore() {

@@ -37,15 +37,22 @@
 #include "core/input/input_event.h"
 #include "core/io/image.h"
 #include "core/io/json.h"
+#include "core/io/dir_access.h"
+#include "core/io/file_access.h"
 #include "core/os/os.h"
 #include "core/os/time.h"
 #include "core/string/ustring.h"
+#include "editor/debugger/editor_debugger_node.h"
+#include "editor/debugger/script_editor_debugger.h"
 #include "editor/editor_node.h"
 #include "editor/editor_undo_redo_manager.h"
+#include "editor/gui/editor_run_bar.h"
 #include "editor/themes/editor_scale.h"
 #include "scene/gui/rich_text_label.h"
 #include "scene/resources/image_texture.h"
+#include "scene/gui/margin_container.h"
 #include "scene/resources/style_box_flat.h"
+#include "scene/resources/style_box_line.h"
 #include "scene/resources/font.h"
 #include "scene/scene_string_names.h"
 #include "servers/display_server.h"
@@ -457,6 +464,169 @@ ToolCollapsibleEntry::ToolCollapsibleEntry() {
 }
 
 // ============================================================================
+// DebugContextPill - Shows game session errors above the input box
+// ============================================================================
+
+void DebugContextPill::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("_on_click_area_input", "event"), &DebugContextPill::_on_click_area_input);
+	ClassDB::bind_method(D_METHOD("_on_dropdown_pressed"), &DebugContextPill::_on_dropdown_pressed);
+	ADD_SIGNAL(MethodInfo("enabled_changed", PropertyInfo(Variant::BOOL, "enabled")));
+}
+
+void DebugContextPill::_rebuild_label() {
+	if (!_main_label) {
+		return;
+	}
+	String text;
+	String tag_open = _enabled ? "" : "[s][color=#808080]";
+	String tag_close = _enabled ? "" : "[/color][/s]";
+
+	if (_error_count > 0) {
+		text += tag_open + vformat("Including Debug Session Errors (%d)", _error_count) + tag_close + "\n";
+	}
+	if (_game_running) {
+		text += tag_open + "Current State: Running Debug Session" + tag_close;
+	} else if (_error_count == 0) {
+		text += tag_open + "No Errors" + tag_close;
+	}
+	_main_label->set_text(text.strip_edges());
+
+	// Show dropdown only when there are errors to expand
+	if (_dropdown_btn) {
+		_dropdown_btn->set_visible(_error_count > 0);
+	}
+}
+
+void DebugContextPill::_on_click_area_input(const Ref<InputEvent> &p_event) {
+	Ref<InputEventMouseButton> mb = p_event;
+	if (mb.is_valid() && mb->get_button_index() == MouseButton::LEFT && mb->is_pressed()) {
+		_enabled = !_enabled;
+		_rebuild_label();
+		emit_signal("enabled_changed", _enabled);
+	}
+}
+
+void DebugContextPill::_on_dropdown_pressed() {
+	_expanded = !_expanded;
+	if (_error_details) {
+		_error_details->set_visible(_expanded);
+	}
+	_dropdown_btn->set_text(_expanded ? String::utf8("\xe2\x96\xbe") : String::utf8("\xe2\x96\xb8"));
+}
+
+void DebugContextPill::update_state(bool p_game_running, int p_error_count, const String &p_errors) {
+	_game_running = p_game_running;
+	_error_count = p_error_count;
+	_errors_text = p_errors;
+
+	// Show/hide pill based on whether there's anything to show
+	set_visible(_error_count > 0 || _game_running);
+
+	// Update error detail text
+	if (_error_label) {
+		_error_label->set_text(_errors_text.is_empty() ? "No error details." : _errors_text);
+	}
+	// Collapse if errors cleared
+	if (_error_count == 0 && _expanded) {
+		_expanded = false;
+		if (_error_details) {
+			_error_details->set_visible(false);
+		}
+		if (_dropdown_btn) {
+			_dropdown_btn->set_text(String::utf8("\xe2\x96\xb8"));
+		}
+	}
+	_rebuild_label();
+}
+
+String DebugContextPill::get_context_summary() const {
+	String text;
+	if (_error_count > 0) {
+		text += vformat("Including Debug Session Errors (%d)\n", _error_count);
+	}
+	if (_game_running) {
+		text += "Current State: Running Debug Session\n";
+	}
+	if (!_errors_text.is_empty()) {
+		text += "\n" + _errors_text;
+	}
+	return text.strip_edges();
+}
+
+DebugContextPill::DebugContextPill() {
+	set_visible(false); // Hidden until there's something to show
+
+	// Outer margin
+	add_theme_constant_override("separation", 0);
+
+	// Main pill panel
+	_pill_container = memnew(PanelContainer);
+	Ref<StyleBoxFlat> pill_style;
+	pill_style.instantiate();
+	pill_style->set_bg_color(Color(0.18f, 0.22f, 0.28f, 1.0f));
+	pill_style->set_border_width_all(1);
+	pill_style->set_border_color(Color(0.35f, 0.5f, 0.7f, 0.6f));
+	pill_style->set_corner_radius_all(6 * EDSCALE);
+	pill_style->set_content_margin_all(6 * EDSCALE);
+	_pill_container->add_theme_style_override("panel", pill_style);
+	add_child(_pill_container);
+
+	// Header row inside pill
+	_header_row = memnew(HBoxContainer);
+	_header_row->set_h_size_flags(SIZE_EXPAND_FILL);
+	_pill_container->add_child(_header_row);
+
+	// Clickable area (left side) — a HBoxContainer so label sizes correctly
+	HBoxContainer *click_hbox = memnew(HBoxContainer);
+	click_hbox->set_h_size_flags(SIZE_EXPAND_FILL);
+	click_hbox->set_mouse_filter(MOUSE_FILTER_STOP);
+	click_hbox->connect("gui_input", callable_mp(this, &DebugContextPill::_on_click_area_input));
+	_header_row->add_child(click_hbox);
+	_click_area = click_hbox;
+
+	_main_label = memnew(RichTextLabel);
+	_main_label->set_use_bbcode(true);
+	_main_label->set_fit_content(true);
+	_main_label->set_scroll_active(false);
+	_main_label->set_h_size_flags(SIZE_EXPAND_FILL);
+	_main_label->set_mouse_filter(MOUSE_FILTER_IGNORE);
+	_main_label->add_theme_color_override("default_color", Color(0.7f, 0.85f, 1.0f, 1.0f));
+	_main_label->add_theme_font_size_override("normal_font_size", 11 * EDSCALE);
+	click_hbox->add_child(_main_label);
+
+	// Dropdown button (right side) — expands error details
+	_dropdown_btn = memnew(Button);
+	_dropdown_btn->set_text(String::utf8("\xe2\x96\xb8"));
+	_dropdown_btn->set_flat(true);
+	_dropdown_btn->set_visible(false);
+	_dropdown_btn->add_theme_color_override("font_color", Color(0.7f, 0.85f, 1.0f, 0.7f));
+	_dropdown_btn->connect(SceneStringNames::get_singleton()->pressed, callable_mp(this, &DebugContextPill::_on_dropdown_pressed));
+	_header_row->add_child(_dropdown_btn);
+
+	// Error details panel (collapsed by default)
+	_error_details = memnew(VBoxContainer);
+	_error_details->set_visible(false);
+	_error_details->add_theme_constant_override("separation", 2 * EDSCALE);
+	add_child(_error_details);
+
+	HSeparator *sep = memnew(HSeparator);
+	Ref<StyleBoxLine> sep_style;
+	sep_style.instantiate();
+	sep_style->set_color(Color(0.35f, 0.5f, 0.7f, 0.4f));
+	sep->add_theme_style_override("separator", sep_style);
+	_error_details->add_child(sep);
+
+	_error_label = memnew(RichTextLabel);
+	_error_label->set_use_bbcode(false);
+	_error_label->set_fit_content(true);
+	_error_label->set_scroll_active(false);
+	_error_label->set_h_size_flags(SIZE_EXPAND_FILL);
+	_error_label->add_theme_color_override("default_color", Color(1.0f, 0.6f, 0.5f, 0.9f));
+	_error_label->add_theme_font_size_override("normal_font_size", 10 * EDSCALE);
+	_error_details->add_child(_error_label);
+}
+
+// ============================================================================
 // AIStatusIndicator - The colored circle showing connection status
 // ============================================================================
 
@@ -628,8 +798,14 @@ AIStatusIndicator::AIStatusIndicator() {
 void AIStatusPanel::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_READY: {
-			// Load transcript and rebuild UI
+			// Pick the most recent existing chat, or create a fresh one
 			if (chat_store.is_valid()) {
+				Vector<String> ids = AIChatStore::list_chat_ids();
+				if (!ids.is_empty()) {
+					chat_store->set_file_path(AIChatStore::make_chat_path(ids[0]));
+				} else {
+					chat_store->set_file_path(AIChatStore::make_chat_path(AIChatStore::generate_chat_id()));
+				}
 				chat_store->load_transcript();
 				_rebuild_message_list();
 				_refresh_context_usage();
@@ -681,6 +857,9 @@ void AIStatusPanel::_notification(int p_what) {
 						if (!orchestrator->is_connected("todos_updated", callable_mp(this, &AIStatusPanel::_on_todos_updated))) {
 							orchestrator->connect("todos_updated", callable_mp(this, &AIStatusPanel::_on_todos_updated));
 						}
+						if (!orchestrator->is_connected("api_round_started", callable_mp(this, &AIStatusPanel::_on_api_round_started))) {
+							orchestrator->connect("api_round_started", callable_mp(this, &AIStatusPanel::_on_api_round_started));
+						}
 					}
 				}
 			}
@@ -695,7 +874,7 @@ void AIStatusPanel::_notification(int p_what) {
 
 void AIStatusPanel::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("_on_send_button_pressed"), &AIStatusPanel::_on_send_button_pressed);
-	ClassDB::bind_method(D_METHOD("_on_clear_pressed"), &AIStatusPanel::_on_clear_pressed);
+	ClassDB::bind_method(D_METHOD("_on_delete_chat_confirmed"), &AIStatusPanel::_on_delete_chat_confirmed);
 	ClassDB::bind_method(D_METHOD("_on_prompt_text_changed"), &AIStatusPanel::_on_prompt_text_changed);
 	ClassDB::bind_method(D_METHOD("_on_queue_item_edit", "index"), &AIStatusPanel::_on_queue_item_edit);
 	ClassDB::bind_method(D_METHOD("_on_queue_item_remove", "index"), &AIStatusPanel::_on_queue_item_remove);
@@ -705,6 +884,10 @@ void AIStatusPanel::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("_on_orchestrator_tool_result", "tool_result"), &AIStatusPanel::_on_orchestrator_tool_result);
 	ClassDB::bind_method(D_METHOD("_on_orchestrator_complete", "success", "final_message"), &AIStatusPanel::_on_orchestrator_complete);
 	ClassDB::bind_method(D_METHOD("_on_todos_updated", "todos"), &AIStatusPanel::_on_todos_updated);
+	ClassDB::bind_method(D_METHOD("_on_api_round_started", "turn"), &AIStatusPanel::_on_api_round_started);
+	ClassDB::bind_method(D_METHOD("_on_thinking_dot_tick"), &AIStatusPanel::_on_thinking_dot_tick);
+	ClassDB::bind_method(D_METHOD("_on_debug_pill_update_tick"), &AIStatusPanel::_on_debug_pill_update_tick);
+	ClassDB::bind_method(D_METHOD("_on_debug_context_toggled", "enabled"), &AIStatusPanel::_on_debug_context_toggled);
 	ClassDB::bind_method(D_METHOD("_on_rewind_clicked", "message_id"), &AIStatusPanel::_on_rewind_clicked);
 	ClassDB::bind_method(D_METHOD("_on_dialog_cancel"), &AIStatusPanel::_on_dialog_cancel);
 	ClassDB::bind_method(D_METHOD("_on_dialog_continue_no_revert"), &AIStatusPanel::_on_dialog_continue_no_revert);
@@ -921,6 +1104,46 @@ static String _markdown_to_bbcode(const String &p_markdown) {
 	return out;
 }
 
+// Renders message text into a RichTextLabel, detecting data:image/ URIs and inserting
+// them inline using add_image() so they render as images rather than base64 text.
+static void _append_message_content(RichTextLabel *p_label, const String &p_text) {
+	String remaining = p_text;
+	while (true) {
+		int marker = remaining.find("data:image/");
+		if (marker == -1) {
+			p_label->append_text(_markdown_to_bbcode(remaining));
+			break;
+		}
+		if (marker > 0) {
+			p_label->append_text(_markdown_to_bbcode(remaining.substr(0, marker)));
+		}
+		// Find end of data URI — stop at whitespace, quote, or closing paren
+		int end = marker + 11;
+		while (end < remaining.length()) {
+			char32_t c = remaining[end];
+			if (c == ' ' || c == '\n' || c == '\r' || c == '"' || c == '\'' || c == ')') {
+				break;
+			}
+			end++;
+		}
+		String data_uri = remaining.substr(marker, end - marker);
+		remaining = remaining.substr(end);
+
+		int comma = data_uri.find(",");
+		if (comma != -1) {
+			String b64 = data_uri.substr(comma + 1);
+			PackedByteArray bytes = CoreBind::Marshalls::get_singleton()->base64_to_raw(b64);
+			if (!bytes.is_empty()) {
+				Ref<Image> img;
+				img.instantiate();
+				if (img->load_png_from_buffer(bytes) == OK && !img->is_empty()) {
+					p_label->add_image(ImageTexture::create_from_image(img), 0, 200 * EDSCALE);
+				}
+			}
+		}
+	}
+}
+
 Control *AIStatusPanel::_create_message_bubble(const ChatMessage &p_message) {
 	// Create container for alignment
 	HBoxContainer *align_container = memnew(HBoxContainer);
@@ -1025,8 +1248,8 @@ Control *AIStatusPanel::_create_message_bubble(const ChatMessage &p_message) {
 	label->add_theme_style_override("normal", label_empty_style);
 	label->add_theme_style_override("focus", label_empty_style);
 
-	// Display content
-	label->append_text(_markdown_to_bbcode(p_message.content));
+	// Display content (with inline image support for data: URIs)
+	_append_message_content(label, p_message.content);
 
 	inner_vbox->add_child(label);
 
@@ -1118,8 +1341,14 @@ void AIStatusPanel::_update_send_button_state() {
 	// Button appearance and behavior depends on run state
 	switch (run_state) {
 		case STATE_IDLE: {
-			// Send mode: enabled if there's text or images to send
+			// Send mode: enabled if there's text or images to send (and context not exhausted)
 			send_button->set_text(TTR("Send"));
+			if (context_exhausted) {
+				send_button->set_disabled(true);
+				send_button->set_tooltip_text(TTR("Context is full. Start a new chat (+) to continue."));
+				break;
+			}
+			send_button->set_tooltip_text("");
 			bool has_text = !prompt_edit->get_text().strip_edges().is_empty();
 			bool has_images = !pending_images.is_empty();
 			send_button->set_disabled(!has_text && !has_images);
@@ -1380,6 +1609,12 @@ void AIStatusPanel::_start_run(const String &p_message) {
 	// Snapshot and consume pending images before async work begins
 	Vector<String> images_for_run = pending_images;
 	_clear_pending_images();
+
+	// Add debug context bubble above user message (if pill is active)
+	Control *debug_bubble = _create_debug_context_bubble();
+	if (debug_bubble && message_list) {
+		message_list->add_child(debug_bubble);
+	}
 
 	// Append user message to store
 	current_run_user_message_id = 0;
@@ -1663,7 +1898,7 @@ void AIStatusPanel::_on_send_button_pressed() {
 	switch (run_state) {
 		case STATE_IDLE: {
 			// Send mode: try to send the message
-			if (!prompt_edit) {
+			if (!prompt_edit || context_exhausted) {
 				return;
 			}
 
@@ -1725,15 +1960,240 @@ void AIStatusPanel::_on_send_button_pressed() {
 	}
 }
 
-void AIStatusPanel::_on_clear_pressed() {
-	// Cancel any pending edit
+// ============================================================
+// Multi-chat management
+// ============================================================
+
+void AIStatusPanel::_new_chat() {
+	if (run_state != STATE_IDLE) {
+		return; // Don't switch while running
+	}
 	_cancel_pending_edit();
+	_clear_pending_images();
+	message_queue.clear();
+	_update_queue_ui();
+	context_exhausted = false;
 
 	if (chat_store.is_valid()) {
-		chat_store->clear_transcript();
+		String new_id = AIChatStore::generate_chat_id();
+		chat_store->set_file_path(AIChatStore::make_chat_path(new_id));
 	}
 	_rebuild_message_list();
 	_reset_context_usage();
+	_update_send_button_state();
+}
+
+String AIStatusPanel::_get_chat_display_name(const String &p_id) const {
+	String path = AIChatStore::make_chat_path(p_id);
+	if (!FileAccess::exists(path)) {
+		return p_id;
+	}
+	Ref<FileAccess> f = FileAccess::open(path, FileAccess::READ);
+	if (f.is_null()) {
+		return p_id;
+	}
+	// Read just the first 2KB to find the first user message content
+	Vector<uint8_t> buf = f->get_buffer(2048);
+	f.unref();
+	String chunk = String::utf8((const char *)buf.ptr(), buf.size());
+
+	// Quick-parse: find "role":"user" then nearby "content":"..."
+	int role_pos = chunk.find("\"user\"");
+	if (role_pos < 0) {
+		return p_id;
+	}
+	int content_pos = chunk.find("\"content\"", role_pos);
+	if (content_pos < 0) {
+		return p_id;
+	}
+	int quote_start = chunk.find("\"", content_pos + 9); // past "content":
+	if (quote_start < 0) {
+		return p_id;
+	}
+	quote_start++; // move past opening quote
+	int quote_end = chunk.find("\"", quote_start);
+	if (quote_end <= quote_start) {
+		return p_id;
+	}
+	String text = chunk.substr(quote_start, quote_end - quote_start);
+	// Unescape basic JSON escapes
+	text = text.replace("\\n", " ").replace("\\t", " ").replace("\\\"", "\"");
+	text = text.strip_edges();
+	if (text.length() > 40) {
+		text = text.substr(0, 40) + U"…";
+	}
+	return text.is_empty() ? p_id : text;
+}
+
+void AIStatusPanel::_switch_to_chat(const String &p_id) {
+	if (run_state != STATE_IDLE) {
+		return;
+	}
+	if (chat_store.is_valid() && chat_store->get_chat_id() == p_id) {
+		history_popup->hide();
+		return;
+	}
+	_cancel_pending_edit();
+	_clear_pending_images();
+	message_queue.clear();
+	_update_queue_ui();
+	context_exhausted = false;
+
+	if (chat_store.is_valid()) {
+		chat_store->set_file_path(AIChatStore::make_chat_path(p_id));
+		chat_store->load_transcript();
+	}
+	_rebuild_message_list();
+	_refresh_context_usage();
+	_update_send_button_state();
+	history_popup->hide();
+}
+
+void AIStatusPanel::_delete_chat(const String &p_id) {
+	pending_delete_chat_id = p_id;
+	if (delete_chat_dialog) {
+		delete_chat_dialog->popup_centered();
+	}
+}
+
+void AIStatusPanel::_on_delete_chat_confirmed() {
+	if (pending_delete_chat_id.is_empty()) {
+		return;
+	}
+	String path = AIChatStore::make_chat_path(pending_delete_chat_id);
+	bool is_current = chat_store.is_valid() && chat_store->get_chat_id() == pending_delete_chat_id;
+
+	// Delete the file
+	if (FileAccess::exists(path)) {
+		String dir = path.get_base_dir();
+		String filename = path.get_file();
+		Ref<DirAccess> da = DirAccess::open(dir);
+		if (da.is_valid()) {
+			da->remove(filename);
+		}
+	}
+
+	pending_delete_chat_id = "";
+	history_popup->hide();
+
+	if (is_current) {
+		// Switch to another chat or create new
+		Vector<String> ids = AIChatStore::list_chat_ids();
+		if (!ids.is_empty()) {
+			_switch_to_chat(ids[0]);
+		} else {
+			_new_chat();
+		}
+	}
+}
+
+void AIStatusPanel::_rebuild_history_popup() {
+	if (!history_list) {
+		return;
+	}
+	// Clear existing items
+	while (history_list->get_child_count() > 0) {
+		Node *child = history_list->get_child(0);
+		history_list->remove_child(child);
+		child->queue_free();
+	}
+
+	Vector<String> ids = AIChatStore::list_chat_ids();
+	String current_id = chat_store.is_valid() ? chat_store->get_chat_id() : "";
+
+	if (ids.is_empty()) {
+		Label *empty_label = memnew(Label);
+		empty_label->set_text(TTR("No saved chats"));
+		empty_label->add_theme_color_override("font_color", AIColors::TEXT_MUTED);
+		history_list->add_child(empty_label);
+		return;
+	}
+
+	for (int i = 0; i < ids.size(); i++) {
+		const String &id = ids[i];
+		String display = _get_chat_display_name(id);
+		bool is_current = (id == current_id);
+
+		HBoxContainer *row = memnew(HBoxContainer);
+		row->add_theme_constant_override("separation", 4 * EDSCALE);
+		history_list->add_child(row);
+
+		// Chat name button (click to switch)
+		Button *name_btn = memnew(Button);
+		name_btn->set_text(display);
+		name_btn->set_h_size_flags(SIZE_EXPAND_FILL);
+		name_btn->set_text_alignment(HORIZONTAL_ALIGNMENT_LEFT);
+		name_btn->set_clip_text(true);
+		name_btn->set_default_cursor_shape(Control::CURSOR_POINTING_HAND);
+
+		// Transparent normal state (replaces flat=true so hover still draws)
+		Ref<StyleBoxFlat> name_normal;
+		name_normal.instantiate();
+		name_normal->set_bg_color(Color(0, 0, 0, 0));
+		name_normal->set_content_margin_all(AIColors::PADDING_XS * EDSCALE);
+		name_btn->add_theme_style_override("normal", name_normal);
+		name_btn->add_theme_style_override("pressed", name_normal);
+		name_btn->add_theme_style_override("focus", name_normal);
+
+		Ref<StyleBoxFlat> name_hover;
+		name_hover.instantiate();
+		name_hover->set_corner_radius_all(AIColors::CORNER_RADIUS_SM * EDSCALE);
+		name_hover->set_content_margin_all(AIColors::PADDING_XS * EDSCALE);
+		if (is_current) {
+			name_btn->add_theme_color_override("font_color", AIColors::ACCENT_BLUE);
+			name_btn->add_theme_color_override("font_hover_color", AIColors::ACCENT_BLUE);
+			name_hover->set_bg_color(AIColors::ACCENT_BLUE_MUTED);
+		} else {
+			name_btn->add_theme_color_override("font_color", AIColors::TEXT_PRIMARY);
+			name_btn->add_theme_color_override("font_hover_color", AIColors::TEXT_PRIMARY);
+			name_hover->set_bg_color(AIColors::BG_3);
+		}
+		name_btn->add_theme_style_override("hover", name_hover);
+
+		name_btn->connect(SceneStringNames::get_singleton()->pressed, callable_mp(this, &AIStatusPanel::_switch_to_chat).bind(id));
+		row->add_child(name_btn);
+
+		// Delete button
+		Button *del_btn = memnew(Button);
+		del_btn->set_text(TTR("x"));
+		del_btn->set_default_cursor_shape(Control::CURSOR_POINTING_HAND);
+		del_btn->add_theme_color_override("font_color", AIColors::TEXT_MUTED);
+		del_btn->add_theme_color_override("font_hover_color", AIColors::TEXT_PRIMARY);
+		del_btn->set_tooltip_text(TTR("Delete this chat"));
+
+		Ref<StyleBoxFlat> del_normal;
+		del_normal.instantiate();
+		del_normal->set_bg_color(Color(0, 0, 0, 0));
+		del_normal->set_content_margin_all(AIColors::PADDING_XS * EDSCALE);
+		del_btn->add_theme_style_override("normal", del_normal);
+		del_btn->add_theme_style_override("focus", del_normal);
+
+		Ref<StyleBoxFlat> del_hover;
+		del_hover.instantiate();
+		del_hover->set_bg_color(AIColors::BG_3);
+		del_hover->set_corner_radius_all(AIColors::CORNER_RADIUS_SM * EDSCALE);
+		del_hover->set_content_margin_all(AIColors::PADDING_XS * EDSCALE);
+		del_btn->add_theme_style_override("hover", del_hover);
+
+		del_btn->connect(SceneStringNames::get_singleton()->pressed, callable_mp(this, &AIStatusPanel::_delete_chat).bind(id));
+		row->add_child(del_btn);
+	}
+}
+
+void AIStatusPanel::_show_history_popup() {
+	_rebuild_history_popup();
+
+	if (!history_popup) {
+		return;
+	}
+	// Full width of the AI panel, positioned flush at its left edge just below the toolbar
+	float panel_width = get_size().x;
+	Vector2 panel_screen = get_screen_position();
+	float toolbar_bottom = chat_toolbar ? (chat_toolbar->get_position().y + chat_toolbar->get_size().y) : 0.0f;
+
+	history_popup->set_size(Size2(panel_width, 0)); // height: auto-fit to content
+	history_popup->set_position(Vector2(panel_screen.x, panel_screen.y + toolbar_bottom));
+	history_popup->popup();
 }
 
 void AIStatusPanel::_on_prompt_text_changed() {
@@ -1863,12 +2323,118 @@ void AIStatusPanel::_on_orchestrator_started() {
 	}
 }
 
+void AIStatusPanel::_on_api_round_started(int p_turn) {
+	// Insert a visual divider before round 2+ so the user can see API call boundaries
+	if (p_turn <= 1) {
+		return;
+	}
+
+	HSeparator *sep = memnew(HSeparator);
+	sep->set_h_size_flags(SIZE_EXPAND_FILL);
+	Ref<StyleBoxLine> style;
+	style.instantiate();
+	style->set_color(Color(1, 1, 1, 0.08f));
+	style->set_thickness(1);
+	sep->add_theme_style_override("separator", style);
+	sep->add_theme_constant_override("separation", 6);
+
+	if (pending_message) {
+		message_list->add_child(sep);
+		message_list->move_child(sep, pending_message->get_index());
+	} else {
+		message_list->add_child(sep);
+	}
+}
+
 void AIStatusPanel::_on_todos_updated(const Array &p_todos) {
 	if (!todo_panel) {
 		return;
 	}
 	todo_panel->update_todos(p_todos);
 	todo_panel->set_visible(!p_todos.is_empty());
+}
+
+void AIStatusPanel::_update_debug_pill() {
+	if (!debug_pill) {
+		return;
+	}
+#ifdef TOOLS_ENABLED
+	bool game_running = false;
+	int error_count = 0;
+	String errors_text;
+
+	EditorRunBar *run_bar = EditorRunBar::get_singleton();
+	if (run_bar) {
+		game_running = run_bar->is_playing();
+	}
+	EditorDebuggerNode *edn = EditorDebuggerNode::get_singleton();
+	if (edn) {
+		ScriptEditorDebugger *dbg = edn->get_default_debugger();
+		if (dbg) {
+			error_count = dbg->get_error_count();
+			if (error_count > 0) {
+				errors_text = dbg->get_errors_text();
+			}
+		}
+	}
+	debug_pill->update_state(game_running, error_count, errors_text);
+#endif
+}
+
+void AIStatusPanel::_on_debug_pill_update_tick() {
+	_update_debug_pill();
+}
+
+void AIStatusPanel::_on_debug_context_toggled(bool p_enabled) {
+	// Forward toggle state to AI module so it skips context injection when disabled
+	if (Engine::get_singleton()->has_singleton("AI")) {
+		Object *ai_obj = Engine::get_singleton()->get_singleton_object("AI");
+		AI *ai = Object::cast_to<AI>(ai_obj);
+		if (ai) {
+			ai->set_debug_context_enabled(p_enabled);
+		}
+	}
+}
+
+Control *AIStatusPanel::_create_debug_context_bubble() {
+	if (!debug_pill || !debug_pill->is_visible() || !debug_pill->is_enabled()) {
+		return nullptr;
+	}
+	String summary = debug_pill->get_context_summary();
+	if (summary.is_empty()) {
+		return nullptr;
+	}
+
+	// Styled bubble matching the pill look but non-interactive
+	PanelContainer *bubble = memnew(PanelContainer);
+	Ref<StyleBoxFlat> style;
+	style.instantiate();
+	style->set_bg_color(Color(0.18f, 0.22f, 0.28f, 1.0f));
+	style->set_border_width_all(1);
+	style->set_border_color(Color(0.35f, 0.5f, 0.7f, 0.6f));
+	style->set_corner_radius_all(6 * EDSCALE);
+	style->set_content_margin_all(8 * EDSCALE);
+	bubble->add_theme_style_override("panel", style);
+	bubble->set_h_size_flags(SIZE_EXPAND_FILL);
+
+	RichTextLabel *label = memnew(RichTextLabel);
+	label->set_use_bbcode(false);
+	label->set_fit_content(true);
+	label->set_scroll_active(false);
+	label->set_h_size_flags(SIZE_EXPAND_FILL);
+	label->set_mouse_filter(MOUSE_FILTER_IGNORE);
+	label->add_theme_color_override("default_color", Color(0.7f, 0.85f, 1.0f, 1.0f));
+	label->add_theme_font_size_override("normal_font_size", 11 * EDSCALE);
+	label->set_text(summary);
+	bubble->add_child(label);
+
+	// Wrap in align container (same left-align as assistant bubbles)
+	HBoxContainer *align = memnew(HBoxContainer);
+	align->set_h_size_flags(SIZE_EXPAND_FILL);
+	align->add_child(bubble);
+	bubble->set_h_size_flags(SIZE_EXPAND_FILL);
+	bubble->set_stretch_ratio(0.95f);
+	return align;
 }
 
 void AIStatusPanel::_append_thinking_ui(const String &p_text) {
@@ -1955,7 +2521,7 @@ Control *AIStatusPanel::_create_narration_bubble(const String &p_text) {
 	empty_style.instantiate();
 	label->add_theme_style_override("normal", empty_style);
 	label->add_theme_style_override("focus", empty_style);
-	label->append_text(_markdown_to_bbcode(p_text));
+	_append_message_content(label, p_text);
 	vbox->add_child(label);
 
 	// Wrap in HBoxContainer for consistent margins (same as assistant bubbles)
@@ -1995,9 +2561,17 @@ void AIStatusPanel::_on_orchestrator_tool_result(const Dictionary &p_tool_result
 	// Append tool result to chat transcript
 	_append_tool_result_ui(p_tool_result);
 
-	// Also append to chat store for persistence
+	// Also append to chat store for persistence (strip screenshot_b64 — it's large and already shown inline)
 	if (chat_store.is_valid()) {
-		chat_store->append_tool_result(p_tool_result);
+		if (String(p_tool_result.get("type", "")) == "run_and_screenshot" && p_tool_result.has("result")) {
+			Dictionary stripped = p_tool_result.duplicate();
+			Dictionary stripped_result = Dictionary(p_tool_result["result"]).duplicate();
+			stripped_result.erase("screenshot_b64");
+			stripped["result"] = stripped_result;
+			chat_store->append_tool_result(stripped);
+		} else {
+			chat_store->append_tool_result(p_tool_result);
+		}
 	}
 
 	// Refresh context usage to reflect the new tool result added to the store
@@ -2024,6 +2598,20 @@ void AIStatusPanel::_on_orchestrator_complete(bool p_success, const String &p_fi
 	is_waiting_for_response = false;
 	_set_run_state(STATE_IDLE);
 
+	// Check if context was truncated — if so, mark as exhausted and show a notice
+	if (context_was_truncated && !context_exhausted) {
+		context_exhausted = true;
+		// Insert a system notice bubble at the bottom of the transcript
+		if (message_list) {
+			Control *notice = _create_narration_bubble(TTR("The context is full. Please start a new chat to continue."));
+			if (notice) {
+				message_list->add_child(notice);
+				_scroll_to_bottom();
+			}
+		}
+		_update_send_button_state();
+	}
+
 	// Reset status label
 	if (status_label) {
 		status_label->set_text(p_success ? TTR("Ready") : TTR("Cancelled"));
@@ -2040,23 +2628,46 @@ void AIStatusPanel::_on_orchestrator_complete(bool p_success, const String &p_fi
 	}
 }
 
+void AIStatusPanel::_on_thinking_dot_tick() {
+	static const char *states[] = { "Thinking", "Thinking.", "Thinking..", "Thinking..." };
+	thinking_dot_state = (thinking_dot_state + 1) % 4;
+	if (pending_label) {
+		pending_label->set_text(states[thinking_dot_state]);
+	}
+}
+
 void AIStatusPanel::_show_pending_message() {
 	if (!message_list || pending_message) {
 		return;
 	}
 
-	// Create a "thinking" message
-	ChatMessage thinking_msg;
-	thinking_msg.role = "assistant";
-	thinking_msg.content = "Assistant is thinking...";
+	// Plain label — no bubble, wrapped in MarginContainer for left indent
+	MarginContainer *wrapper = memnew(MarginContainer);
+	wrapper->add_theme_constant_override("margin_left", AIColors::PADDING_SM * EDSCALE);
+	wrapper->add_theme_constant_override("margin_top", AIColors::PADDING_XS * EDSCALE);
+	wrapper->add_theme_constant_override("margin_bottom", AIColors::PADDING_XS * EDSCALE);
+	wrapper->add_theme_constant_override("margin_right", 0);
 
-	pending_message = _create_message_bubble(thinking_msg);
-	if (pending_message) {
-		message_list->add_child(pending_message);
+	Label *label = memnew(Label);
+	label->set_text("Thinking");
+	label->add_theme_color_override("font_color", AIColors::TEXT_MUTED);
+	wrapper->add_child(label);
+
+	pending_message = wrapper;
+	pending_label = label;
+	thinking_dot_state = 0;
+	message_list->add_child(pending_message);
+
+	if (thinking_dot_timer) {
+		thinking_dot_timer->start();
 	}
 }
 
 void AIStatusPanel::_remove_pending_message() {
+	if (thinking_dot_timer) {
+		thinking_dot_timer->stop();
+	}
+	pending_label = nullptr;
 	if (pending_message && message_list) {
 		message_list->remove_child(pending_message);
 		memdelete(pending_message);
@@ -2625,6 +3236,61 @@ AIStatusPanel::AIStatusPanel() {
 	chat_store.instantiate();
 
 	// ========================================
+	// Chat toolbar (very top) - "+ New" and history
+	// ========================================
+	chat_toolbar = memnew(HBoxContainer);
+	chat_toolbar->add_theme_constant_override("separation", AIColors::PADDING_XS * EDSCALE);
+	add_child(chat_toolbar);
+
+	// "AI" label
+	Label *ai_label = memnew(Label);
+	ai_label->set_text(TTR("AI"));
+	ai_label->add_theme_color_override("font_color", AIColors::TEXT_SECONDARY);
+	chat_toolbar->add_child(ai_label);
+
+	// Spacer
+	Control *toolbar_spacer = memnew(Control);
+	toolbar_spacer->set_h_size_flags(SIZE_EXPAND_FILL);
+	chat_toolbar->add_child(toolbar_spacer);
+
+	// History button
+	history_button = memnew(Button);
+	history_button->set_text(TTR("History"));
+	history_button->set_flat(true);
+	history_button->set_default_cursor_shape(Control::CURSOR_POINTING_HAND);
+	history_button->add_theme_color_override("font_color", AIColors::TEXT_SECONDARY);
+	history_button->connect(SceneStringNames::get_singleton()->pressed, callable_mp(this, &AIStatusPanel::_show_history_popup));
+	chat_toolbar->add_child(history_button);
+
+	// New chat button
+	new_chat_button = memnew(Button);
+	new_chat_button->set_text(TTR("+"));
+	new_chat_button->set_flat(true);
+	new_chat_button->set_tooltip_text(TTR("Start a new chat"));
+	new_chat_button->set_default_cursor_shape(Control::CURSOR_POINTING_HAND);
+	new_chat_button->add_theme_color_override("font_color", AIColors::TEXT_SECONDARY);
+	new_chat_button->connect(SceneStringNames::get_singleton()->pressed, callable_mp(this, &AIStatusPanel::_new_chat));
+	chat_toolbar->add_child(new_chat_button);
+
+	// ========================================
+	// History popup panel (no scroll — fixed width, auto height)
+	// ========================================
+	history_popup = memnew(PopupPanel);
+	add_child(history_popup);
+
+	history_list = memnew(VBoxContainer);
+	history_list->set_h_size_flags(SIZE_EXPAND_FILL);
+	history_list->add_theme_constant_override("separation", 2 * EDSCALE);
+	history_popup->add_child(history_list);
+
+	// Delete confirmation dialog
+	delete_chat_dialog = memnew(ConfirmationDialog);
+	delete_chat_dialog->set_text(TTR("Delete this chat? This cannot be undone."));
+	delete_chat_dialog->get_ok_button()->set_text(TTR("Delete"));
+	delete_chat_dialog->connect("confirmed", callable_mp(this, &AIStatusPanel::_on_delete_chat_confirmed));
+	add_child(delete_chat_dialog);
+
+	// ========================================
 	// Transcript scroll area (top, expandable)
 	// ========================================
 	transcript_scroll = memnew(ScrollContainer);
@@ -2679,6 +3345,23 @@ AIStatusPanel::AIStatusPanel() {
 	queue_container->add_child(queue_header_label);
 
 	// ========================================
+	// Debug context pill (hidden until game has errors or is running)
+	// =========================================================
+	debug_pill = memnew(DebugContextPill);
+	debug_pill->add_theme_constant_override("margin_left", AIColors::PADDING_SM * EDSCALE);
+	debug_pill->add_theme_constant_override("margin_right", AIColors::PADDING_SM * EDSCALE);
+	debug_pill->add_theme_constant_override("margin_bottom", AIColors::PADDING_XS * EDSCALE);
+	debug_pill->connect("enabled_changed", callable_mp(this, &AIStatusPanel::_on_debug_context_toggled));
+	add_child(debug_pill);
+
+	// Poll game state every second to update the pill (catches F5 press)
+	debug_pill_update_timer = memnew(Timer);
+	debug_pill_update_timer->set_wait_time(1.0);
+	debug_pill_update_timer->set_one_shot(false);
+	debug_pill_update_timer->connect("timeout", callable_mp(this, &AIStatusPanel::_on_debug_pill_update_tick));
+	add_child(debug_pill_update_timer);
+	debug_pill_update_timer->start();
+
 	// Image preview strip (hidden when empty)
 	// ========================================
 	image_preview_strip = memnew(HBoxContainer);
@@ -2726,6 +3409,7 @@ AIStatusPanel::AIStatusPanel() {
 	prompt_edit->add_theme_color_override("font_placeholder_color", AIColors::TEXT_MUTED);
 	prompt_edit->add_theme_color_override("caret_color", AIColors::ACCENT_BLUE);
 	prompt_edit->add_theme_color_override("selection_color", AIColors::ACCENT_BLUE_MUTED);
+	prompt_edit->add_theme_constant_override("line_spacing", 2);
 
 	input_bar->add_child(prompt_edit);
 
@@ -2779,52 +3463,6 @@ AIStatusPanel::AIStatusPanel() {
 
 	button_column->add_child(send_button);
 
-	// === Neutral button styles (for Clear) ===
-	Ref<StyleBoxFlat> neutral_normal;
-	neutral_normal.instantiate();
-	neutral_normal->set_bg_color(AIColors::BG_2);
-	neutral_normal->set_border_width_all(1);
-	neutral_normal->set_border_color(AIColors::BORDER);
-	neutral_normal->set_corner_radius_all(AIColors::CORNER_RADIUS_MD * EDSCALE);
-	neutral_normal->set_content_margin_all(AIColors::PADDING_SM * EDSCALE);
-
-	Ref<StyleBoxFlat> neutral_hover;
-	neutral_hover.instantiate();
-	neutral_hover->set_bg_color(AIColors::BG_3);
-	neutral_hover->set_border_width_all(1);
-	neutral_hover->set_border_color(AIColors::BORDER_LIGHT);
-	neutral_hover->set_corner_radius_all(AIColors::CORNER_RADIUS_MD * EDSCALE);
-	neutral_hover->set_content_margin_all(AIColors::PADDING_SM * EDSCALE);
-
-	Ref<StyleBoxFlat> neutral_pressed;
-	neutral_pressed.instantiate();
-	neutral_pressed->set_bg_color(AIColors::BG_1);
-	neutral_pressed->set_border_width_all(1);
-	neutral_pressed->set_border_color(AIColors::BORDER);
-	neutral_pressed->set_corner_radius_all(AIColors::CORNER_RADIUS_MD * EDSCALE);
-	neutral_pressed->set_content_margin_all(AIColors::PADDING_SM * EDSCALE);
-
-	Ref<StyleBoxFlat> neutral_disabled;
-	neutral_disabled.instantiate();
-	neutral_disabled->set_bg_color(AIColors::BG_1);
-	neutral_disabled->set_border_width_all(1);
-	neutral_disabled->set_border_color(AIColors::BG_2);
-	neutral_disabled->set_corner_radius_all(AIColors::CORNER_RADIUS_MD * EDSCALE);
-	neutral_disabled->set_content_margin_all(AIColors::PADDING_SM * EDSCALE);
-
-	// === Clear button ===
-	clear_button = memnew(Button);
-	clear_button->set_text(TTR("Clear"));
-	clear_button->connect(SceneStringNames::get_singleton()->pressed, callable_mp(this, &AIStatusPanel::_on_clear_pressed));
-	clear_button->add_theme_style_override("normal", neutral_normal);
-	clear_button->add_theme_style_override("hover", neutral_hover);
-	clear_button->add_theme_style_override("pressed", neutral_pressed);
-	clear_button->add_theme_style_override("disabled", neutral_disabled);
-	clear_button->add_theme_color_override("font_color", AIColors::TEXT_SECONDARY);
-	clear_button->add_theme_color_override("font_hover_color", AIColors::TEXT_PRIMARY);
-	clear_button->add_theme_color_override("font_pressed_color", AIColors::TEXT_PRIMARY);
-	clear_button->add_theme_color_override("font_disabled_color", AIColors::TEXT_DISABLED);
-	button_column->add_child(clear_button);
 
 	// ========================================
 	// Status bar (bottom) - compact and subtle
@@ -2982,6 +3620,13 @@ AIStatusPanel::AIStatusPanel() {
 	image_popup_tex->set_v_size_flags(SIZE_EXPAND_FILL);
 	image_popup->add_child(image_popup_tex);
 	add_child(image_popup);
+
+	// Thinking dot animation timer
+	thinking_dot_timer = memnew(Timer);
+	thinking_dot_timer->set_wait_time(0.4);
+	thinking_dot_timer->set_one_shot(false);
+	thinking_dot_timer->connect("timeout", callable_mp(this, &AIStatusPanel::_on_thinking_dot_tick));
+	add_child(thinking_dot_timer);
 }
 
 AIStatusPanel::~AIStatusPanel() {
@@ -3020,6 +3665,9 @@ AIStatusPanel::~AIStatusPanel() {
 				}
 				if (orchestrator->is_connected("todos_updated", callable_mp(this, &AIStatusPanel::_on_todos_updated))) {
 					orchestrator->disconnect("todos_updated", callable_mp(this, &AIStatusPanel::_on_todos_updated));
+				}
+				if (orchestrator->is_connected("api_round_started", callable_mp(this, &AIStatusPanel::_on_api_round_started))) {
+					orchestrator->disconnect("api_round_started", callable_mp(this, &AIStatusPanel::_on_api_round_started));
 				}
 			}
 		}

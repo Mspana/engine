@@ -1224,8 +1224,16 @@ void AI::_on_agentic_run_started() {
 }
 
 void AI::_on_agentic_tool_result(const Dictionary &p_tool_result) {
-    // Buffer _tool_result_data for the run log record
-    _run_action_buffer.push_back(p_tool_result); // signal already passes _tool_result_data directly
+    // Strip screenshot_b64 before buffering — it's large and already rendered inline in the UI
+    Dictionary to_buffer = p_tool_result;
+    if (String(p_tool_result.get("type", "")) == "run_and_screenshot" && p_tool_result.has("result")) {
+        Dictionary stripped = p_tool_result.duplicate();
+        Dictionary stripped_result = Dictionary(p_tool_result["result"]).duplicate();
+        stripped_result.erase("screenshot_b64");
+        stripped["result"] = stripped_result;
+        to_buffer = stripped;
+    }
+    _run_action_buffer.push_back(to_buffer);
     // In Phase 4, we'll also forward this to the UI for display in chat transcript
     print_verbose(vformat("AI: Tool result received: %s", JSON::stringify(p_tool_result)));
 }

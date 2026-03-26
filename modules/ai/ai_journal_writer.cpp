@@ -5,6 +5,7 @@
 #include "core/io/dir_access.h"
 #include "core/io/file_access.h"
 #include "core/io/json.h"
+#include "core/string/print_string.h"
 
 AIJournalWriter::AIJournalWriter() {
 	_thread.start(_thread_function, this);
@@ -46,24 +47,34 @@ void AIJournalWriter::_thread_function(void *p_self) {
 
 		for (const Entry &e : to_write) {
 			// Ensure the parent directory exists before writing
-			DirAccess::make_dir_recursive_absolute(e.file_path.get_base_dir());
+			Error dir_err = DirAccess::make_dir_recursive_absolute(e.file_path.get_base_dir());
+			if (dir_err != OK) {
+				print_line(vformat("AIJournalWriter: Failed to create directory '%s' (err=%d)", e.file_path.get_base_dir(), (int)dir_err));
+			}
 
 			Error err;
 			// READ_WRITE ("rb+") opens without truncation — required for append.
 			// It fails if the file doesn't exist yet, so create it first in that case.
 			Ref<FileAccess> f = FileAccess::open(e.file_path, FileAccess::READ_WRITE, &err);
 			if (!f.is_valid()) {
+				print_line(vformat("AIJournalWriter: READ_WRITE open failed for '%s' (err=%d), attempting CREATE", e.file_path, (int)err));
 				// File doesn't exist — create it, then reopen for read-write
 				Ref<FileAccess> create_f = FileAccess::open(e.file_path, FileAccess::WRITE, &err);
 				if (create_f.is_valid()) {
 					create_f.unref();
 					f = FileAccess::open(e.file_path, FileAccess::READ_WRITE, &err);
+					if (!f.is_valid()) {
+						print_line(vformat("AIJournalWriter: READ_WRITE reopen failed after create (err=%d)", (int)err));
+					}
+				} else {
+					print_line(vformat("AIJournalWriter: WRITE create failed for '%s' (err=%d)", e.file_path, (int)err));
 				}
 			}
 			if (f.is_valid()) {
 				f->seek_end();
 				f->store_line(e.line);
 				f->flush();
+				print_line(vformat("AIJournalWriter: Wrote entry to '%s'", e.file_path));
 			}
 		}
 	}
