@@ -239,6 +239,10 @@ private:
 	Vector<TreeItem *> tree_items_selected_on_drag_begin;
 	PackedInt32Array list_items_selected_on_drag_begin;
 
+	// Slow double-click rename tracking
+	uint64_t _rename_click_msec = 0;
+	String _rename_click_path;
+
 	LocalVector<Ref<EditorResourceTooltipPlugin>> tooltip_plugins;
 
 	HashSet<String> cached_valid_conversion_targets;

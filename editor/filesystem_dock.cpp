@@ -36,6 +36,7 @@
 #include "core/io/resource_loader.h"
 #include "core/os/keyboard.h"
 #include "core/os/os.h"
+#include "core/os/time.h"
 #include "core/templates/list.h"
 #include "editor/create_dialog.h"
 #include "editor/directory_create_dialog.h"
@@ -3626,6 +3627,43 @@ void FileSystemDock::_reselect_items_selected_on_drag_begin(bool reset) {
 void FileSystemDock::_tree_gui_input(Ref<InputEvent> p_event) {
 	Ref<InputEventKey> key = p_event;
 
+	Ref<InputEventMouseButton> mb = p_event;
+	if (mb.is_valid() && mb->is_pressed() && mb->get_button_index() == MouseButton::LEFT && !mb->is_double_click()) {
+		TreeItem *item = tree->get_item_at_position(mb->get_position());
+		if (item) {
+			String path = item->get_metadata(0);
+			bool already_selected = item->is_selected(0);
+			uint64_t now = Time::get_singleton()->get_ticks_msec();
+
+			if (already_selected && path == _rename_click_path &&
+					(now - _rename_click_msec) > 500 &&
+					(now - _rename_click_msec) < 1500 &&
+					path != "res://") {
+				to_rename.path = path;
+				to_rename.is_file = !path.ends_with("/");
+				to_move.clear();
+				to_move.push_back(to_rename);
+				tree->edit_selected(true);
+				if (to_rename.is_file) {
+					String name = path.get_file();
+					tree->set_editor_selection(0, name.rfind_char('.'));
+				} else {
+					String name = path.left(-1).get_file();
+					tree->set_editor_selection(0, name.length());
+				}
+				_rename_click_msec = 0;
+				_rename_click_path = "";
+				accept_event();
+			} else {
+				_rename_click_msec = now;
+				_rename_click_path = path;
+			}
+		} else {
+			_rename_click_msec = 0;
+			_rename_click_path = "";
+		}
+	}
+
 	Ref<InputEventMouseMotion> mm = p_event;
 	if (mm.is_valid()) {
 		TreeItem *item = tree->get_item_at_position(mm->get_position());
@@ -3695,6 +3733,36 @@ void FileSystemDock::_tree_gui_input(Ref<InputEvent> p_event) {
 }
 
 void FileSystemDock::_file_list_gui_input(Ref<InputEvent> p_event) {
+	Ref<InputEventMouseButton> mb = p_event;
+	if (mb.is_valid() && mb->is_pressed() && mb->get_button_index() == MouseButton::LEFT && !mb->is_double_click()) {
+		int idx = files->get_item_at_position(mb->get_position(), true);
+		if (idx != -1) {
+			String path = files->get_item_metadata(idx);
+			bool already_selected = files->is_selected(idx);
+			uint64_t now = Time::get_singleton()->get_ticks_msec();
+
+			if (already_selected && path == _rename_click_path &&
+					(now - _rename_click_msec) > 500 &&
+					(now - _rename_click_msec) < 1500 &&
+					path != "res://") {
+				to_rename.path = path;
+				to_rename.is_file = !path.ends_with("/");
+				to_move.clear();
+				to_move.push_back(to_rename);
+				files->edit_selected();
+				_rename_click_msec = 0;
+				_rename_click_path = "";
+				accept_event();
+			} else {
+				_rename_click_msec = now;
+				_rename_click_path = path;
+			}
+		} else {
+			_rename_click_msec = 0;
+			_rename_click_path = "";
+		}
+	}
+
 	Ref<InputEventMouseMotion> mm = p_event;
 	if (mm.is_valid() && holding_branch) {
 		const int item_idx = files->get_item_at_position(mm->get_position(), true);
