@@ -533,6 +533,63 @@ void EditorFileSystem::_scan_filesystem() {
 	scanning = false;
 }
 
+void EditorFileSystem::update_cache_after_rename(const HashMap<String, String> &p_file_renames, const HashSet<String> &p_updated_import_files) {
+	// 1. Rename entries in the in-memory cache tree.
+	for (const KeyValue<String, String> &kv : p_file_renames) {
+		const String &old_path = kv.key;
+		const String &new_path = kv.value;
+
+		EditorFileSystemDirectory *old_dir = nullptr;
+		int old_idx = -1;
+		if (!_find_file(old_path, &old_dir, old_idx)) {
+			continue; // Not cached yet; scan() will pick it up as new.
+		}
+
+		EditorFileSystemDirectory::FileInfo *info = old_dir->files[old_idx];
+		old_dir->files.remove_at(old_idx);
+
+		// Update the filename and refresh import metadata.
+		info->file = new_path.get_file();
+		if (FileAccess::exists(new_path + ".import")) {
+			info->import_md5 = FileAccess::get_md5(new_path + ".import");
+			info->import_modified_time = FileAccess::get_modified_time(new_path + ".import");
+		}
+		info->modified_time = FileAccess::get_modified_time(new_path);
+
+		// Find (or stay in) the target directory.
+		String new_dir_path = new_path.get_base_dir();
+		EditorFileSystemDirectory *new_dir = get_filesystem_path(new_dir_path);
+		if (!new_dir) {
+			new_dir = old_dir; // Fallback: leave in same dir; scan will sort it out.
+		}
+
+		// Insert in sorted order by filename.
+		int insert_pos = 0;
+		while (insert_pos < new_dir->files.size() && new_dir->files[insert_pos]->file < info->file) {
+			insert_pos++;
+		}
+		new_dir->files.insert(insert_pos, info);
+	}
+
+	// 2. For files whose .import was rewritten but not renamed, just refresh the MD5/mtime.
+	for (const String &path : p_updated_import_files) {
+		if (p_file_renames.has(path)) {
+			continue; // Already handled above.
+		}
+		EditorFileSystemDirectory *dir = nullptr;
+		int idx = -1;
+		if (_find_file(path, &dir, idx)) {
+			if (FileAccess::exists(path + ".import")) {
+				dir->files.write[idx]->import_md5 = FileAccess::get_md5(path + ".import");
+				dir->files.write[idx]->import_modified_time = FileAccess::get_modified_time(path + ".import");
+			}
+		}
+	}
+
+	// 3. Persist so that the next scan() loads correct metadata.
+	_save_filesystem_cache();
+}
+
 void EditorFileSystem::_save_filesystem_cache() {
 	group_file_cache.clear();
 

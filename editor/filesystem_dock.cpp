@@ -1834,6 +1834,20 @@ void FileSystemDock::_rename_operation_confirm() {
 		current_path_line_edit->set_text(current_path);
 	}
 
+	// Update the EditorFileSystem in-memory cache to reflect the rename before scan()
+	// runs, so that renamed/rewritten .import files don't trigger a spurious full reimport.
+	{
+		HashSet<String> updated_import_files;
+		for (const String &owner : file_owners) {
+			const HashMap<String, String>::ConstIterator it = file_renames.find(owner);
+			const String &current_path = it ? it->value : owner;
+			if (FileAccess::exists(current_path + ".import")) {
+				updated_import_files.insert(current_path);
+			}
+		}
+		EditorFileSystem::get_singleton()->update_cache_after_rename(file_renames, updated_import_files);
+	}
+
 	print_verbose("FileSystem: calling rescan.");
 	_rescan();
 }
@@ -1983,6 +1997,19 @@ void FileSystemDock::_move_operation_confirm(const String &p_to_path, bool p_cop
 			_update_favorites_after_move(file_renames, folder_renames);
 
 			EditorSceneTabs::get_singleton()->set_current_tab(current_tab);
+
+			// Update the EditorFileSystem in-memory cache before scan() to avoid spurious reimports.
+			{
+				HashSet<String> updated_import_files;
+				for (const String &owner : file_owners) {
+					const HashMap<String, String>::ConstIterator it = file_renames.find(owner);
+					const String &current_path_owner = it ? it->value : owner;
+					if (FileAccess::exists(current_path_owner + ".import")) {
+						updated_import_files.insert(current_path_owner);
+					}
+				}
+				EditorFileSystem::get_singleton()->update_cache_after_rename(file_renames, updated_import_files);
+			}
 
 			print_verbose("FileSystem: calling rescan.");
 			_rescan();

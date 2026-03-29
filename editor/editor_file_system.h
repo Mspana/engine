@@ -406,6 +406,11 @@ public:
 	void reimport_files(const Vector<String> &p_files);
 	Error reimport_append(const String &p_file, const HashMap<StringName, Variant> &p_custom_options, const String &p_custom_importer, Variant p_generator_parameters);
 
+	// Call after rename/move + dependency rewrite, before scan(), to avoid spurious reimports.
+	// file_renames: old_path -> new_path for all moved files.
+	// updated_import_files: paths (new) whose .import content was rewritten (but not renamed).
+	void update_cache_after_rename(const HashMap<String, String> &p_file_renames, const HashSet<String> &p_updated_import_files);
+
 	void reimport_file_with_custom_parameters(const String &p_file, const String &p_importer, const HashMap<StringName, Variant> &p_custom_params);
 
 	bool is_group_file(const String &p_path) const;
