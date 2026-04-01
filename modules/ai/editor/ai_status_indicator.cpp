@@ -354,12 +354,20 @@ void ToolCollapsibleEntry::update_from_tool_result(const Dictionary &p_tool_resu
 
 	set_body(body_content);
 
-	// Update status label color
-	if (status_label) {
-		if (status == "success") {
+	// Update status label color and panel border tint.
+	if (status == "success") {
+		if (status_label) {
 			status_label->add_theme_color_override("font_color", AIColors::SUCCESS);
-		} else if (status == "error") {
+		}
+		if (panel_style.is_valid()) {
+			panel_style->set_border_color(Color(AIColors::SUCCESS.r, AIColors::SUCCESS.g, AIColors::SUCCESS.b, 0.5f));
+		}
+	} else if (status == "error") {
+		if (status_label) {
 			status_label->add_theme_color_override("font_color", AIColors::ERROR);
+		}
+		if (panel_style.is_valid()) {
+			panel_style->set_border_color(Color(AIColors::ERROR.r, AIColors::ERROR.g, AIColors::ERROR.b, 0.6f));
 		}
 	}
 }
@@ -372,8 +380,7 @@ ToolCollapsibleEntry::ToolCollapsibleEntry() {
 	main_panel->set_h_size_flags(SIZE_EXPAND_FILL);
 	add_child(main_panel);
 
-	// Style the panel with subtle border
-	Ref<StyleBoxFlat> panel_style;
+	// Style the panel with subtle border — stored as member so we can tint it on result.
 	panel_style.instantiate();
 	panel_style->set_bg_color(AIColors::BG_1);
 	panel_style->set_border_width_all(1);

@@ -51,6 +51,7 @@
 #include "core/input/input_event.h"
 #include "core/io/image.h"
 #include "scene/resources/image_texture.h"
+#include "scene/resources/style_box_flat.h"
 
 // Lightweight collapsible entry for agent thinking text between tool calls
 class ThinkingCollapsibleEntry : public VBoxContainer {
@@ -83,6 +84,7 @@ private:
 	Label *header_label = nullptr;
 	Label *status_label = nullptr;
 	Button *toggle_button = nullptr;
+	Ref<StyleBoxFlat> panel_style; // kept to update border color on result
 
 	// Body (hidden when collapsed)
 	PanelContainer *body_container = nullptr;
