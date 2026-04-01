@@ -28,9 +28,9 @@ Screenshot logic doesn't properly screenshot if the game isn't focused. if it's 
   - ~~Example: `Expected 'true', 'false', or 'null', got 'Assistant'`~~
 - ~~**list_nodes not showing all files correctly**: Not resolving paths right.~~
 - ~~**list_files returning no files**: Bug where list files wasn't providing any files.~~
-- **Script update without verify**: Model modifies a file and then immediately reads it back — no real reason to do both in the same action set.
-- **Script update sends full file**: Model passes the entire script on update instead of just the changed section. Causes bugs when the full content isn't reproduced exactly, and wastes context.
-- **Model pretends action succeeded**: When a file modification fails, model continues as if it worked. Needs retry or explicit failure acknowledgment.
+- ~~**Script update without verify**: Model modifies a file and then immediately reads it back — no real reason to do both in the same action set.~~ ✓
+- ~~**Script update sends full file**: Model passes the entire script on update instead of just the changed section. Causes bugs when the full content isn't reproduced exactly, and wastes context.~~ ✓
+- ~~**Model pretends action succeeded**: When a file modification fails, model continues as if it worked. Needs retry or explicit failure acknowledgment.~~ ✓
 
 ## System Prompt / Model Behavior
 
@@ -41,7 +41,7 @@ Screenshot logic doesn't properly screenshot if the game isn't focused. if it's 
 - ~~**No project context on start**: At the beginning of a conversation, explore all scenes and files necessary to understand the game before answering.~~
 - ~~**User commands are game-relative**: Commands are relative to the game, not the engine (e.g. "Center it" means centered to the camera).~~
 - ~~**Prefer scene edits over scripting**: Model should heavily prefer editing elements directly in the scene rather than scripting — more transparent, checks errors before runtime, leverages existing infrastructure.~~
-- **Runtime output not surfaced**: Model should automatically see game output/failure logs, ideally alongside script errors.
+- ~~**Runtime output not surfaced**: Model should automatically see game output/failure logs, ideally alongside script errors.~~ ✓
 
 ## UI / UX
 
@@ -54,5 +54,5 @@ Screenshot logic doesn't properly screenshot if the game isn't focused. if it's 
 - ~~**AI cannot see everything**: When asked to look at the game, only saw nodes in the current scene. Now looks at all scenes, all nodes, and all files.~~
 - ~~**stop_game tool**: AI should be able to close a running game.~~
 - **Auto-compact needed**: Approaching context limits; auto-compact mechanism required.
-- **Diff-based script updates**: Script modifications should use diffs, not full replacements. Saves context and prevents silent corruption bugs.
+- ~~**Diff-based script updates**: Script modifications should use diffs, not full replacements. Saves context and prevents silent corruption bugs.~~ ✓
 - **Git / version control integration**: Necessary for tracking changes made by the model.
