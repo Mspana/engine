@@ -260,7 +260,7 @@
 }
 {
 	Dictionary props;
-	props["source_path"] = _make_prop("string", "Absolute OS path of the source file");
+	props["source_path"] = _make_prop("string", "Path to the source file. Use res:// if the file is already in the project; use an absolute OS path (e.g. C:\\Users\\You\\Downloads\\file.png) for files outside the project.");
 	props["dest_path"] = _make_prop("string", "Destination path (res://...)");
 	props["overwrite"] = _make_prop("boolean", "Overwrite if exists (default false)");
 	Array req;

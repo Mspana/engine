@@ -8,6 +8,7 @@
 #include "core/string/node_path.h"
 #include "core/io/json.h"
 #include "core/io/resource.h"
+#include "core/io/resource_loader.h"
 #include "scene/main/node.h"
 
 namespace {
@@ -45,6 +46,33 @@ static Variant ai_coerce_value(Object *obj, const String &prop, const Variant &v
 		if (d.size() == 2 && d.has("type") && d.has("value")) {
 			return ai_coerce_value(obj, prop, d["value"]);
 		}
+	}
+
+	// Single-element array wrapping a string — model sometimes sends ["res://..."] instead of "res://..."
+	if (val.get_type() == Variant::ARRAY) {
+		Array arr = val;
+		if (arr.size() == 1 && arr[0].get_type() == Variant::STRING) {
+			return ai_coerce_value(obj, prop, arr[0]);
+		}
+	}
+
+	// String value on a resource-type property: load the resource.
+	if (val.get_type() == Variant::STRING) {
+		String path = val;
+		if (path.begins_with("res://") || path.begins_with("user://")) {
+			List<PropertyInfo> plist;
+			obj->get_property_list(&plist);
+			for (const PropertyInfo &pi : plist) {
+				if (pi.name == prop && pi.hint == PROPERTY_HINT_RESOURCE_TYPE) {
+					Ref<Resource> res = ResourceLoader::load(path);
+					if (res.is_valid()) {
+						return res;
+					}
+					break;
+				}
+			}
+		}
+		return val;
 	}
 
 	if (val.get_type() != Variant::DICTIONARY && val.get_type() != Variant::ARRAY) {

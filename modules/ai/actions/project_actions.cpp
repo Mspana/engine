@@ -337,6 +337,12 @@ Dictionary exec_import_asset(const Dictionary &args) {
 	String dest_path = args["dest_path"];
 	bool overwrite = args.get("overwrite", false);
 
+	// Resolve res:// or user:// source paths to absolute OS paths so the AI
+	// doesn't need to know OS-level paths for files already in the project.
+	if (source_path.begins_with("res://") || source_path.begins_with("user://")) {
+		source_path = ps->globalize_path(source_path);
+	}
+
 	// Validate source file exists
 	if (!FileAccess::exists(source_path)) {
 		return ai_create_error_result(AIErrorCodes::FILE_NOT_FOUND,
