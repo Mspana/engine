@@ -270,6 +270,12 @@ void ToolCollapsibleEntry::set_body(const String &p_text) {
 	}
 }
 
+void ToolCollapsibleEntry::set_token_label_visible(bool p_visible) {
+	if (token_label) {
+		token_label->set_visible(p_visible && !token_label->get_text().is_empty());
+	}
+}
+
 void ToolCollapsibleEntry::update_from_tool_result(const Dictionary &p_tool_result) {
 	String action_type = p_tool_result.get("type", "unknown");
 	String status = p_tool_result.get("status", "unknown");
@@ -354,6 +360,21 @@ void ToolCollapsibleEntry::update_from_tool_result(const Dictionary &p_tool_resu
 
 	set_body(body_content);
 
+	// Token count label
+	if (p_tool_result.has("tokens") && token_label) {
+		int tokens = (int)p_tool_result["tokens"];
+		if (tokens > 0) {
+			String token_text;
+			if (tokens >= 10000) {
+				token_text = vformat("%dk", tokens / 1000);
+			} else {
+				token_text = itos(tokens);
+			}
+			token_label->set_text(vformat("Token estimate: %s", token_text));
+			// Visibility is controlled by the global toggle — don't force show here.
+		}
+	}
+
 	// Update status label color and panel border tint.
 	if (status == "success") {
 		if (status_label) {
@@ -420,6 +441,12 @@ ToolCollapsibleEntry::ToolCollapsibleEntry() {
 	header_label->set_text_overrun_behavior(TextServer::OVERRUN_TRIM_ELLIPSIS);
 	header_label->add_theme_color_override("font_color", AIColors::TEXT_PRIMARY);
 	header_container->add_child(header_label);
+
+	// Token count label (hidden until tokens arrive; visibility toggled by user)
+	token_label = memnew(Label);
+	token_label->set_visible(false);
+	token_label->add_theme_color_override("font_color", AIColors::TEXT_MUTED);
+	header_container->add_child(token_label);
 
 	// Status label (emoji indicator)
 	status_label = memnew(Label);
@@ -867,6 +894,9 @@ void AIStatusPanel::_notification(int p_what) {
 						if (!orchestrator->is_connected("api_round_started", callable_mp(this, &AIStatusPanel::_on_api_round_started))) {
 							orchestrator->connect("api_round_started", callable_mp(this, &AIStatusPanel::_on_api_round_started));
 						}
+						if (!orchestrator->is_connected("turn_tokens_ready", callable_mp(this, &AIStatusPanel::_on_turn_tokens_ready))) {
+							orchestrator->connect("turn_tokens_ready", callable_mp(this, &AIStatusPanel::_on_turn_tokens_ready));
+						}
 					}
 				}
 			}
@@ -892,6 +922,7 @@ void AIStatusPanel::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("_on_orchestrator_complete", "success", "final_message"), &AIStatusPanel::_on_orchestrator_complete);
 	ClassDB::bind_method(D_METHOD("_on_todos_updated", "todos"), &AIStatusPanel::_on_todos_updated);
 	ClassDB::bind_method(D_METHOD("_on_api_round_started", "turn"), &AIStatusPanel::_on_api_round_started);
+	ClassDB::bind_method(D_METHOD("_on_turn_tokens_ready", "tokens"), &AIStatusPanel::_on_turn_tokens_ready);
 	ClassDB::bind_method(D_METHOD("_on_thinking_dot_tick"), &AIStatusPanel::_on_thinking_dot_tick);
 	ClassDB::bind_method(D_METHOD("_on_debug_pill_update_tick"), &AIStatusPanel::_on_debug_pill_update_tick);
 	ClassDB::bind_method(D_METHOD("_on_debug_context_toggled", "enabled"), &AIStatusPanel::_on_debug_context_toggled);
@@ -1297,6 +1328,7 @@ Control *AIStatusPanel::_create_tool_result_ui(const Dictionary &p_tool_result) 
 	// Create collapsible entry for tool result (collapsed by default)
 	ToolCollapsibleEntry *entry = memnew(ToolCollapsibleEntry);
 	entry->update_from_tool_result(p_tool_result);
+	entry->set_token_label_visible(_show_token_counts);
 	// Wire screenshot click → lightbox popup (same as chat image thumbnails)
 	if (entry->get_screenshot_widget() && entry->get_screenshot_widget()->get_texture().is_valid()) {
 		entry->get_screenshot_widget()->connect("gui_input",
@@ -1612,6 +1644,9 @@ void AIStatusPanel::_start_run(const String &p_message) {
 		_enqueue_message(p_message);
 		return;
 	}
+
+	_run_token_total = 0;
+	_last_turn_tokens = 0;
 
 	// Snapshot and consume pending images before async work begins
 	Vector<String> images_for_run = pending_images;
@@ -1970,6 +2005,46 @@ void AIStatusPanel::_on_send_button_pressed() {
 // ============================================================
 // Multi-chat management
 // ============================================================
+
+void AIStatusPanel::_on_turn_tokens_ready(int p_tokens) {
+	_last_turn_tokens = p_tokens;
+}
+
+void AIStatusPanel::_insert_token_total_label() {
+	// Prefer the actual API-reported total_tokens; fall back to our per-tool estimates.
+	int total = _last_turn_tokens > 0 ? _last_turn_tokens : _run_token_total;
+	if (total <= 0 || !message_list) {
+		return;
+	}
+	String text;
+	if (total >= 10000) {
+		text = vformat("Total: %dk", total / 1000);
+	} else {
+		text = vformat("Total: %d", total);
+	}
+	Label *lbl = memnew(Label);
+	lbl->set_text(text);
+	lbl->set_h_size_flags(SIZE_EXPAND_FILL);
+	lbl->set_horizontal_alignment(HORIZONTAL_ALIGNMENT_RIGHT);
+	lbl->add_theme_color_override("font_color", AIColors::TEXT_MUTED);
+	if (pending_message) {
+		message_list->add_child(lbl);
+		message_list->move_child(lbl, pending_message->get_index());
+	} else {
+		message_list->add_child(lbl);
+	}
+}
+
+void AIStatusPanel::_on_token_toggle_pressed() {
+	_show_token_counts = !_show_token_counts;
+	// Walk message_list children and toggle token labels on all ToolCollapsibleEntry nodes.
+	for (int i = 0; i < message_list->get_child_count(); i++) {
+		ToolCollapsibleEntry *entry = Object::cast_to<ToolCollapsibleEntry>(message_list->get_child(i));
+		if (entry) {
+			entry->set_token_label_visible(_show_token_counts);
+		}
+	}
+}
 
 void AIStatusPanel::_new_chat() {
 	if (run_state != STATE_IDLE) {
@@ -2343,6 +2418,10 @@ void AIStatusPanel::_on_api_round_started(int p_turn) {
 		return;
 	}
 
+	_insert_token_total_label();
+	_run_token_total = 0;
+	_last_turn_tokens = 0;
+
 	HSeparator *sep = memnew(HSeparator);
 	sep->set_h_size_flags(SIZE_EXPAND_FILL);
 	Ref<StyleBoxLine> style;
@@ -2572,6 +2651,8 @@ void AIStatusPanel::_on_orchestrator_tool_result(const Dictionary &p_tool_result
 		return;
 	}
 
+	_run_token_total += (int)p_tool_result.get("tokens", 0);
+
 	// Append tool result to chat transcript
 	_append_tool_result_ui(p_tool_result);
 
@@ -2597,6 +2678,9 @@ void AIStatusPanel::_on_orchestrator_complete(bool p_success, const String &p_fi
 
 	// Remove pending message
 	_remove_pending_message();
+
+	_insert_token_total_label();
+	_run_token_total = 0;
 
 	// Append final message to chat
 	if (chat_store.is_valid() && !p_final_message.is_empty()) {
@@ -3266,6 +3350,17 @@ AIStatusPanel::AIStatusPanel() {
 	Control *toolbar_spacer = memnew(Control);
 	toolbar_spacer->set_h_size_flags(SIZE_EXPAND_FILL);
 	chat_toolbar->add_child(toolbar_spacer);
+
+	// Token count toggle button
+	token_toggle_button = memnew(Button);
+	token_toggle_button->set_text(TTR("tok"));
+	token_toggle_button->set_flat(true);
+	token_toggle_button->set_toggle_mode(true);
+	token_toggle_button->set_tooltip_text(TTR("Toggle token counts on tool results"));
+	token_toggle_button->set_default_cursor_shape(Control::CURSOR_POINTING_HAND);
+	token_toggle_button->add_theme_color_override("font_color", AIColors::TEXT_SECONDARY);
+	token_toggle_button->connect(SceneStringNames::get_singleton()->pressed, callable_mp(this, &AIStatusPanel::_on_token_toggle_pressed));
+	chat_toolbar->add_child(token_toggle_button);
 
 	// History button
 	history_button = memnew(Button);

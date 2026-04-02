@@ -82,6 +82,7 @@ private:
 	// Header row (always visible)
 	HBoxContainer *header_container = nullptr;
 	Label *header_label = nullptr;
+	Label *token_label = nullptr;
 	Label *status_label = nullptr;
 	Button *toggle_button = nullptr;
 	Ref<StyleBoxFlat> panel_style; // kept to update border color on result
@@ -108,6 +109,8 @@ public:
 
 	// Convenience: update from tool result dictionary
 	void update_from_tool_result(const Dictionary &p_tool_result);
+
+	void set_token_label_visible(bool p_visible);
 
 	TextureRect *get_screenshot_widget() const { return body_screenshot; }
 	String get_screenshot_b64() const { return screenshot_b64; }
@@ -229,6 +232,10 @@ private:
 	HBoxContainer *chat_toolbar = nullptr;
 	Button *new_chat_button = nullptr;
 	Button *history_button = nullptr;
+	Button *token_toggle_button = nullptr;
+	bool _show_token_counts = false;
+	int _run_token_total = 0;       // estimated total (fallback)
+	int _last_turn_tokens = 0;      // actual total_tokens from API usage field
 
 	// History popup
 	PopupPanel *history_popup = nullptr;
@@ -355,6 +362,10 @@ private:
 	void _start_run(const String &p_message);
 	void _request_cancel();
 
+	// Token count toggle
+	void _on_token_toggle_pressed();
+	void _insert_token_total_label();
+
 	// Multi-chat management
 	void _new_chat();
 	void _show_history_popup();
@@ -379,6 +390,7 @@ private:
 	void _on_orchestrator_thinking(const String &p_text);
 	void _on_todos_updated(const Array &p_todos);
 	void _on_api_round_started(int p_turn);
+	void _on_turn_tokens_ready(int p_tokens);
 
 	// Pending message helpers
 	void _show_pending_message();

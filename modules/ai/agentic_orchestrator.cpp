@@ -80,6 +80,7 @@ void AgenticOrchestrator::_bind_methods() {
 	ADD_SIGNAL(MethodInfo("narration_ready", PropertyInfo(Variant::STRING, "text")));
 	ADD_SIGNAL(MethodInfo("thinking_ready", PropertyInfo(Variant::STRING, "text")));
 	ADD_SIGNAL(MethodInfo("todos_updated", PropertyInfo(Variant::ARRAY, "todos")));
+	ADD_SIGNAL(MethodInfo("turn_tokens_ready", PropertyInfo(Variant::INT, "tokens")));
 	ClassDB::bind_method(D_METHOD("set_todos", "todos"), &AgenticOrchestrator::set_todos);
 }
 
@@ -322,6 +323,16 @@ void AgenticOrchestrator::_process_native_tool_response(const Dictionary &p_api_
 	String finish_reason = choice.get("finish_reason", "stop");
 	Dictionary message = choice.get("message", Dictionary());
 
+	// Extract token usage for display in UI
+	_current_turn_tokens = 0;
+	if (p_api_response.has("usage")) {
+		Dictionary usage = p_api_response["usage"];
+		_current_turn_tokens = (int)usage.get("total_tokens", 0);
+	}
+	if (_current_turn_tokens > 0) {
+		emit_signal("turn_tokens_ready", _current_turn_tokens);
+	}
+
 	String content = message.get("content", "");
 	Array tool_calls = message.get("tool_calls", Array());
 
@@ -413,7 +424,18 @@ void AgenticOrchestrator::_process_native_tool_response(const Dictionary &p_api_
 
 		// Emit for UI display
 		if (tool_result_msg.has("_tool_result_data")) {
-			_emit_tool_result(tool_result_msg["_tool_result_data"]);
+			Dictionary trd = tool_result_msg["_tool_result_data"];
+			// Screenshots: base64 inflates content length drastically; image tokens depend on
+			// dimensions, not file size. Use a fixed estimate (~1000 tokens for a typical screenshot).
+			int estimated_tokens;
+			if (String(trd.get("type", "")) == "run_and_screenshot") {
+				estimated_tokens = 1000;
+			} else {
+				String content = tool_result_msg.get("content", String());
+				estimated_tokens = content.length() / 4;
+			}
+			trd["tokens"] = estimated_tokens;
+			_emit_tool_result(trd);
 		}
 	}
 
@@ -720,6 +742,8 @@ void AgenticOrchestrator::_on_async_rns_complete(const Dictionary &p_exec_result
 	current_run.run_messages.push_back(message);
 	current_run.total_actions++;
 
+	// run_and_screenshot: base64 inflates content length; use fixed image token estimate instead.
+	tool_result_data["tokens"] = 1000;
 	_emit_tool_result(tool_result_data);
 
 	if (current_run.cancelled) {

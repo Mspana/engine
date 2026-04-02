@@ -144,6 +144,8 @@ private:
 	void _emit_tool_result(const Dictionary &p_tool_result);
 	void _emit_run_complete(bool p_success, const String &p_final_message);
 
+	int _current_turn_tokens = 0; // total_tokens from the most recent API response usage field
+
 	// Async run_and_screenshot state (timer-based, never blocks main thread)
 	enum AsyncRnsPhase { ASYNC_RNS_INACTIVE, ASYNC_RNS_POLL_START, ASYNC_RNS_WAIT_VISUAL, ASYNC_RNS_AWAIT_CAPTURE };
 	AsyncRnsPhase _async_rns_phase = ASYNC_RNS_INACTIVE;
