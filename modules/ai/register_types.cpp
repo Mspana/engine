@@ -10,6 +10,7 @@
 #ifdef TOOLS_ENABLED
 #include "editor/ai_chat_store.h"
 #include "editor/ai_status_indicator.h"
+#include "editor/gif_import_handler.h"
 #include "editor/plugins/editor_plugin.h"
 #endif
 
@@ -47,6 +48,8 @@ GDREGISTER_CLASS(AIStatusIndicator);
 		GDREGISTER_CLASS(AIStatusPanel);
 		GDREGISTER_CLASS(AIStatusIndicatorPlugin);
 		EditorPlugins::add_by_type<AIStatusIndicatorPlugin>();
+		GDREGISTER_CLASS(GIFImportHandler);
+		EditorPlugins::add_by_type<GIFImportHandler>();
 	}
 #endif
 }
