@@ -2210,6 +2210,13 @@ void AIStatusPanel::_on_prompt_text_changed() {
 void AIStatusPanel::_on_prompt_gui_input(const Ref<InputEvent> &p_event) {
 	Ref<InputEventKey> key_event = p_event;
 	if (key_event.is_valid() && key_event->is_pressed()) {
+		// Escape: stop the current run
+		if (key_event->get_keycode() == Key::ESCAPE) {
+			_request_cancel();
+			prompt_edit->accept_event();
+			return;
+		}
+
 		// Ctrl+V: intercept before TextEdit if clipboard has an image
 		if (key_event->get_keycode() == Key::V && key_event->is_ctrl_pressed() &&
 				!key_event->is_shift_pressed() && !key_event->is_alt_pressed()) {
