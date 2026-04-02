@@ -1744,6 +1744,12 @@ void AIStatusPanel::_start_run(const String &p_message) {
 	_run_token_total = 0;
 	_last_turn_tokens = 0;
 
+	// Tell AI singleton which conversation this run belongs to (for per-chat journal files)
+	AI *ai = AI::get_singleton();
+	if (ai && chat_store.is_valid()) {
+		ai->set_current_chat_id(chat_store->get_chat_id());
+	}
+
 	// Snapshot and consume pending images before async work begins
 	Vector<String> images_for_run = pending_images;
 	_clear_pending_images();

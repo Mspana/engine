@@ -60,6 +60,7 @@ private:
 	Array _run_action_buffer;   // Cleared at run start, accumulates _tool_result_data dicts
 	uint64_t _run_start_ms = 0; // Ticks at run_started
 	String _current_run_id;     // Timestamp-based ID, set at run_started
+	String _current_chat_id;    // Set by the panel before starting a run
 
 	Dictionary _exec_write_dev_note(const Dictionary &args);
 	Dictionary _exec_update_todos(const Dictionary &args);
@@ -99,6 +100,9 @@ public:
 
 	// Get the orchestrator (for UI to access cancel, status, etc.)
 	Ref<AgenticOrchestrator> get_orchestrator() const;
+
+	// Set the current chat ID so journal entries go to a per-conversation file
+	void set_current_chat_id(const String &p_chat_id);
 
 	// Provider management
 	void set_provider(const Ref<AIProvider> &p_provider);

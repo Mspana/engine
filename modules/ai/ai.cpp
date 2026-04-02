@@ -837,6 +837,10 @@ Array AI::request_actions_with_history(const Array &p_messages) {
 }
 
 // Provider management
+void AI::set_current_chat_id(const String &p_chat_id) {
+    _current_chat_id = p_chat_id;
+}
+
 void AI::set_provider(const Ref<AIProvider> &p_provider) {
     // Disconnect from old provider if it exists
     if (provider.is_valid()) {
@@ -1335,7 +1339,11 @@ void AI::_on_agentic_complete(bool p_success, const String &p_final_message) {
         run_entry["success"] = p_success;
         run_entry["final_message"] = p_final_message;
         run_entry["actions"] = _run_action_buffer;
-        String journal_path = _get_journal_path("runs.jsonl");
+        // Use per-conversation file when a chat ID is available
+        String journal_filename = _current_chat_id.is_empty()
+                ? "runs.jsonl"
+                : _current_chat_id + ".jsonl";
+        String journal_path = _get_journal_path(journal_filename);
         print_line(vformat("AI: Writing journal entry to: %s", journal_path));
         _journal_writer->enqueue(journal_path, run_entry);
     } else {
