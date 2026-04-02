@@ -28,7 +28,7 @@ Importing GIFs should have a pop-up to automatically convert to sprite sheets, o
 "GIFs are not supported. Would you like to convert your file to a sprite sheet?"
 "Convert GIF"   "Cancel"
 
-Escape while the AI is running should automatically trigger a stop.
+~~Escape while the AI is running should automatically trigger a stop.~~
 
 Stop should be formatted as just text, kinda like Thinking... but bigger, not as a bubble.
 
@@ -40,6 +40,12 @@ Sometimes, tools call themselves successes, even on failure. For example, changi
 
 Should we have comprehensive unit tests for all tools? Probably.
 
+Instead of Queueing the user's request, we should just send it at the next available juncture: once all the tools are run, and we're sending return values back.
+
+Get OpenAI, Claude, and Gemini backends working. Maybe Grok is just bad, which is causing the 'i fixed it!' stuff.
+
+Claude thinks between requests often. Maybe we need that. claude_commentary.png
+
 Better renaming in file explorer
 1. ~~Doesn't fully reload when renamed~~ ✓
 2. ~~Click to edit like in file explorer~~ ✓
@@ -50,7 +56,7 @@ Restarting the game makes the screenshots dissapear.
 
 Sometimes, it runs and screenshots but doesn't actually get the game. Then it says 'all good!' It should have to get the game. (runandscreenshotnotworking.png)
 
-list_files only shows existing res:// project files/assets (no external ones). To import new images (background/vel.png), provide absolute OS paths (e.g., "C:\Users\You\Downloads\bg.png")
+~~list_files only shows existing res:// project files/assets (no external ones). To import new images (background/vel.png), provide absolute OS paths (e.g., "C:\Users\You\Downloads\bg.png")~~
 
 
 Need to completely rework tab layout. Button w/ fixed position not acceptable in 2026. Inspo: windows? find others
