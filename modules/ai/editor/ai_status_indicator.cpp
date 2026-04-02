@@ -52,6 +52,7 @@
 #include "scene/gui/rich_text_label.h"
 #include "scene/resources/image_texture.h"
 #include "scene/gui/margin_container.h"
+#include "scene/resources/style_box.h"
 #include "scene/resources/style_box_flat.h"
 #include "scene/resources/style_box_line.h"
 #include "scene/resources/font.h"
@@ -1474,6 +1475,11 @@ void AIStatusPanel::_update_send_button_state() {
 		case STATE_IDLE: {
 			// Send mode: enabled if there's text or images to send (and context not exhausted)
 			send_button->set_text(TTR("Send"));
+			// Clear any overrides set by Stop/Stopping states
+			send_button->remove_theme_style_override("pressed");
+			send_button->remove_theme_font_size_override("font_size");
+			send_button->remove_theme_color_override("font_color");
+			send_button->remove_theme_color_override("font_hover_color");
 			if (context_exhausted) {
 				send_button->set_disabled(true);
 				send_button->set_tooltip_text(TTR("Context is full. Start a new chat (+) to continue."));
@@ -1501,30 +1507,28 @@ void AIStatusPanel::_update_send_button_state() {
 		} break;
 
 		case STATE_RUNNING: {
-			// Stop mode: always enabled, shows Stop
+			// Stop: plain flat text, no bubble background — styled like the Thinking indicator but bigger
 			send_button->set_text(TTR("Stop"));
 			send_button->set_disabled(false);
 
-			// Apply warning/red style for Stop
-			Ref<StyleBoxFlat> stop_normal;
-			stop_normal.instantiate();
-			stop_normal->set_bg_color(AIColors::ERROR.darkened(0.2));
-			stop_normal->set_corner_radius_all(AIColors::CORNER_RADIUS_MD * EDSCALE);
-			stop_normal->set_content_margin_all(AIColors::PADDING_SM * EDSCALE);
-			send_button->add_theme_style_override("normal", stop_normal);
-
-			Ref<StyleBoxFlat> stop_hover;
-			stop_hover.instantiate();
-			stop_hover->set_bg_color(AIColors::ERROR);
-			stop_hover->set_corner_radius_all(AIColors::CORNER_RADIUS_MD * EDSCALE);
-			stop_hover->set_content_margin_all(AIColors::PADDING_SM * EDSCALE);
-			send_button->add_theme_style_override("hover", stop_hover);
+			Ref<StyleBoxEmpty> stop_empty;
+			stop_empty.instantiate();
+			send_button->add_theme_style_override("normal", stop_empty);
+			send_button->add_theme_style_override("hover", stop_empty);
+			send_button->add_theme_style_override("pressed", stop_empty);
+			send_button->add_theme_color_override("font_color", AIColors::TEXT_SECONDARY);
+			send_button->add_theme_color_override("font_hover_color", AIColors::TEXT_PRIMARY);
 		} break;
 
 		case STATE_CANCELLING: {
-			// Cancelling: disabled, shows Stopping...
+			// Stopping...: same plain text style, disabled
 			send_button->set_text(TTR("Stopping..."));
 			send_button->set_disabled(true);
+
+			Ref<StyleBoxEmpty> stop_empty;
+			stop_empty.instantiate();
+			send_button->add_theme_style_override("normal", stop_empty);
+			send_button->add_theme_color_override("font_color", AIColors::TEXT_MUTED);
 		} break;
 	}
 }
