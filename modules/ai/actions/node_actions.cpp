@@ -37,6 +37,58 @@ static Variant ai_coerce_array(const Array &a, Variant::Type t) {
 	}
 }
 
+// Check whether an actual post-set value matches the intended target value.
+// Handles floats (epsilon), resources (compare by path), and other types (==).
+static bool ai_set_property_values_match(const Variant &actual, const Variant &target) {
+	Variant::Type ta = actual.get_type();
+	Variant::Type tt = target.get_type();
+
+	// Both null/NIL
+	if (ta == Variant::NIL && tt == Variant::NIL) {
+		return true;
+	}
+
+	// Resource: compare by resource path when available, else by pointer identity
+	if (ta == Variant::OBJECT) {
+		Object *ao = actual.operator Object *();
+		Object *to_obj = target.operator Object *();
+		if (!ao && !to_obj) {
+			return true;
+		}
+		if (!ao || !to_obj) {
+			return false; // one is null
+		}
+		Resource *ar = Object::cast_to<Resource>(ao);
+		Resource *tr = Object::cast_to<Resource>(to_obj);
+		if (ar && tr) {
+			String ap = ar->get_path();
+			String tp = tr->get_path();
+			if (!ap.is_empty() && !tp.is_empty()) {
+				return ap == tp;
+			}
+		}
+		return ao == to_obj; // pointer identity fallback
+	}
+
+	// Float: epsilon comparison
+	if (ta == Variant::FLOAT && tt == Variant::FLOAT) {
+		return Math::is_equal_approx((float)actual, (float)target);
+	}
+
+	// Color: component-wise with tolerance
+	if (ta == Variant::COLOR && tt == Variant::COLOR) {
+		Color ac = actual;
+		Color tc = target;
+		return Math::is_equal_approx(ac.r, tc.r) &&
+			   Math::is_equal_approx(ac.g, tc.g) &&
+			   Math::is_equal_approx(ac.b, tc.b) &&
+			   Math::is_equal_approx(ac.a, tc.a);
+	}
+
+	// All other types: direct equality
+	return actual == target;
+}
+
 // If value is a Dictionary or Array and the named property expects a math type, coerce it.
 static Variant ai_coerce_value(Object *obj, const String &prop, const Variant &val) {
 	// Unwrap {type, value} objects — the model sometimes wraps plain values (e.g. strings)
@@ -203,15 +255,23 @@ Dictionary exec_set_property(const Dictionary &args) {
 		undo_redo->add_undo_method(target_node, "set", property_name, current_value);
 		undo_redo->commit_action();
 
+		Variant actual_value = target_node->get(property_name);
+
 		Dictionary result_data;
 		result_data["node_path"] = node_path_str;
 		result_data["property_name"] = property_name;
 		result_data["old_value"] = current_value;
 		result_data["target_value"] = value;
-		result_data["actual_value"] = target_node->get(property_name);
+		result_data["actual_value"] = actual_value;
 		result_data["warnings"] = ai_get_node_warnings(target_node);
 
 		print_line(vformat("AI: Executed set_property. Node: %s, Property: %s, Value: %s", node_path_str, property_name, String(value)));
+
+		if (!ai_set_property_values_match(actual_value, value)) {
+			return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+				vformat("Property '%s' did not take the target value. Target: %s, Actual: %s. The property may be clamped, read-only, or rejected by the engine.",
+					property_name, String(value), String(actual_value)));
+		}
 		return ai_create_success_result(result_data);
 	} else {
 		// Dot-notation sub-resource path, e.g. "mesh.size" or "mat.albedo_color".
@@ -252,15 +312,23 @@ Dictionary exec_set_property(const Dictionary &args) {
 		undo_redo->add_undo_method(cur, "set", final_prop, old_value);
 		undo_redo->commit_action();
 
+		Variant actual_value = cur->get(final_prop);
+
 		Dictionary result_data;
 		result_data["node_path"] = node_path_str;
 		result_data["property_name"] = property_name;
 		result_data["old_value"] = old_value;
 		result_data["target_value"] = value;
-		result_data["actual_value"] = cur->get(final_prop);
+		result_data["actual_value"] = actual_value;
 		result_data["warnings"] = ai_get_node_warnings(target_node);
 
 		print_line(vformat("AI: Executed set_property. Node: %s, Property: %s, Value: %s", node_path_str, property_name, String(value)));
+
+		if (!ai_set_property_values_match(actual_value, value)) {
+			return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+				vformat("Property '%s' did not take the target value. Target: %s, Actual: %s. The property may be clamped, read-only, or rejected by the engine.",
+					property_name, String(value), String(actual_value)));
+		}
 		return ai_create_success_result(result_data);
 	}
 }
