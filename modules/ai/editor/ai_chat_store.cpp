@@ -33,6 +33,7 @@
 #include "core/io/dir_access.h"
 #include "core/io/file_access.h"
 #include "core/io/json.h"
+#include "core/core_bind.h"
 #include "core/os/time.h"
 
 // ---------------------------------------------------------------------------
@@ -484,4 +485,60 @@ bool AIChatStore::truncate_to_index(int p_index) {
 		_save_meta();
 	}
 	return ok;
+}
+
+// ---------------------------------------------------------------------------
+// Screenshot persistence
+// ---------------------------------------------------------------------------
+
+String AIChatStore::get_images_dir() const {
+	ERR_FAIL_COND_V_MSG(_chat_id.is_empty(), String(), "AIChatStore: No chat_id set.");
+	return get_chat_dir().path_join(_chat_id + "_images");
+}
+
+String AIChatStore::save_screenshot(const String &p_tool_call_id, const String &p_b64_png) {
+	ERR_FAIL_COND_V_MSG(p_tool_call_id.is_empty(), String(), "AIChatStore: Empty tool_call_id for screenshot.");
+	ERR_FAIL_COND_V_MSG(p_b64_png.is_empty(), String(), "AIChatStore: Empty base64 for screenshot.");
+
+	String dir = get_images_dir();
+	Ref<DirAccess> da = DirAccess::open("user://");
+	if (da.is_valid() && !da->dir_exists(dir)) {
+		da->make_dir_recursive(dir);
+	}
+
+	PackedByteArray png_bytes = CoreBind::Marshalls::get_singleton()->base64_to_raw(p_b64_png);
+	ERR_FAIL_COND_V_MSG(png_bytes.is_empty(), String(), "AIChatStore: Failed to decode base64 screenshot.");
+
+	String filename = p_tool_call_id + ".png";
+	String full_path = dir.path_join(filename);
+
+	Ref<FileAccess> f = FileAccess::open(full_path, FileAccess::WRITE);
+	ERR_FAIL_COND_V_MSG(f.is_null(), String(), vformat("AIChatStore: Failed to open '%s' for writing.", full_path));
+
+	f->store_buffer(png_bytes.ptr(), png_bytes.size());
+	f.unref();
+
+	print_line(vformat("AIChatStore: Saved screenshot '%s' (%d bytes)", full_path, png_bytes.size()));
+	return filename;
+}
+
+String AIChatStore::load_screenshot_b64(const String &p_filename) const {
+	ERR_FAIL_COND_V_MSG(p_filename.is_empty(), String(), "AIChatStore: Empty filename for screenshot load.");
+
+	String full_path = get_images_dir().path_join(p_filename);
+	if (!FileAccess::exists(full_path)) {
+		WARN_PRINT(vformat("AIChatStore: Screenshot file not found: '%s'", full_path));
+		return String();
+	}
+
+	Ref<FileAccess> f = FileAccess::open(full_path, FileAccess::READ);
+	ERR_FAIL_COND_V_MSG(f.is_null(), String(), vformat("AIChatStore: Failed to open '%s' for reading.", full_path));
+
+	uint64_t len = f->get_length();
+	PackedByteArray png_bytes;
+	png_bytes.resize(len);
+	f->get_buffer(png_bytes.ptrw(), len);
+	f.unref();
+
+	return CoreBind::Marshalls::get_singleton()->raw_to_base64(png_bytes);
 }

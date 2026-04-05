@@ -825,12 +825,36 @@ void AgenticOrchestrator::_on_async_rns_complete(const Dictionary &p_exec_result
 		tool_result_data["error"] = p_exec_result.get("error", Dictionary());
 	}
 
-	// Build native tool result message
+	// Build native tool result message.
+	// Strip screenshot_b64 from the JSON content (it inflates the token count as text)
+	// and attach it as _images instead so providers can send it as a real image.
+	Dictionary content_for_wire = p_exec_result;
+	if (status == "success") {
+		Dictionary result = p_exec_result.get("result", Dictionary());
+		if (result.has("screenshot_b64")) {
+			content_for_wire = p_exec_result.duplicate();
+			Dictionary r = result.duplicate();
+			r.erase("screenshot_b64");
+			r["screenshot"] = "<see attached image>";
+			content_for_wire["result"] = r;
+		}
+	}
+
 	Dictionary message;
 	message["role"] = "tool";
 	message["tool_call_id"] = _async_rns_tool_call_id;
-	message["content"] = JSON::stringify(p_exec_result);
+	message["content"] = JSON::stringify(content_for_wire);
 	message["_tool_result_data"] = tool_result_data;
+
+	// Attach screenshot as _images for vision-capable models
+	if (status == "success") {
+		Dictionary result = p_exec_result.get("result", Dictionary());
+		if (result.has("screenshot_b64")) {
+			Array imgs;
+			imgs.push_back(result["screenshot_b64"]);
+			message["_images"] = imgs;
+		}
+	}
 
 	current_run.conversation_history.push_back(message);
 	current_run.run_messages.push_back(message);

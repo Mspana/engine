@@ -890,6 +890,49 @@ Dictionary OpenAIProvider::build_request_body_with_messages(const Array &p_messa
 			out_msg["role"] = role;
 			out_msg["content"] = content_parts;
 			messages.push_back(out_msg);
+		} else if (role == "tool") {
+			// Tool result message — preserve tool_call_id, handle images
+			Dictionary out_msg;
+			out_msg["role"] = "tool";
+			out_msg["tool_call_id"] = in_msg.get("tool_call_id", "");
+
+			if (has_images && supports_vision()) {
+				Array content_parts;
+				Dictionary text_part;
+				text_part["type"] = "text";
+				text_part["text"] = in_msg.get("content", "");
+				content_parts.push_back(text_part);
+
+				Array imgs = in_msg["_images"];
+				for (int j = 0; j < imgs.size(); j++) {
+					Dictionary img_url;
+					img_url["url"] = "data:image/png;base64," + String(imgs[j]);
+					img_url["detail"] = "low";
+					Dictionary img_part;
+					img_part["type"] = "image_url";
+					img_part["image_url"] = img_url;
+					content_parts.push_back(img_part);
+				}
+				out_msg["content"] = content_parts;
+			} else {
+				if (has_images) {
+					WARN_PRINT(vformat("OpenAIProvider: Model '%s' does not support vision. Dropping %d image(s) from tool result.", model, in_msg["_images"].operator Array().size()));
+				}
+				out_msg["content"] = in_msg.get("content", "");
+			}
+			messages.push_back(out_msg);
+		} else if (role == "assistant" && in_msg.has("tool_calls")) {
+			// Assistant message with tool calls — preserve tool_calls structure
+			Dictionary out_msg;
+			out_msg["role"] = "assistant";
+			if (in_msg.has("content") && in_msg["content"].get_type() == Variant::STRING &&
+					!String(in_msg["content"]).is_empty()) {
+				out_msg["content"] = in_msg["content"];
+			} else {
+				out_msg["content"] = Variant(); // null
+			}
+			out_msg["tool_calls"] = in_msg["tool_calls"];
+			messages.push_back(out_msg);
 		} else {
 			if (has_images) {
 				WARN_PRINT(vformat("OpenAIProvider: Model '%s' does not support vision. Dropping %d image(s) from message.", model, in_msg["_images"].operator Array().size()));
@@ -1764,7 +1807,33 @@ Dictionary XAIProvider::build_request_body_with_messages(const Array &p_messages
 			Dictionary out_msg;
 			out_msg["role"] = "tool";
 			out_msg["tool_call_id"] = in_msg["tool_call_id"];
-			out_msg["content"] = in_msg.get("content", "");
+
+			bool has_images = in_msg.has("_images") && !in_msg["_images"].operator Array().is_empty();
+			if (has_images && supports_vision()) {
+				// Multipart content: text result + screenshot image
+				Array content_parts;
+				Dictionary text_part;
+				text_part["type"] = "text";
+				text_part["text"] = in_msg.get("content", "");
+				content_parts.push_back(text_part);
+
+				Array imgs = in_msg["_images"];
+				for (int j = 0; j < imgs.size(); j++) {
+					Dictionary img_url;
+					img_url["url"] = "data:image/png;base64," + String(imgs[j]);
+					img_url["detail"] = "low";
+					Dictionary img_part;
+					img_part["type"] = "image_url";
+					img_part["image_url"] = img_url;
+					content_parts.push_back(img_part);
+				}
+				out_msg["content"] = content_parts;
+			} else {
+				if (has_images) {
+					WARN_PRINT(vformat("XAIProvider: Model '%s' does not support vision. Dropping %d image(s) from tool result.", model, in_msg["_images"].operator Array().size()));
+				}
+				out_msg["content"] = in_msg.get("content", "");
+			}
 			messages.push_back(out_msg);
 		} else if (role == "assistant" && in_msg.has("tool_calls")) {
 			// Assistant message with tool calls — must preserve tool_calls structure

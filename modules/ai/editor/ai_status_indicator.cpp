@@ -1030,7 +1030,16 @@ void AIStatusPanel::_rebuild_message_list() {
 				display["action_id"] = call_id;
 				display["status"] = content_dict.get("status", "error");
 				if (content_dict.has("result")) {
-					display["result"] = content_dict["result"];
+					Dictionary result = content_dict["result"];
+					// Reload persisted screenshot for UI thumbnail
+					if (result.has("screenshot") && chat_store.is_valid()) {
+						result = result.duplicate();
+						String b64 = chat_store->load_screenshot_b64(result["screenshot"]);
+						if (!b64.is_empty()) {
+							result["screenshot_b64"] = b64;
+						}
+					}
+					display["result"] = result;
 				}
 				if (content_dict.has("error")) {
 					display["error"] = content_dict["error"];
@@ -2048,8 +2057,22 @@ Array AIStatusPanel::_build_model_messages() {
 		} else if (role == "tool") {
 			msg["role"] = "tool";
 			msg["tool_call_id"] = item.data.get("tool_call_id", "");
+			Dictionary tool_content = item.data.get("content", Dictionary());
 			// Content is a Dictionary in canonical format; serialize to string for OpenAI
-			msg["content"] = JSON::stringify(item.data.get("content", Dictionary()));
+			msg["content"] = JSON::stringify(tool_content);
+
+			// Reload persisted screenshot for vision (cross-session continuity)
+			if (tool_content.has("result") && chat_store.is_valid()) {
+				Dictionary result = tool_content["result"];
+				if (result.has("screenshot")) {
+					String b64 = chat_store->load_screenshot_b64(result["screenshot"]);
+					if (!b64.is_empty()) {
+						Array imgs;
+						imgs.push_back(b64);
+						msg["_images"] = imgs;
+					}
+				}
+			}
 		}
 
 		if (!msg.is_empty()) {
@@ -2818,7 +2841,7 @@ void AIStatusPanel::_on_orchestrator_tool_result(const Dictionary &p_tool_result
 	// Append tool result to chat transcript
 	_append_tool_result_ui(p_tool_result);
 
-	// Persist to store as canonical tool item (strip screenshot_b64 — large, already shown inline)
+	// Persist to store as canonical tool item (save screenshot to disk, reference by filename)
 	if (chat_store.is_valid()) {
 		String call_id = p_tool_result.get("action_id", "");
 		String tool_name = p_tool_result.get("tool_name", "");
@@ -2831,10 +2854,14 @@ void AIStatusPanel::_on_orchestrator_tool_result(const Dictionary &p_tool_result
 
 		if (status == String("success")) {
 			Dictionary result = p_tool_result.get("result", Dictionary());
-			// Strip screenshot_b64 from run_and_screenshot results before persisting
+			// Save screenshot to disk and replace base64 with filename reference
 			if (String(p_tool_result.get("type", "")) == "run_and_screenshot" && result.has("screenshot_b64")) {
 				result = result.duplicate();
+				String filename = chat_store->save_screenshot(call_id, result["screenshot_b64"]);
 				result.erase("screenshot_b64");
+				if (!filename.is_empty()) {
+					result["screenshot"] = filename;
+				}
 			}
 			content["result"] = result;
 		} else if (status == String("cancelled")) {

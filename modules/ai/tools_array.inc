@@ -290,7 +290,7 @@
 	Dictionary props;
 	props["wait_seconds"] = _make_prop("number", "Seconds to let game run before capturing (default 2.0, range 0.5-10.0)");
 	Array req;
-	tools.push_back(_make_tool("run_and_screenshot", "Run the game briefly, capture a screenshot, then stop. Use to visually verify changes.", props, req));
+	tools.push_back(_make_tool("run_and_screenshot", "Run the game briefly, capture a screenshot, then stop. The screenshot is returned as an image you can see — use it to visually verify layout, colors, and positioning. Inform the user if there is an issue with viewing the image.K", props, req));
 }
 {
 	Dictionary props;
