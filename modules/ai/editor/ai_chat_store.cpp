@@ -35,18 +35,44 @@
 #include "core/io/json.h"
 #include "core/os/time.h"
 
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
 void AIChatStore::_bind_methods() {
-	ClassDB::bind_method(D_METHOD("get_transcript_path"), &AIChatStore::get_transcript_path);
 	ClassDB::bind_method(D_METHOD("get_file_path"), &AIChatStore::get_file_path);
 	ClassDB::bind_method(D_METHOD("get_chat_id"), &AIChatStore::get_chat_id);
-	ClassDB::bind_method(D_METHOD("clear_transcript"), &AIChatStore::clear_transcript);
+	ClassDB::bind_method(D_METHOD("clear_items"), &AIChatStore::clear_items);
 	ClassDB::bind_method(D_METHOD("set_file_path", "path"), &AIChatStore::set_file_path);
 }
 
-String AIChatStore::generate_chat_id() {
-	int64_t now_ms = (int64_t)(Time::get_singleton()->get_unix_time_from_system() * 1000.0);
-	return vformat("chat_%d", now_ms);
+static int64_t _now_ms() {
+	int64_t ms = (int64_t)(Time::get_singleton()->get_unix_time_from_system() * 1000.0);
+	ms += Time::get_singleton()->get_ticks_usec() % 1000; // sub-ms uniqueness
+	return ms;
 }
+
+String AIChatStore::generate_chat_id() {
+	return vformat("chat_%d", _now_ms());
+}
+
+bool AIChatStore::_ensure_directory_exists() const {
+	if (!DirAccess::exists("user://ai_chat")) {
+		Ref<DirAccess> da = DirAccess::open("user://");
+		ERR_FAIL_COND_V(da.is_null(), false);
+		Error err = da->make_dir_recursive("ai_chat");
+		ERR_FAIL_COND_V_MSG(err != OK, false, "AIChatStore: Failed to create user://ai_chat/");
+	}
+	return true;
+}
+
+String AIChatStore::_generate_checkpoint_id() const {
+	return vformat("ckpt_%d", _now_ms());
+}
+
+// ---------------------------------------------------------------------------
+// Multi-chat helpers
+// ---------------------------------------------------------------------------
 
 Vector<String> AIChatStore::list_chat_ids() {
 	Vector<String> ids;
@@ -57,343 +83,378 @@ Vector<String> AIChatStore::list_chat_ids() {
 	da->list_dir_begin();
 	String fname = da->get_next();
 	while (!fname.is_empty()) {
-		if (!da->current_is_dir() && fname.begins_with("chat_") && fname.ends_with(".json")) {
-			ids.push_back(fname.get_basename()); // e.g. "chat_1711200000000"
+		if (!da->current_is_dir() && fname.begins_with("chat_") && fname.ends_with(".jsonl")) {
+			ids.push_back(fname.get_basename()); // "chat_1711200000000"
 		}
 		fname = da->get_next();
 	}
 	da->list_dir_end();
-	// Sort newest first (lexicographic works since "chat_" prefix is constant and timestamp follows)
 	ids.sort();
-	ids.reverse();
+	ids.reverse(); // newest first
 	return ids;
 }
 
-void AIChatStore::set_file_path(const String &p_path) {
-	_file_path = p_path;
-	_chat_id = p_path.get_file().get_basename(); // "user://ai_chat/chat_123.json" → "chat_123"
-	messages.clear();
-	checkpoints.clear();
+// ---------------------------------------------------------------------------
+// Lifecycle
+// ---------------------------------------------------------------------------
+
+void AIChatStore::set_chat_id(const String &p_id) {
+	_chat_id = p_id;
+	_jsonl_path = "user://ai_chat/" + p_id + ".jsonl";
+	_meta_path = "user://ai_chat/" + p_id + ".meta.json";
+	_items.clear();
+	_checkpoints.clear();
 }
 
-bool AIChatStore::_ensure_directory_exists() const {
-	String dir_path = "user://ai_chat";
-	if (!DirAccess::exists(dir_path)) {
-		// Use DirAccess with ACCESS_USERDATA for user:// paths
-		Ref<DirAccess> da = DirAccess::open("user://");
-		if (da.is_null()) {
-			ERR_PRINT("AIChatStore: Failed to open user:// directory.");
-			return false;
-		}
-		Error err = da->make_dir_recursive("ai_chat");
-		if (err != OK) {
-			ERR_PRINT(vformat("AIChatStore: Failed to create directory '%s'. Error: %d", dir_path, err));
-			return false;
-		}
-		print_verbose(vformat("AIChatStore: Created directory '%s'", dir_path));
+void AIChatStore::set_file_path(const String &p_jsonl_path) {
+	// Accept a full .jsonl path and extract the chat_id from the basename
+	String basename = p_jsonl_path.get_file().get_basename(); // "chat_123.jsonl" → "chat_123"
+	// Also handle the old .json format path gracefully (strip .json, treat as chat_id)
+	if (!basename.begins_with("chat_")) {
+		// Unexpected path — use as-is
+		_chat_id = basename;
+		_jsonl_path = p_jsonl_path.ends_with(".jsonl") ? p_jsonl_path : p_jsonl_path.get_base_dir() + "/" + basename + ".jsonl";
+	} else {
+		_chat_id = basename;
+		_jsonl_path = "user://ai_chat/" + _chat_id + ".jsonl";
 	}
+	_meta_path = "user://ai_chat/" + _chat_id + ".meta.json";
+	_items.clear();
+	_checkpoints.clear();
+}
+
+AIChatStore::AIChatStore() {}
+AIChatStore::~AIChatStore() {}
+
+// ---------------------------------------------------------------------------
+// JSONL item stream
+// ---------------------------------------------------------------------------
+
+Vector<HistoryItem> AIChatStore::load_items() {
+	_items.clear();
+
+	if (_jsonl_path.is_empty() || !FileAccess::exists(_jsonl_path)) {
+		print_verbose("AIChatStore: No JSONL file found, starting with empty history.");
+		_load_meta();
+		return _items;
+	}
+
+	Ref<FileAccess> file = FileAccess::open(_jsonl_path, FileAccess::READ);
+	if (file.is_null()) {
+		WARN_PRINT(vformat("AIChatStore: Failed to open '%s'", _jsonl_path));
+		_load_meta();
+		return _items;
+	}
+
+	int line_num = 0;
+	while (!file->eof_reached()) {
+		String line = file->get_line().strip_edges();
+		line_num++;
+		if (line.is_empty()) {
+			continue;
+		}
+		JSON json;
+		Error err = json.parse(line);
+		if (err != OK || json.get_data().get_type() != Variant::DICTIONARY) {
+			WARN_PRINT(vformat("AIChatStore: Skipping malformed line %d in '%s'", line_num, _jsonl_path));
+			continue;
+		}
+		Dictionary row = json.get_data();
+		int64_t ts = row.get("ts", (int64_t)0);
+		if (!row.has("item") || row["item"].get_type() != Variant::DICTIONARY) {
+			WARN_PRINT(vformat("AIChatStore: Line %d missing 'item' dict, skipping.", line_num));
+			continue;
+		}
+		Dictionary item_data = row["item"];
+		_items.push_back(HistoryItem(ts, item_data));
+	}
+	file.unref();
+
+	print_verbose(vformat("AIChatStore: Loaded %d items from '%s'", _items.size(), _jsonl_path));
+	_load_meta();
+	return _items;
+}
+
+HistoryItem AIChatStore::append_item(const Dictionary &p_data) {
+	if (!_ensure_directory_exists()) {
+		WARN_PRINT("AIChatStore: Cannot append — directory creation failed.");
+		return HistoryItem();
+	}
+	ERR_FAIL_COND_V_MSG(_jsonl_path.is_empty(), HistoryItem(), "AIChatStore: No chat path set.");
+
+	int64_t ts = _now_ms();
+	HistoryItem item(ts, p_data);
+	_items.push_back(item);
+
+	// Build JSONL line
+	Dictionary row;
+	row["ts"] = ts;
+	row["item"] = p_data;
+	String line = JSON::stringify(row) + "\n";
+
+	Ref<FileAccess> file = FileAccess::open(_jsonl_path, FileAccess::READ_WRITE);
+	if (file.is_null()) {
+		// File may not exist yet — create it
+		file = FileAccess::open(_jsonl_path, FileAccess::WRITE);
+	}
+	ERR_FAIL_COND_V_MSG(file.is_null(), item, vformat("AIChatStore: Failed to open '%s' for append.", _jsonl_path));
+
+	file->seek_end();
+	file->store_string(line);
+	file.unref();
+
+	return item;
+}
+
+bool AIChatStore::rewrite_items(const Vector<HistoryItem> &p_new_items) {
+	if (!_ensure_directory_exists()) {
+		return false;
+	}
+	ERR_FAIL_COND_V_MSG(_jsonl_path.is_empty(), false, "AIChatStore: No chat path set.");
+
+	Ref<FileAccess> file = FileAccess::open(_jsonl_path, FileAccess::WRITE);
+	ERR_FAIL_COND_V_MSG(file.is_null(), false, vformat("AIChatStore: Failed to open '%s' for rewrite.", _jsonl_path));
+
+	for (int i = 0; i < p_new_items.size(); i++) {
+		Dictionary row;
+		row["ts"] = p_new_items[i].ts;
+		row["item"] = p_new_items[i].data;
+		file->store_string(JSON::stringify(row) + "\n");
+	}
+	file.unref();
+
+	_items = p_new_items;
+	print_verbose(vformat("AIChatStore: Rewrote '%s' with %d items.", _jsonl_path, _items.size()));
 	return true;
 }
 
-Vector<ChatMessage> AIChatStore::load_transcript() {
-	messages.clear();
-	checkpoints.clear();
+void AIChatStore::clear_items() {
+	_items.clear();
+	_checkpoints.clear();
 
-	String path = _file_path;
-	if (path.is_empty() || !FileAccess::exists(path)) {
-		print_verbose("AIChatStore: No transcript file found, starting with empty transcript.");
-		return messages;
+	if (!_jsonl_path.is_empty() && FileAccess::exists(_jsonl_path)) {
+		Ref<DirAccess> da = DirAccess::open(_jsonl_path.get_base_dir());
+		if (da.is_valid()) {
+			da->remove(_jsonl_path.get_file());
+		}
+	}
+	if (!_meta_path.is_empty() && FileAccess::exists(_meta_path)) {
+		Ref<DirAccess> da = DirAccess::open(_meta_path.get_base_dir());
+		if (da.is_valid()) {
+			da->remove(_meta_path.get_file());
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Canonical item builders
+// ---------------------------------------------------------------------------
+
+Dictionary AIChatStore::make_user_item(const String &p_content, const Vector<String> &p_images) {
+	Dictionary d;
+	d["role"] = "user";
+	d["content"] = p_content;
+	if (!p_images.is_empty()) {
+		Array imgs;
+		for (int i = 0; i < p_images.size(); i++) {
+			imgs.push_back(p_images[i]);
+		}
+		d["images"] = imgs;
+	}
+	return d;
+}
+
+Dictionary AIChatStore::make_assistant_item(const Array &p_content_blocks) {
+	Dictionary d;
+	d["role"] = "assistant";
+	d["content"] = p_content_blocks;
+	return d;
+}
+
+Dictionary AIChatStore::make_tool_item(const String &p_tool_call_id, const Dictionary &p_content) {
+	Dictionary d;
+	d["role"] = "tool";
+	d["tool_call_id"] = p_tool_call_id;
+	d["content"] = p_content;
+	return d;
+}
+
+Dictionary AIChatStore::make_engine_state_item(bool p_running, int p_error_count,
+		const String &p_errors_text, const String &p_screenshot_path) {
+	Dictionary d;
+	d["type"] = "engine_state";
+	d["game_running"] = p_running;
+	d["error_count"] = p_error_count;
+	d["errors"] = p_errors_text;
+	if (!p_screenshot_path.is_empty()) {
+		d["screenshot_path"] = p_screenshot_path;
+	}
+	d["timestamp"] = _now_ms();
+	return d;
+}
+
+Dictionary AIChatStore::make_todo_state_item(const Array &p_tasks) {
+	Dictionary d;
+	d["type"] = "todo_state";
+	d["tasks"] = p_tasks;
+	d["timestamp"] = _now_ms();
+	return d;
+}
+
+// ---------------------------------------------------------------------------
+// Meta file (checkpoints)
+// ---------------------------------------------------------------------------
+
+bool AIChatStore::_save_meta() const {
+	if (_meta_path.is_empty()) {
+		return false;
+	}
+	if (!_ensure_directory_exists()) {
+		return false;
 	}
 
-	Ref<FileAccess> file = FileAccess::open(path, FileAccess::READ);
-	if (file.is_null()) {
-		WARN_PRINT(vformat("AIChatStore: Failed to open transcript file '%s'.", path));
-		return messages;
+	Array cp_array;
+	for (int i = 0; i < _checkpoints.size(); i++) {
+		const ChatCheckpoint &cp = _checkpoints[i];
+		Dictionary d;
+		d["checkpoint_id"] = cp.checkpoint_id;
+		d["anchor_ts"] = cp.anchor_ts;
+		d["created_at"] = cp.created_at;
+		d["item_count"] = cp.item_count;
+		d["undo_action_index"] = cp.undo_action_index;
+		d["undo_revert_available"] = cp.undo_revert_available;
+		cp_array.push_back(d);
 	}
 
-	String json_text = file->get_as_text();
+	Dictionary root;
+	root["checkpoints"] = cp_array;
+
+	Ref<FileAccess> file = FileAccess::open(_meta_path, FileAccess::WRITE);
+	ERR_FAIL_COND_V_MSG(file.is_null(), false, vformat("AIChatStore: Failed to write meta '%s'", _meta_path));
+	file->store_string(JSON::stringify(root, "\t"));
 	file.unref();
+	return true;
+}
+
+bool AIChatStore::_load_meta() {
+	_checkpoints.clear();
+
+	if (_meta_path.is_empty() || !FileAccess::exists(_meta_path)) {
+		return true; // No meta is fine
+	}
+
+	Ref<FileAccess> file = FileAccess::open(_meta_path, FileAccess::READ);
+	if (file.is_null()) {
+		return false;
+	}
 
 	JSON json;
-	Error err = json.parse(json_text);
-	if (err != OK) {
-		WARN_PRINT(vformat("AIChatStore: Failed to parse transcript JSON: %s at line %d. Starting with empty transcript.", json.get_error_message(), json.get_error_line()));
-		return messages;
+	Error err = json.parse(file->get_as_text());
+	file.unref();
+	if (err != OK || json.get_data().get_type() != Variant::DICTIONARY) {
+		WARN_PRINT(vformat("AIChatStore: Failed to parse meta '%s'", _meta_path));
+		return false;
 	}
 
-	Variant data = json.get_data();
-	if (data.get_type() != Variant::DICTIONARY) {
-		WARN_PRINT("AIChatStore: Transcript JSON is not a dictionary. Starting with empty transcript.");
-		return messages;
-	}
-
-	Dictionary root = data;
-
-	// Check version for forward compatibility (v1 and v2 supported)
-	int version = root.get("version", 0);
-	if (version < 1 || version > TRANSCRIPT_VERSION) {
-		WARN_PRINT(vformat("AIChatStore: Transcript version mismatch (expected 1-%d, got %d). Attempting to load anyway.", TRANSCRIPT_VERSION, version));
-	}
-
-	if (!root.has("messages") || root["messages"].get_type() != Variant::ARRAY) {
-		WARN_PRINT("AIChatStore: Transcript has no 'messages' array. Starting with empty transcript.");
-		return messages;
-	}
-
-	Array msg_array = root["messages"];
-	for (int i = 0; i < msg_array.size(); i++) {
-		if (msg_array[i].get_type() != Variant::DICTIONARY) {
-			WARN_PRINT(vformat("AIChatStore: Skipping non-dictionary message at index %d.", i));
-			continue;
-		}
-
-		Dictionary msg_dict = msg_array[i];
-		ChatMessage msg;
-		msg.id = msg_dict.get("id", 0);
-		msg.role = msg_dict.get("role", "");
-		msg.content = msg_dict.get("content", "");
-		msg.created_at = msg_dict.get("created_at", 0);
-		if (msg_dict.has("images") && msg_dict["images"].get_type() == Variant::ARRAY) {
-			Array img_array = msg_dict["images"];
-			for (int j = 0; j < img_array.size(); j++) {
-				if (img_array[j].get_type() == Variant::STRING) {
-					msg.images.push_back(img_array[j]);
-				}
-			}
-		}
-
-		if (msg.role.is_empty()) {
-			WARN_PRINT(vformat("AIChatStore: Skipping message with empty role at index %d.", i));
-			continue;
-		}
-
-		messages.push_back(msg);
-	}
-
-	// Load checkpoints (v2+)
+	Dictionary root = json.get_data();
 	if (root.has("checkpoints") && root["checkpoints"].get_type() == Variant::ARRAY) {
 		Array cp_array = root["checkpoints"];
 		for (int i = 0; i < cp_array.size(); i++) {
 			if (cp_array[i].get_type() != Variant::DICTIONARY) {
 				continue;
 			}
-
-			Dictionary cp_dict = cp_array[i];
+			Dictionary d = cp_array[i];
 			ChatCheckpoint cp;
-			cp.checkpoint_id = cp_dict.get("checkpoint_id", "");
-			cp.anchor_message_id = cp_dict.get("anchor_message_id", 0);
-			cp.created_at = cp_dict.get("created_at", 0);
-			cp.transcript_length = cp_dict.get("transcript_length", 0);
-			cp.undo_action_index = cp_dict.get("undo_action_index", -1);
-			cp.undo_revert_available = cp_dict.get("undo_revert_available", false);
-
+			cp.checkpoint_id = d.get("checkpoint_id", "");
+			cp.anchor_ts = d.get("anchor_ts", (int64_t)0);
+			cp.created_at = d.get("created_at", (int64_t)0);
+			cp.item_count = d.get("item_count", 0);
+			cp.undo_action_index = d.get("undo_action_index", -1);
+			cp.undo_revert_available = d.get("undo_revert_available", false);
 			if (!cp.checkpoint_id.is_empty()) {
-				checkpoints.push_back(cp);
+				_checkpoints.push_back(cp);
 			}
 		}
-		print_verbose(vformat("AIChatStore: Loaded %d checkpoints.", checkpoints.size()));
 	}
-
-	print_verbose(vformat("AIChatStore: Loaded %d messages from transcript.", messages.size()));
-	return messages;
-}
-
-bool AIChatStore::save_transcript() {
-	if (!_ensure_directory_exists()) {
-		return false;
-	}
-
-	// Build JSON structure - messages
-	Array msg_array;
-	for (int i = 0; i < messages.size(); i++) {
-		const ChatMessage &msg = messages[i];
-		Dictionary msg_dict;
-		msg_dict["id"] = msg.id;
-		msg_dict["role"] = msg.role;
-		msg_dict["content"] = msg.content;
-		msg_dict["created_at"] = msg.created_at;
-		if (!msg.images.is_empty()) {
-			Array img_array;
-			for (int j = 0; j < msg.images.size(); j++) {
-				img_array.push_back(msg.images[j]);
-			}
-			msg_dict["images"] = img_array;
-		}
-		msg_array.push_back(msg_dict);
-	}
-
-	// Build JSON structure - checkpoints
-	Array cp_array;
-	for (int i = 0; i < checkpoints.size(); i++) {
-		const ChatCheckpoint &cp = checkpoints[i];
-		Dictionary cp_dict;
-		cp_dict["checkpoint_id"] = cp.checkpoint_id;
-		cp_dict["anchor_message_id"] = cp.anchor_message_id;
-		cp_dict["created_at"] = cp.created_at;
-		cp_dict["transcript_length"] = cp.transcript_length;
-		cp_dict["undo_action_index"] = cp.undo_action_index;
-		cp_dict["undo_revert_available"] = cp.undo_revert_available;
-		cp_array.push_back(cp_dict);
-	}
-
-	Dictionary root;
-	root["version"] = TRANSCRIPT_VERSION;
-	root["messages"] = msg_array;
-	root["checkpoints"] = cp_array;
-
-	String json_text = JSON::stringify(root, "\t");
-
-	String path = _file_path;
-	if (path.is_empty()) {
-		ERR_PRINT("AIChatStore: Cannot save — no file path set.");
-		return false;
-	}
-	Ref<FileAccess> file = FileAccess::open(path, FileAccess::WRITE);
-	if (file.is_null()) {
-		ERR_PRINT(vformat("AIChatStore: Failed to open transcript file for writing '%s'.", path));
-		return false;
-	}
-
-	file->store_string(json_text);
-	file.unref();
-
-	print_verbose(vformat("AIChatStore: Saved %d messages and %d checkpoints to transcript.", messages.size(), checkpoints.size()));
 	return true;
 }
 
-ChatMessage AIChatStore::append_message(const String &p_role, const String &p_content, const Vector<String> &p_images) {
-	int64_t now_ms = Time::get_singleton()->get_unix_time_from_system() * 1000;
-	// Add microseconds for uniqueness if multiple messages in same millisecond
-	now_ms += Time::get_singleton()->get_ticks_usec() % 1000;
+// ---------------------------------------------------------------------------
+// Checkpoints
+// ---------------------------------------------------------------------------
 
-	ChatMessage msg(now_ms, p_role, p_content, now_ms);
-	msg.images = p_images;
-	messages.push_back(msg);
-
-	save_transcript();
-
-	return msg;
-}
-
-ChatMessage AIChatStore::append_tool_result(const Dictionary &p_tool_result) {
-	// Convert tool result dictionary to JSON string
-	String content = JSON::stringify(p_tool_result);
-	return append_message("tool", content);
-}
-
-void AIChatStore::clear_transcript() {
-	messages.clear();
-	checkpoints.clear();
-
-	if (_file_path.is_empty()) {
-		return;
-	}
-	if (FileAccess::exists(_file_path)) {
-		String dir = _file_path.get_base_dir();
-		String filename = _file_path.get_file();
-		Ref<DirAccess> da = DirAccess::open(dir);
-		if (da.is_valid()) {
-			Error err = da->remove(filename);
-			if (err != OK) {
-				WARN_PRINT(vformat("AIChatStore: Failed to delete transcript file '%s'. Error: %d", _file_path, err));
-			} else {
-				print_verbose(vformat("AIChatStore: Deleted transcript file '%s'.", _file_path));
-			}
-		}
-	}
-}
-
-String AIChatStore::_generate_checkpoint_id() const {
-	int64_t now_ms = Time::get_singleton()->get_unix_time_from_system() * 1000;
-	now_ms += Time::get_singleton()->get_ticks_usec() % 1000;
-	return vformat("chk_%d", now_ms);
-}
-
-ChatCheckpoint AIChatStore::create_checkpoint(int64_t p_anchor_message_id, int p_undo_action_index, bool p_undo_available) {
-	// Check if checkpoint already exists for this message
-	for (int i = 0; i < checkpoints.size(); i++) {
-		if (checkpoints[i].anchor_message_id == p_anchor_message_id) {
-			// Update existing checkpoint
-			checkpoints.write[i].undo_action_index = p_undo_action_index;
-			checkpoints.write[i].undo_revert_available = p_undo_available;
-			checkpoints.write[i].transcript_length = messages.size();
-			save_transcript();
-			print_line(vformat("AIChatStore: Updated checkpoint for message %d", p_anchor_message_id));
-			return checkpoints[i];
+ChatCheckpoint AIChatStore::create_checkpoint(int64_t p_anchor_ts, int p_undo_action_index, bool p_undo_available) {
+	// Update if checkpoint already exists for this anchor
+	for (int i = 0; i < _checkpoints.size(); i++) {
+		if (_checkpoints[i].anchor_ts == p_anchor_ts) {
+			_checkpoints.write[i].undo_action_index = p_undo_action_index;
+			_checkpoints.write[i].undo_revert_available = p_undo_available;
+			_checkpoints.write[i].item_count = _items.size();
+			_save_meta();
+			return _checkpoints[i];
 		}
 	}
 
-	// Create new checkpoint
-	int64_t now_ms = Time::get_singleton()->get_unix_time_from_system() * 1000;
 	ChatCheckpoint cp(
-		_generate_checkpoint_id(),
-		p_anchor_message_id,
-		now_ms,
-		messages.size(),
-		p_undo_action_index,
-		p_undo_available
-	);
-
-	checkpoints.push_back(cp);
-	save_transcript();
-
-	print_line(vformat("AIChatStore: Created checkpoint '%s' for message %d (transcript length: %d, undo index: %d)",
-		cp.checkpoint_id, p_anchor_message_id, cp.transcript_length, p_undo_action_index));
-
+			_generate_checkpoint_id(),
+			p_anchor_ts,
+			_now_ms(),
+			_items.size(),
+			p_undo_action_index,
+			p_undo_available);
+	_checkpoints.push_back(cp);
+	_save_meta();
+	print_line(vformat("AIChatStore: Created checkpoint '%s' (anchor_ts=%d, items=%d)",
+			cp.checkpoint_id, p_anchor_ts, cp.item_count));
 	return cp;
 }
 
-const ChatCheckpoint *AIChatStore::get_checkpoint_for_message(int64_t p_message_id) const {
-	for (int i = 0; i < checkpoints.size(); i++) {
-		if (checkpoints[i].anchor_message_id == p_message_id) {
-			return &checkpoints[i];
+const ChatCheckpoint *AIChatStore::get_checkpoint_for_ts(int64_t p_anchor_ts) const {
+	for (int i = 0; i < _checkpoints.size(); i++) {
+		if (_checkpoints[i].anchor_ts == p_anchor_ts) {
+			return &_checkpoints[i];
 		}
 	}
 	return nullptr;
 }
 
 bool AIChatStore::truncate_to_checkpoint(const String &p_checkpoint_id) {
-	// Find the checkpoint
-	int checkpoint_idx = -1;
-	for (int i = 0; i < checkpoints.size(); i++) {
-		if (checkpoints[i].checkpoint_id == p_checkpoint_id) {
-			checkpoint_idx = i;
+	const ChatCheckpoint *cp = nullptr;
+	for (int i = 0; i < _checkpoints.size(); i++) {
+		if (_checkpoints[i].checkpoint_id == p_checkpoint_id) {
+			cp = &_checkpoints[i];
 			break;
 		}
 	}
+	ERR_FAIL_COND_V_MSG(!cp, false, vformat("AIChatStore: Checkpoint '%s' not found.", p_checkpoint_id));
 
-	if (checkpoint_idx < 0) {
-		ERR_PRINT(vformat("AIChatStore: Checkpoint '%s' not found.", p_checkpoint_id));
-		return false;
+	int keep = cp->item_count;
+	if (keep < 0 || keep > _items.size()) {
+		keep = _items.size();
 	}
 
-	const ChatCheckpoint &cp = checkpoints[checkpoint_idx];
-
-	// Truncate messages to checkpoint length
-	if (cp.transcript_length < messages.size()) {
-		int removed_count = messages.size() - cp.transcript_length;
-		messages.resize(cp.transcript_length);
-		print_line(vformat("AIChatStore: Truncated %d messages (now %d messages)", removed_count, messages.size()));
+	Vector<HistoryItem> truncated;
+	for (int i = 0; i < keep; i++) {
+		truncated.push_back(_items[i]);
 	}
 
-	// Remove checkpoints that were created after this one
-	Vector<ChatCheckpoint> remaining_checkpoints;
-	for (int i = 0; i < checkpoints.size(); i++) {
-		if (checkpoints[i].created_at <= cp.created_at) {
-			remaining_checkpoints.push_back(checkpoints[i]);
+	// Remove checkpoints that were created after this point
+	for (int i = _checkpoints.size() - 1; i >= 0; i--) {
+		if (_checkpoints[i].item_count > keep) {
+			_checkpoints.remove_at(i);
 		}
 	}
-	checkpoints = remaining_checkpoints;
 
-	save_transcript();
-
-	print_line(vformat("AIChatStore: Rewound to checkpoint '%s' (anchor message %d)", p_checkpoint_id, cp.anchor_message_id));
-	return true;
+	bool ok = rewrite_items(truncated);
+	if (ok) {
+		_save_meta();
+	}
+	return ok;
 }
 
-int AIChatStore::find_message_index(int64_t p_message_id) const {
-	for (int i = 0; i < messages.size(); i++) {
-		if (messages[i].id == p_message_id) {
+int AIChatStore::find_item_index_by_ts(int64_t p_ts) const {
+	for (int i = 0; i < _items.size(); i++) {
+		if (_items[i].ts == p_ts) {
 			return i;
 		}
 	}
@@ -401,41 +462,26 @@ int AIChatStore::find_message_index(int64_t p_message_id) const {
 }
 
 bool AIChatStore::truncate_to_index(int p_index) {
-	if (p_index < 0 || p_index > messages.size()) {
-		ERR_PRINT(vformat("AIChatStore: Invalid truncation index %d (messages: %d)", p_index, messages.size()));
-		return false;
+	ERR_FAIL_COND_V(p_index < 0, false);
+	if (p_index >= _items.size()) {
+		return true; // nothing to do
 	}
 
-	if (p_index < messages.size()) {
-		int removed_count = messages.size() - p_index;
-		messages.resize(p_index);
-		print_line(vformat("AIChatStore: Truncated to index %d, removed %d messages (now %d messages)", p_index, removed_count, messages.size()));
+	Vector<HistoryItem> truncated;
+	for (int i = 0; i < p_index; i++) {
+		truncated.push_back(_items[i]);
 	}
 
-	// Remove checkpoints that reference messages beyond the new length
-	Vector<ChatCheckpoint> remaining_checkpoints;
-	for (int i = 0; i < checkpoints.size(); i++) {
-		// Keep checkpoints whose transcript_length is <= our new length
-		// This ensures we don't keep checkpoints that would try to restore more messages than we have
-		if (checkpoints[i].transcript_length <= p_index) {
-			remaining_checkpoints.push_back(checkpoints[i]);
+	// Remove checkpoints beyond the new end
+	for (int i = _checkpoints.size() - 1; i >= 0; i--) {
+		if (_checkpoints[i].item_count > p_index) {
+			_checkpoints.remove_at(i);
 		}
 	}
 
-	int removed_checkpoints = checkpoints.size() - remaining_checkpoints.size();
-	if (removed_checkpoints > 0) {
-		print_line(vformat("AIChatStore: Removed %d checkpoints that referenced truncated messages", removed_checkpoints));
+	bool ok = rewrite_items(truncated);
+	if (ok) {
+		_save_meta();
 	}
-	checkpoints = remaining_checkpoints;
-
-	save_transcript();
-	return true;
-}
-
-AIChatStore::AIChatStore() :
-		_file_path(""),
-		_chat_id("") {
-}
-
-AIChatStore::~AIChatStore() {
+	return ok;
 }

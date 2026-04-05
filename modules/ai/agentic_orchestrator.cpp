@@ -77,11 +77,15 @@ void AgenticOrchestrator::_bind_methods() {
 	ADD_SIGNAL(MethodInfo("tool_result_ready", PropertyInfo(Variant::DICTIONARY, "tool_result")));
 	ADD_SIGNAL(MethodInfo("run_complete", PropertyInfo(Variant::BOOL, "success"), PropertyInfo(Variant::STRING, "final_message")));
 	ADD_SIGNAL(MethodInfo("checkpoint_recommended", PropertyInfo(Variant::INT, "user_message_id")));
+	// assistant_item_ready: canonical assistant item {role:"assistant", content:[...blocks...]}
+	// Emitted before any tool calls in the response are executed. Replaces narration_ready/thinking_ready
+	// for persistence. narration_ready still emitted for legacy UI consumers.
+	ADD_SIGNAL(MethodInfo("assistant_item_ready", PropertyInfo(Variant::DICTIONARY, "item")));
 	ADD_SIGNAL(MethodInfo("narration_ready", PropertyInfo(Variant::STRING, "text")));
-	ADD_SIGNAL(MethodInfo("thinking_ready", PropertyInfo(Variant::STRING, "text")));
 	ADD_SIGNAL(MethodInfo("todos_updated", PropertyInfo(Variant::ARRAY, "todos")));
 	ADD_SIGNAL(MethodInfo("turn_tokens_ready", PropertyInfo(Variant::INT, "tokens")));
 	ClassDB::bind_method(D_METHOD("set_todos", "todos"), &AgenticOrchestrator::set_todos);
+	ClassDB::bind_method(D_METHOD("inject_user_message", "message"), &AgenticOrchestrator::inject_user_message);
 }
 
 void AgenticOrchestrator::run_agentic_loop(const Array &p_initial_messages, Ref<AIProvider> p_provider) {
@@ -187,6 +191,16 @@ void AgenticOrchestrator::_send_model_request() {
 		print_line(vformat("AgenticOrchestrator: Max actions (%d) exceeded.", MAX_ACTIONS_PER_RUN));
 		_handle_max_actions_exceeded();
 		return;
+	}
+
+	// Consume any pending user injection before sending to the model
+	if (!_pending_user_injection.is_empty()) {
+		Dictionary user_msg;
+		user_msg["role"] = "user";
+		user_msg["content"] = _pending_user_injection;
+		current_run.conversation_history.push_back(user_msg);
+		print_line(vformat("AgenticOrchestrator: Injected user message: %s", _pending_user_injection.substr(0, 80)));
+		_pending_user_injection = "";
 	}
 
 	// Increment turn counter
@@ -336,24 +350,56 @@ void AgenticOrchestrator::_process_native_tool_response(const Dictionary &p_api_
 	String content = message.get("content", "");
 	Array tool_calls = message.get("tool_calls", Array());
 
+	// Store tool_calls for potential synthetic cancel use
+	_current_tool_calls = tool_calls;
+
 	print_line(vformat("AgenticOrchestrator: finish_reason=%s, content_len=%d, tool_calls=%d",
 			finish_reason, content.length(), tool_calls.size()));
 
-	// Store assistant message in conversation history (preserving tool_calls for API round-trip)
-	Dictionary assistant_msg;
-	assistant_msg["role"] = "assistant";
+	// --- Build canonical assistant item (content_blocks) -------------------
+	// This is emitted via assistant_item_ready BEFORE executing any tools,
+	// so the store records the assistant message before its results arrive.
+	Array content_blocks;
 	if (!content.is_empty()) {
-		assistant_msg["content"] = content;
-	} else {
-		assistant_msg["content"] = Variant(); // null — required by OpenAI format
+		Dictionary text_block;
+		text_block["type"] = "text";
+		text_block["text"] = content;
+		content_blocks.push_back(text_block);
 	}
-	if (!tool_calls.is_empty()) {
-		assistant_msg["tool_calls"] = tool_calls;
+	for (int i = 0; i < tool_calls.size(); i++) {
+		Dictionary tc = tool_calls[i];
+		Dictionary function = tc.get("function", Dictionary());
+		JSON args_parser;
+		Dictionary args;
+		if (args_parser.parse(String(function.get("arguments", "{}"))) == OK &&
+				args_parser.get_data().get_type() == Variant::DICTIONARY) {
+			args = args_parser.get_data();
+		}
+		Dictionary tc_block;
+		tc_block["type"] = "tool_call";
+		tc_block["id"] = tc.get("id", "");
+		tc_block["name"] = function.get("name", "");
+		tc_block["args"] = args;
+		content_blocks.push_back(tc_block);
 	}
-	current_run.conversation_history.push_back(assistant_msg);
+	Dictionary assistant_canonical;
+	assistant_canonical["role"] = "assistant";
+	assistant_canonical["content"] = content_blocks;
+	// Emit canonical item for persistence (store handles it before tools run)
+	emit_signal("assistant_item_ready", assistant_canonical);
 
-	// Emit text content to UI as narration (only if not the final turn — final turn goes via run_complete)
-	if (!content.is_empty() && (finish_reason == "tool_calls" || !tool_calls.is_empty())) {
+	// --- Also push in OpenAI wire format for in-memory conversation_history --
+	// (used by _send_model_request → provider, not persisted to JSONL)
+	Dictionary assistant_wire;
+	assistant_wire["role"] = "assistant";
+	assistant_wire["content"] = content.is_empty() ? Variant() : Variant(content);
+	if (!tool_calls.is_empty()) {
+		assistant_wire["tool_calls"] = tool_calls;
+	}
+	current_run.conversation_history.push_back(assistant_wire);
+
+	// Emit mid-turn narration for legacy UI consumers (text present + tool calls follow)
+	if (!content.is_empty() && !tool_calls.is_empty()) {
 		emit_signal("narration_ready", content);
 	}
 
@@ -372,6 +418,41 @@ void AgenticOrchestrator::_process_native_tool_response(const Dictionary &p_api_
 
 	for (int i = 0; i < tool_calls.size(); i++) {
 		if (current_run.cancelled) {
+			// Emit synthetic cancelled results for all remaining tool calls (no-orphan invariant)
+			for (int j = i; j < tool_calls.size(); j++) {
+				Dictionary tc = tool_calls[j];
+				String call_id = tc.get("id", "");
+				Dictionary function = tc.get("function", Dictionary());
+				String tool_name = function.get("name", "");
+				JSON args_parser;
+				Dictionary args;
+				if (args_parser.parse(String(function.get("arguments", "{}"))) == OK &&
+						args_parser.get_data().get_type() == Variant::DICTIONARY) {
+					args = args_parser.get_data();
+				}
+
+				// Add to in-memory history (wire format)
+				Dictionary cancelled_wire;
+				cancelled_wire["role"] = "tool";
+				cancelled_wire["tool_call_id"] = call_id;
+				Dictionary cancelled_content_dict;
+				cancelled_content_dict["status"] = "cancelled";
+				cancelled_content_dict["tool_name"] = tool_name;
+				cancelled_content_dict["reason"] = "user_cancelled_run";
+				cancelled_wire["content"] = JSON::stringify(cancelled_content_dict);
+				current_run.conversation_history.push_back(cancelled_wire);
+				current_run.run_messages.push_back(cancelled_wire);
+
+				// Emit as tool result so UI/store records the canonical item
+				Dictionary trd;
+				trd["tool_name"] = tool_name;
+				trd["action_id"] = call_id;
+				trd["type"] = tool_name;
+				trd["args"] = args;
+				trd["status"] = "cancelled";
+				trd["tokens"] = 0;
+				_emit_tool_result(trd);
+			}
 			break;
 		}
 
@@ -431,8 +512,8 @@ void AgenticOrchestrator::_process_native_tool_response(const Dictionary &p_api_
 			if (String(trd.get("type", "")) == "run_and_screenshot") {
 				estimated_tokens = 1000;
 			} else {
-				String content = tool_result_msg.get("content", String());
-				estimated_tokens = content.length() / 4;
+				String tool_content = tool_result_msg.get("content", String());
+				estimated_tokens = tool_content.length() / 4;
 			}
 			trd["tokens"] = estimated_tokens;
 			_emit_tool_result(trd);
@@ -554,6 +635,7 @@ void AgenticOrchestrator::_emit_tool_result(const Dictionary &p_tool_result) {
 }
 
 void AgenticOrchestrator::_emit_run_complete(bool p_success, const String &p_final_message) {
+	_pending_user_injection = "";
 	emit_signal("run_complete", p_success, p_final_message);
 
 	// On successful run completion, emit checkpoint_recommended signal
@@ -580,6 +662,18 @@ void AgenticOrchestrator::cancel_run() {
 
 bool AgenticOrchestrator::is_cancelled() const {
 	return current_run.cancelled;
+}
+
+bool AgenticOrchestrator::inject_user_message(const String &p_message) {
+	if (!_is_running || current_run.cancelled) {
+		return false;
+	}
+	if (_pending_user_injection.is_empty()) {
+		_pending_user_injection = p_message;
+	} else {
+		_pending_user_injection += "\n\n" + p_message;
+	}
+	return true;
 }
 
 bool AgenticOrchestrator::is_running() const {

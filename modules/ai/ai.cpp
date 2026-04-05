@@ -30,6 +30,7 @@
 // Headers for file operations
 #include "core/io/file_access.h"
 #include "core/io/dir_access.h"
+#include "core/os/os.h"
 #include "core/io/resource_loader.h"
 #include "core/io/resource_saver.h"
 #include "modules/gdscript/gdscript.h"
@@ -896,6 +897,7 @@ void AI::_bind_methods() {
     // Game screenshot signal chain (run_and_screenshot action, no cross-module deps)
     ClassDB::bind_method(D_METHOD("trigger_game_screenshot"), &AI::trigger_game_screenshot);
     ClassDB::bind_method(D_METHOD("_connect_debugger_signals"), &AI::_connect_debugger_signals);
+    ClassDB::bind_method(D_METHOD("_setup_chat_junction"), &AI::_setup_chat_junction);
     ClassDB::bind_method(D_METHOD("deliver_game_screenshot", "b64"), &AI::deliver_game_screenshot);
     ClassDB::bind_method(D_METHOD("get_game_is_running"), &AI::get_game_is_running);
     ClassDB::bind_method(D_METHOD("stop_game"), &AI::stop_game);
@@ -907,6 +909,72 @@ void AI::initialize_singleton() {
     ERR_FAIL_COND_MSG(singleton != nullptr, "AI singleton already initialized.");
     singleton = memnew(AI);
     singleton->call_deferred("_connect_debugger_signals");
+    singleton->call_deferred("_setup_chat_junction");
+}
+
+void AI::_setup_chat_junction() {
+#ifdef WINDOWS_ENABLED
+    // Resolve the real path for this project's ai_chat directory.
+    String user_data_dir = OS::get_singleton()->get_user_data_dir();
+    // user_data_dir is already the native Windows path (forward slashes, absolute).
+    String ai_chat_path = user_data_dir + "/ai_chat";
+
+    // Ensure the ai_chat directory exists so the junction target is valid.
+    if (!DirAccess::exists(ai_chat_path)) {
+        Error err = DirAccess::make_dir_recursive_absolute(ai_chat_path);
+        if (err != OK) {
+            WARN_PRINT("AI: Could not create ai_chat directory for junction.");
+            return;
+        }
+    }
+
+    // Project name = last component of user_data_dir (Godot already sanitized it).
+    String project_name = user_data_dir.get_file();
+    if (project_name.is_empty()) {
+        project_name = user_data_dir.get_base_dir().get_file();
+    }
+
+    // Central folder in the user's Documents.
+    String userprofile = OS::get_singleton()->get_environment("USERPROFILE");
+    if (userprofile.is_empty()) {
+        WARN_PRINT("AI: USERPROFILE env var not set, skipping chat junction.");
+        return;
+    }
+    String central_dir = userprofile + "/Documents/Godot AI Chats";
+
+    // Ensure central directory exists.
+    if (!DirAccess::exists(central_dir)) {
+        Error err = DirAccess::make_dir_recursive_absolute(central_dir);
+        if (err != OK) {
+            WARN_PRINT(vformat("AI: Could not create central chat dir '%s'.", central_dir));
+            return;
+        }
+    }
+
+    String junction_path = central_dir + "/" + project_name;
+
+    // Skip if junction already exists.
+    if (DirAccess::exists(junction_path)) {
+        return;
+    }
+
+    // mklink /J requires backslash paths.
+    String junction_win = junction_path.replace("/", "\\");
+    String target_win = ai_chat_path.replace("/", "\\");
+
+    // cmd.exe /c "<full command>" — pass the mklink command as one string after /c.
+    List<String> args;
+    args.push_back("/c");
+    args.push_back("mklink /J \"" + junction_win + "\" \"" + target_win + "\"");
+
+    int exit_code = 0;
+    OS::get_singleton()->execute("cmd.exe", args, nullptr, &exit_code);
+    if (exit_code == 0) {
+        print_line(vformat("AI: Created chat junction: %s", junction_path));
+    } else {
+        WARN_PRINT(vformat("AI: mklink /J failed (exit %d) for '%s'.", exit_code, junction_path));
+    }
+#endif
 }
 
 void AI::finalize_singleton() {

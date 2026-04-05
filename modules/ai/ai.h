@@ -53,6 +53,7 @@ private:
 
 	void _connect_debugger_signals();
 	void _on_game_session_stopped();
+	void _setup_chat_junction();
 
 	// Journal
 	AIJournalWriter *_journal_writer = nullptr;

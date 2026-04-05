@@ -335,8 +335,8 @@ private:
 
 	// UI building methods
 	void _rebuild_message_list();
-	void _append_message_ui(const ChatMessage &p_message);
-	Control *_create_message_bubble(const ChatMessage &p_message);
+	void _append_message_ui(const HistoryItem &p_item);
+	Control *_create_message_bubble(const HistoryItem &p_item);
 	Control *_create_tool_result_ui(const Dictionary &p_tool_result);
 	void _append_tool_result_ui(const Dictionary &p_tool_result);
 	void _append_thinking_ui(const String &p_text);
@@ -384,10 +384,11 @@ private:
 	// Agentic orchestrator callbacks
 	void _on_orchestrator_started();
 	void _on_orchestrator_progress(const String &p_status, int p_turn);
+	void _on_orchestrator_assistant_item(const Dictionary &p_item);
 	void _on_orchestrator_tool_result(const Dictionary &p_tool_result);
 	void _on_orchestrator_complete(bool p_success, const String &p_final_message);
-	void _on_orchestrator_narration(const String &p_text);
-	void _on_orchestrator_thinking(const String &p_text);
+	void _on_orchestrator_narration(const String &p_text); // legacy no-op
+	void _on_orchestrator_thinking(const String &p_text); // legacy no-op
 	void _on_todos_updated(const Array &p_todos);
 	void _on_api_round_started(int p_turn);
 	void _on_turn_tokens_ready(int p_tokens);

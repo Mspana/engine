@@ -107,6 +107,9 @@ public:
 	// Get conversation history (for validation checks like read-before-write)
 	Array get_conversation_history() const;
 
+	// Inject a user message mid-run (appended before next model turn)
+	bool inject_user_message(const String &p_message);
+
 protected:
 	static void _bind_methods();
 
@@ -116,8 +119,14 @@ private:
 	bool _waiting_for_response = false;
 	Ref<AIProvider> provider;
 
+	// Pending user injection (mid-run message, consumed before next API call)
+	String _pending_user_injection;
+
 	// Pending response for deferred processing (avoids ProgressDialog issues)
 	Dictionary _pending_response;
+
+	// Tool calls from the current assistant response (needed for synthetic cancel)
+	Array _current_tool_calls;
 
 	// Async provider callback
 	void _on_provider_response(bool p_success, const String &p_response, const String &p_error);
