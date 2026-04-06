@@ -880,6 +880,9 @@ public:
 	void set_drop_mode_flags(int p_flags);
 	int get_drop_mode_flags() const;
 
+	void set_external_hover_position(const Point2 &p_pos);
+	void clear_external_hover();
+
 	void set_edit_checkbox_cell_only_when_checkbox_is_pressed(bool p_enable);
 	bool get_edit_checkbox_cell_only_when_checkbox_is_pressed() const;
 

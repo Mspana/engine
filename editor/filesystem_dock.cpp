@@ -510,6 +510,10 @@ void FileSystemDock::_notification(int p_what) {
 			EditorFileSystem::get_singleton()->connect("filesystem_changed", callable_mp(this, &FileSystemDock::_fs_changed));
 			EditorResourcePreview::get_singleton()->connect("preview_invalidated", callable_mp(this, &FileSystemDock::_preview_invalidated));
 
+			get_tree()->get_root()->connect("drag_enter", callable_mp(this, &FileSystemDock::_os_drag_enter));
+			get_tree()->get_root()->connect("drag_over", callable_mp(this, &FileSystemDock::_os_drag_over));
+			get_tree()->get_root()->connect("drag_leave", callable_mp(this, &FileSystemDock::_os_drag_leave));
+
 			button_file_list_display_mode->connect(SceneStringName(pressed), callable_mp(this, &FileSystemDock::_toggle_file_display));
 			files->connect("item_activated", callable_mp(this, &FileSystemDock::_file_list_activate_file));
 			button_hist_next->connect(SceneStringName(pressed), callable_mp(this, &FileSystemDock::_fw_history));
@@ -3077,6 +3081,28 @@ void FileSystemDock::drop_data_fw(const Point2 &p_point, const Variant &p_data, 
 		}
 		SceneTreeDock::get_singleton()->save_branch_to_file(to_dir);
 	}
+}
+
+void FileSystemDock::_os_drag_enter(const Vector2 &p_window_pos) {
+	if (!tree->is_visible_in_tree()) {
+		return;
+	}
+	tree->set_drop_mode_flags(Tree::DROP_MODE_ON_ITEM | Tree::DROP_MODE_INBETWEEN);
+	Vector2 tree_local = tree->get_global_transform().affine_inverse().xform(p_window_pos);
+	tree->set_external_hover_position(tree_local);
+}
+
+void FileSystemDock::_os_drag_over(const Vector2 &p_window_pos) {
+	if (!tree->is_visible_in_tree() || tree->get_drop_mode_flags() == 0) {
+		return;
+	}
+	Vector2 tree_local = tree->get_global_transform().affine_inverse().xform(p_window_pos);
+	tree->set_external_hover_position(tree_local);
+}
+
+void FileSystemDock::_os_drag_leave() {
+	tree->set_drop_mode_flags(0);
+	tree->clear_external_hover();
 }
 
 void FileSystemDock::_get_drag_target_folder(String &target, bool &target_favorites, const Point2 &p_point, Control *p_from) const {

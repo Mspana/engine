@@ -6326,6 +6326,19 @@ int Tree::get_drop_mode_flags() const {
 	return drop_mode_flags;
 }
 
+void Tree::set_external_hover_position(const Point2 &p_pos) {
+	hovered_pos = p_pos;
+	is_mouse_hovering = true;
+	_determine_hovered_item();
+}
+
+void Tree::clear_external_hover() {
+	is_mouse_hovering = false;
+	drop_mode_over = nullptr;
+	drop_mode_section = 0;
+	queue_redraw();
+}
+
 void Tree::set_edit_checkbox_cell_only_when_checkbox_is_pressed(bool p_enable) {
 	force_edit_checkbox_only_on_checkbox = p_enable;
 }

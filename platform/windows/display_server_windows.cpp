@@ -1919,6 +1919,27 @@ void DisplayServerWindows::window_set_drop_files_callback(const Callable &p_call
 	}
 }
 
+void DisplayServerWindows::window_set_drag_enter_callback(const Callable &p_callable, WindowID p_window) {
+	_THREAD_SAFE_METHOD_
+
+	ERR_FAIL_COND(!windows.has(p_window));
+	windows[p_window].drag_enter_callback = p_callable;
+}
+
+void DisplayServerWindows::window_set_drag_over_callback(const Callable &p_callable, WindowID p_window) {
+	_THREAD_SAFE_METHOD_
+
+	ERR_FAIL_COND(!windows.has(p_window));
+	windows[p_window].drag_over_callback = p_callable;
+}
+
+void DisplayServerWindows::window_set_drag_leave_callback(const Callable &p_callable, WindowID p_window) {
+	_THREAD_SAFE_METHOD_
+
+	ERR_FAIL_COND(!windows.has(p_window));
+	windows[p_window].drag_leave_callback = p_callable;
+}
+
 void DisplayServerWindows::window_set_title(const String &p_title, WindowID p_window) {
 	_THREAD_SAFE_METHOD_
 

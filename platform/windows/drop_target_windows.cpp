@@ -292,7 +292,6 @@ ULONG STDMETHODCALLTYPE DropTargetWindows::Release() {
 
 HRESULT STDMETHODCALLTYPE DropTargetWindows::DragEnter(IDataObject *pDataObj, DWORD grfKeyState, POINTL pt, DWORD *pdwEffect) {
 	(void)grfKeyState;
-	(void)pt;
 
 	FORMATETC hdrop_fmt = { CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
 	FORMATETC filedesc_fmt = { cf_filedescriptor, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
@@ -307,18 +306,43 @@ HRESULT STDMETHODCALLTYPE DropTargetWindows::DragEnter(IDataObject *pDataObj, DW
 		*pdwEffect = DROPEFFECT_NONE;
 	}
 
+	if (*pdwEffect != DROPEFFECT_NONE && window_data->drag_enter_callback.is_valid()) {
+		POINT client_pt = { pt.x, pt.y };
+		ScreenToClient(window_data->hWnd, &client_pt);
+		Variant pos = Vector2((real_t)client_pt.x, (real_t)client_pt.y);
+		const Variant *args[1] = { &pos };
+		Variant ret;
+		Callable::CallError ce;
+		window_data->drag_enter_callback.callp(args, 1, ret, ce);
+	}
+
 	return S_OK;
 }
 
 HRESULT STDMETHODCALLTYPE DropTargetWindows::DragOver(DWORD grfKeyState, POINTL pt, DWORD *pdwEffect) {
 	(void)grfKeyState;
-	(void)pt;
 
 	*pdwEffect = DROPEFFECT_COPY;
+
+	if (window_data->drag_over_callback.is_valid()) {
+		POINT client_pt = { pt.x, pt.y };
+		ScreenToClient(window_data->hWnd, &client_pt);
+		Variant pos = Vector2((real_t)client_pt.x, (real_t)client_pt.y);
+		const Variant *args[1] = { &pos };
+		Variant ret;
+		Callable::CallError ce;
+		window_data->drag_over_callback.callp(args, 1, ret, ce);
+	}
+
 	return S_OK;
 }
 
 HRESULT STDMETHODCALLTYPE DropTargetWindows::DragLeave() {
+	if (window_data->drag_leave_callback.is_valid()) {
+		Variant ret;
+		Callable::CallError ce;
+		window_data->drag_leave_callback.callp(nullptr, 0, ret, ce);
+	}
 	return S_OK;
 }
 
@@ -368,6 +392,13 @@ HRESULT STDMETHODCALLTYPE DropTargetWindows::Drop(IDataObject *pDataObj, DWORD g
 	if (ce.error != Callable::CallError::CALL_OK) {
 		ERR_PRINT(vformat("Failed to execute drop files callback: %s.", Variant::get_callable_error_text(window_data->drop_files_callback, v_args, 1, ce)));
 		return E_UNEXPECTED;
+	}
+
+	// Clear drag-hover visual state (Windows sends Drop instead of DragLeave, not both).
+	if (window_data->drag_leave_callback.is_valid()) {
+		Variant leave_ret;
+		Callable::CallError leave_ce;
+		window_data->drag_leave_callback.callp(nullptr, 0, leave_ret, leave_ce);
 	}
 
 	*pdwEffect = DROPEFFECT_COPY;

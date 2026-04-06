@@ -1335,6 +1335,9 @@ void Window::_update_window_callbacks() {
 	DisplayServer::get_singleton()->window_set_input_event_callback(callable_mp(this, &Window::_window_input), window_id);
 	DisplayServer::get_singleton()->window_set_input_text_callback(callable_mp(this, &Window::_window_input_text), window_id);
 	DisplayServer::get_singleton()->window_set_drop_files_callback(callable_mp(this, &Window::_window_drop_files), window_id);
+	DisplayServer::get_singleton()->window_set_drag_enter_callback(callable_mp(this, &Window::_window_drag_enter), window_id);
+	DisplayServer::get_singleton()->window_set_drag_over_callback(callable_mp(this, &Window::_window_drag_over), window_id);
+	DisplayServer::get_singleton()->window_set_drag_leave_callback(callable_mp(this, &Window::_window_drag_leave), window_id);
 }
 
 void Window::set_force_native(bool p_force_native) {
@@ -1818,6 +1821,18 @@ void Window::_window_input_text(const String &p_text) {
 
 void Window::_window_drop_files(const Vector<String> &p_files) {
 	emit_signal(SNAME("files_dropped"), p_files);
+}
+
+void Window::_window_drag_enter(const Vector2 &p_pos) {
+	emit_signal(SNAME("drag_enter"), p_pos);
+}
+
+void Window::_window_drag_over(const Vector2 &p_pos) {
+	emit_signal(SNAME("drag_over"), p_pos);
+}
+
+void Window::_window_drag_leave() {
+	emit_signal(SNAME("drag_leave"));
 }
 
 Viewport *Window::get_parent_viewport() const {
@@ -3254,6 +3269,9 @@ void Window::_bind_methods() {
 
 	ADD_SIGNAL(MethodInfo("window_input", PropertyInfo(Variant::OBJECT, "event", PROPERTY_HINT_RESOURCE_TYPE, "InputEvent")));
 	ADD_SIGNAL(MethodInfo("files_dropped", PropertyInfo(Variant::PACKED_STRING_ARRAY, "files")));
+	ADD_SIGNAL(MethodInfo("drag_enter", PropertyInfo(Variant::VECTOR2, "position")));
+	ADD_SIGNAL(MethodInfo("drag_over", PropertyInfo(Variant::VECTOR2, "position")));
+	ADD_SIGNAL(MethodInfo("drag_leave"));
 	ADD_SIGNAL(MethodInfo("mouse_entered"));
 	ADD_SIGNAL(MethodInfo("mouse_exited"));
 	ADD_SIGNAL(MethodInfo("focus_entered"));

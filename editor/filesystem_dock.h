@@ -340,6 +340,10 @@ private:
 	void drop_data_fw(const Point2 &p_point, const Variant &p_data, Control *p_from);
 	void _get_drag_target_folder(String &target, bool &target_favorites, const Point2 &p_point, Control *p_from) const;
 
+	void _os_drag_enter(const Vector2 &p_window_pos);
+	void _os_drag_over(const Vector2 &p_window_pos);
+	void _os_drag_leave();
+
 	void _preview_invalidated(const String &p_path);
 	void _file_list_thumbnail_done(const String &p_path, const Ref<Texture2D> &p_preview, const Ref<Texture2D> &p_small_preview, const Variant &p_udata);
 	void _tree_thumbnail_done(const String &p_path, const Ref<Texture2D> &p_preview, const Ref<Texture2D> &p_small_preview, const Variant &p_udata);
