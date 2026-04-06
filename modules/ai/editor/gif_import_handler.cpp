@@ -36,6 +36,7 @@
 #include "core/os/os.h"
 #include "editor/editor_file_system.h"
 #include "editor/editor_node.h"
+#include "editor/filesystem_dock.h"
 #include "scene/gui/box_container.h"
 #include "scene/gui/margin_container.h"
 
@@ -476,7 +477,6 @@ bool load_frames(const PackedByteArray &p_gif_data, int &r_canvas_w, int &r_canv
 // ============================================================================
 
 void GIFImportHandler::_bind_methods() {
-	ClassDB::bind_method(D_METHOD("_on_filesystem_changed"), &GIFImportHandler::_on_filesystem_changed);
 	ClassDB::bind_method(D_METHOD("_on_convert_confirmed"), &GIFImportHandler::_on_convert_confirmed);
 	ClassDB::bind_method(D_METHOD("_on_convert_cancelled"), &GIFImportHandler::_on_convert_cancelled);
 }
@@ -484,75 +484,48 @@ void GIFImportHandler::_bind_methods() {
 void GIFImportHandler::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_ENTER_TREE: {
-			EditorFileSystem *efs = EditorFileSystem::get_singleton();
-			if (efs && !efs->is_connected("filesystem_changed", callable_mp(this, &GIFImportHandler::_on_filesystem_changed))) {
-				efs->connect("filesystem_changed", callable_mp(this, &GIFImportHandler::_on_filesystem_changed));
+			Window *root = get_tree()->get_root();
+			if (root && !root->is_connected("files_dropped", callable_mp(this, &GIFImportHandler::_on_files_dropped))) {
+				root->connect("files_dropped", callable_mp(this, &GIFImportHandler::_on_files_dropped));
 			}
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
-			EditorFileSystem *efs = EditorFileSystem::get_singleton();
-			if (efs && efs->is_connected("filesystem_changed", callable_mp(this, &GIFImportHandler::_on_filesystem_changed))) {
-				efs->disconnect("filesystem_changed", callable_mp(this, &GIFImportHandler::_on_filesystem_changed));
+			Window *root = get_tree()->get_root();
+			if (root && root->is_connected("files_dropped", callable_mp(this, &GIFImportHandler::_on_files_dropped))) {
+				root->disconnect("files_dropped", callable_mp(this, &GIFImportHandler::_on_files_dropped));
 			}
 		} break;
 	}
 }
 
-void GIFImportHandler::_collect_gif_files(HashSet<String> &r_paths) {
-	EditorFileSystem *efs = EditorFileSystem::get_singleton();
-	if (!efs) {
+void GIFImportHandler::_on_files_dropped(const PackedStringArray &p_files) {
+	// Check if any dropped files are GIFs
+	String first_gif;
+	for (int i = 0; i < p_files.size(); i++) {
+		if (p_files[i].get_extension().to_lower() == "gif") {
+			first_gif = p_files[i];
+			break;
+		}
+	}
+	if (first_gif.is_empty()) {
 		return;
 	}
-	EditorFileSystemDirectory *root = efs->get_filesystem();
-	if (!root) {
-		return;
+
+	// EditorNode::_dropped_files copies files to the project directory.
+	// Resolve the project-local path where the GIF was copied.
+	String to_dir = FileSystemDock::get_singleton()->get_folder_path_at_mouse_position();
+	if (to_dir.is_empty()) {
+		to_dir = FileSystemDock::get_singleton()->get_current_directory();
 	}
+	_pending_gif_path = to_dir.path_join(first_gif.get_file());
 
-	// Recursive walk via a stack
-	Vector<EditorFileSystemDirectory *> stack;
-	stack.push_back(root);
-
-	while (!stack.is_empty()) {
-		EditorFileSystemDirectory *dir = stack[stack.size() - 1];
-		stack.resize(stack.size() - 1);
-
-		for (int i = 0; i < dir->get_file_count(); ++i) {
-			String name = dir->get_file(i);
-			if (name.get_extension().to_lower() == "gif") {
-				r_paths.insert(dir->get_file_path(i));
-			}
-		}
-		for (int i = 0; i < dir->get_subdir_count(); ++i) {
-			stack.push_back(dir->get_subdir(i));
-		}
+	if (_dialog_label) {
+		_dialog_label->set_text(
+				TTR("GIFs are not natively supported in Godot. Convert to a sprite sheet?\n\n") +
+				_pending_gif_path);
 	}
-}
-
-void GIFImportHandler::_on_filesystem_changed() {
-	// Find any .gif files we haven't seen yet
-	HashSet<String> current_gifs;
-	_collect_gif_files(current_gifs);
-
-	String first_new;
-	for (const String &path : current_gifs) {
-		if (!_seen_gifs.has(path)) {
-			_seen_gifs.insert(path);
-			if (first_new.is_empty()) {
-				first_new = path;
-			}
-		}
-	}
-
-	if (!first_new.is_empty()) {
-		_pending_gif_path = first_new;
-		if (_dialog_label) {
-			_dialog_label->set_text(
-					TTR("GIFs are not supported. Would you like to convert your file to a sprite sheet?\n\n") +
-					first_new);
-		}
-		if (_dialog) {
-			_dialog->popup_centered();
-		}
+	if (_dialog) {
+		_dialog->popup_centered();
 	}
 }
 
@@ -563,7 +536,17 @@ void GIFImportHandler::_on_convert_confirmed() {
 	String out = _convert_gif_to_spritesheet(_pending_gif_path);
 	if (!out.is_empty()) {
 		print_line(vformat("GIF Import: Converted '%s' → '%s'", _pending_gif_path, out));
-		// Rescan so the new PNG appears in the filesystem
+		// Delete the source .gif — it can't be used in Godot
+		String gif_abs = ProjectSettings::get_singleton()->globalize_path(_pending_gif_path);
+		Ref<DirAccess> da = DirAccess::create(DirAccess::ACCESS_FILESYSTEM);
+		if (da.is_valid() && da->file_exists(gif_abs)) {
+			da->remove(gif_abs);
+			// Also remove the .import file Godot may have created
+			if (da->file_exists(gif_abs + ".import")) {
+				da->remove(gif_abs + ".import");
+			}
+		}
+		// Rescan so the new PNG appears and the deleted GIF disappears
 		EditorFileSystem::get_singleton()->scan_changes();
 	} else {
 		ERR_PRINT(vformat("GIF Import: Conversion failed for '%s'", _pending_gif_path));
@@ -648,7 +631,6 @@ GIFImportHandler::GIFImportHandler() {
 	_dialog = memnew(ConfirmationDialog);
 	_dialog->set_title(TTR("GIF Not Supported"));
 	_dialog->get_ok_button()->set_text(TTR("Convert GIF"));
-	_dialog->add_cancel_button(TTR("Cancel"));
 	_dialog->connect("confirmed", callable_mp(this, &GIFImportHandler::_on_convert_confirmed));
 	_dialog->connect("canceled", callable_mp(this, &GIFImportHandler::_on_convert_cancelled));
 

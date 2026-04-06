@@ -35,11 +35,10 @@
 #include "scene/gui/dialogs.h"
 #include "scene/gui/label.h"
 #include "scene/gui/button.h"
-#include "core/templates/hash_set.h"
 #include "core/io/image.h"
 
-// Listens for new .gif files in the project filesystem and offers
-// to convert them to a sprite-sheet PNG.
+// Detects .gif files dropped into the editor and offers to convert
+// them to a horizontal sprite-sheet PNG.
 class GIFImportHandler : public EditorPlugin {
 	GDCLASS(GIFImportHandler, EditorPlugin);
 
@@ -47,17 +46,11 @@ class GIFImportHandler : public EditorPlugin {
 	ConfirmationDialog *_dialog = nullptr;
 	Label *_dialog_label = nullptr;
 
-	// Pending gif path for the active dialog
+	// Pending gif path (res:// project-local) for the active dialog
 	String _pending_gif_path;
 
-	// Gif paths we've already prompted about this session (avoid re-prompting)
-	HashSet<String> _seen_gifs;
-
-	// Walk EditorFileSystem and collect all .gif res:// paths
-	void _collect_gif_files(HashSet<String> &r_paths);
-
-	// Check for newly added .gif files and prompt if found
-	void _on_filesystem_changed();
+	// Called when files are dropped onto the editor window from the OS
+	void _on_files_dropped(const PackedStringArray &p_files);
 
 	// Dialog callbacks
 	void _on_convert_confirmed();
