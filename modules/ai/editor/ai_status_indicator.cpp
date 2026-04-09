@@ -942,6 +942,11 @@ void AIStatusPanel::_rebuild_message_list() {
 		// Pairing map: tool_call_id → ToolCollapsibleEntry* (to update when tool result arrives)
 		HashMap<String, ToolCollapsibleEntry *> pending_tool_entries;
 
+		// Track API round boundaries for separators and token totals.
+		// A new round starts when we see an assistant item after tool results.
+		int round_token_total = 0;
+		bool seen_tools_in_round = false; // true once we've processed tool results in the current round
+
 		for (int i = 0; i < items.size(); i++) {
 			const HistoryItem &item = items[i];
 
@@ -952,12 +957,41 @@ void AIStatusPanel::_rebuild_message_list() {
 			String role = item.role();
 
 			if (role == "user") {
+				// A user message after tool results means the previous run ended.
+				// Insert the final token total for that run.
+				if (seen_tools_in_round && round_token_total > 0) {
+					_insert_token_total_label_into(message_list, round_token_total);
+				}
+				round_token_total = 0;
+				seen_tools_in_round = false;
+
 				Control *bubble = _create_message_bubble(item);
 				if (bubble) {
 					message_list->add_child(bubble);
 				}
 
 			} else if (role == "assistant") {
+				// If we've seen tool results already, this is a new API round.
+				// Insert token total + separator for the previous round.
+				if (seen_tools_in_round) {
+					if (round_token_total > 0) {
+						_insert_token_total_label_into(message_list, round_token_total);
+					}
+					round_token_total = 0;
+					seen_tools_in_round = false;
+
+					// Visual divider between API rounds (matches live separator style)
+					HSeparator *sep = memnew(HSeparator);
+					sep->set_h_size_flags(SIZE_EXPAND_FILL);
+					Ref<StyleBoxLine> style;
+					style.instantiate();
+					style->set_color(Color(1, 1, 1, 0.08f));
+					style->set_thickness(1);
+					sep->add_theme_style_override("separator", style);
+					sep->add_theme_constant_override("separation", 6);
+					message_list->add_child(sep);
+				}
+
 				// Render text blocks as assistant bubble (one bubble per assistant item)
 				Array content = item.data.get("content", Array());
 				for (int j = 0; j < content.size(); j++) {
@@ -1005,6 +1039,17 @@ void AIStatusPanel::_rebuild_message_list() {
 				String call_id = item.data.get("tool_call_id", "");
 				Dictionary content_dict = item.data.get("content", Dictionary());
 
+				// Estimate tokens for this tool result (same heuristic as orchestrator)
+				int tokens;
+				String tn = content_dict.get("tool_name", "");
+				if (tn == "run_and_screenshot") {
+					tokens = 1000;
+				} else {
+					tokens = JSON::stringify(content_dict).length() / 4;
+				}
+				round_token_total += tokens;
+				seen_tools_in_round = true;
+
 				// Build display dict from canonical tool item
 				Dictionary display;
 				String tool_name = content_dict.get("tool_name", "");
@@ -1028,7 +1073,7 @@ void AIStatusPanel::_rebuild_message_list() {
 				if (content_dict.has("error")) {
 					display["error"] = content_dict["error"];
 				}
-				display["tokens"] = 0;
+				display["tokens"] = tokens;
 
 				// Update paired entry if found, otherwise create standalone
 				if (!call_id.is_empty() && pending_tool_entries.has(call_id)) {
@@ -1041,6 +1086,11 @@ void AIStatusPanel::_rebuild_message_list() {
 					}
 				}
 			}
+		}
+
+		// Insert final token total for the last round (run ended without another user/assistant message)
+		if (seen_tools_in_round && round_token_total > 0) {
+			_insert_token_total_label_into(message_list, round_token_total);
 		}
 	}
 
@@ -2163,29 +2213,31 @@ void AIStatusPanel::_on_turn_tokens_ready(int p_tokens) {
 	_last_turn_tokens = p_tokens;
 }
 
-void AIStatusPanel::_insert_token_total_label() {
-	// Prefer the actual API-reported total_tokens; fall back to our per-tool estimates.
-	int total = _last_turn_tokens > 0 ? _last_turn_tokens : _run_token_total;
-	if (total <= 0 || !message_list) {
+void AIStatusPanel::_insert_token_total_label_into(VBoxContainer *p_list, int p_total, Control *p_before) {
+	if (p_total <= 0 || !p_list) {
 		return;
 	}
 	String text;
-	if (total >= 10000) {
-		text = vformat("Total: %dk", total / 1000);
+	if (p_total >= 10000) {
+		text = vformat("Total: %dk", p_total / 1000);
 	} else {
-		text = vformat("Total: %d", total);
+		text = vformat("Total: %d", p_total);
 	}
 	Label *lbl = memnew(Label);
 	lbl->set_text(text);
 	lbl->set_h_size_flags(SIZE_EXPAND_FILL);
 	lbl->set_horizontal_alignment(HORIZONTAL_ALIGNMENT_RIGHT);
 	lbl->add_theme_color_override("font_color", AIColors::TEXT_MUTED);
-	if (pending_message) {
-		message_list->add_child(lbl);
-		message_list->move_child(lbl, pending_message->get_index());
-	} else {
-		message_list->add_child(lbl);
+	p_list->add_child(lbl);
+	if (p_before) {
+		p_list->move_child(lbl, p_before->get_index());
 	}
+}
+
+void AIStatusPanel::_insert_token_total_label() {
+	// Prefer the actual API-reported total_tokens; fall back to our per-tool estimates.
+	int total = _last_turn_tokens > 0 ? _last_turn_tokens : _run_token_total;
+	_insert_token_total_label_into(message_list, total, pending_message);
 }
 
 void AIStatusPanel::_on_token_toggle_pressed() {

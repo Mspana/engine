@@ -363,6 +363,7 @@ private:
 	// Token count toggle
 	void _on_token_toggle_pressed();
 	void _insert_token_total_label();
+	static void _insert_token_total_label_into(VBoxContainer *p_list, int p_total, Control *p_before = nullptr);
 
 	// Multi-chat management
 	void _new_chat();
