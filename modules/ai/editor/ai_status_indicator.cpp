@@ -504,162 +504,140 @@ ToolCollapsibleEntry::ToolCollapsibleEntry() {
 // ============================================================================
 
 void DebugContextPill::_bind_methods() {
-	ClassDB::bind_method(D_METHOD("_on_click_area_input", "event"), &DebugContextPill::_on_click_area_input);
-	ClassDB::bind_method(D_METHOD("_on_dropdown_pressed"), &DebugContextPill::_on_dropdown_pressed);
 	ADD_SIGNAL(MethodInfo("enabled_changed", PropertyInfo(Variant::BOOL, "enabled")));
 }
 
 void DebugContextPill::_rebuild_label() {
-	if (!_main_label) {
+	if (!_main_label || !_toggle_btn) {
 		return;
 	}
-	String text;
-	String tag_open = _enabled ? "" : "[s][color=#808080]";
-	String tag_close = _enabled ? "" : "[/color][/s]";
 
-	if (_error_count > 0) {
-		text += tag_open + vformat("Including Debug Session Errors (%d)", _error_count) + tag_close + "\n";
+	// Build counts string: "N errors, M warnings" / "N errors" / "M warnings"
+	String counts;
+	if (_error_count > 0 && _warning_count > 0) {
+		counts = vformat("%d error%s, %d warning%s",
+				_error_count, _error_count == 1 ? "" : "s",
+				_warning_count, _warning_count == 1 ? "" : "s");
+	} else if (_error_count > 0) {
+		counts = vformat("%d error%s", _error_count, _error_count == 1 ? "" : "s");
+	} else {
+		counts = vformat("%d warning%s", _warning_count, _warning_count == 1 ? "" : "s");
 	}
-	if (_game_running) {
-		text += tag_open + "Current State: Running Debug Session" + tag_close;
-	} else if (_error_count == 0) {
-		text += tag_open + "No Errors" + tag_close;
-	}
-	_main_label->set_text(text.strip_edges());
 
-	// Show dropdown only when there are errors to expand
-	if (_dropdown_btn) {
-		_dropdown_btn->set_visible(_error_count > 0);
-	}
+	// Use fixed-width prefix so the count doesn't shift when toggling
+	// "Excluding" is 9 chars, "Including" is 9 chars — same length, no shift
+	String prefix = _enabled ? "Including" : "Excluding";
+	_main_label->set_text(vformat("%s  %s", prefix, counts));
+
+	_toggle_btn->set_text(_enabled ? "exclude" : "include");
+
+	// Swap styles
+	_pill_container->add_theme_style_override("panel", _enabled ? _style_enabled : _style_disabled);
+	Color text_color = _enabled ? Color(1.0f, 0.5f, 0.45f, 1.0f) : Color(0.6f, 0.6f, 0.6f, 1.0f);
+	_main_label->add_theme_color_override("default_color", text_color);
+	_toggle_btn->add_theme_color_override("font_color", text_color);
+	_toggle_btn->add_theme_color_override("font_hover_color", text_color);
+	_toggle_btn->add_theme_color_override("font_pressed_color", text_color);
 }
 
-void DebugContextPill::_on_click_area_input(const Ref<InputEvent> &p_event) {
-	Ref<InputEventMouseButton> mb = p_event;
-	if (mb.is_valid() && mb->get_button_index() == MouseButton::LEFT && mb->is_pressed()) {
-		_enabled = !_enabled;
-		_rebuild_label();
-		emit_signal("enabled_changed", _enabled);
-	}
+void DebugContextPill::_on_toggle_pressed() {
+	_enabled = !_enabled;
+	_rebuild_label();
+	emit_signal("enabled_changed", _enabled);
 }
 
-void DebugContextPill::_on_dropdown_pressed() {
-	_expanded = !_expanded;
-	if (_error_details) {
-		_error_details->set_visible(_expanded);
-	}
-	_dropdown_btn->set_text(_expanded ? String::utf8("\xe2\x96\xbe") : String::utf8("\xe2\x96\xb8"));
-}
-
-void DebugContextPill::update_state(bool p_game_running, int p_error_count, const String &p_errors) {
+void DebugContextPill::update_state(bool p_game_running, int p_error_count, int p_warning_count) {
 	_game_running = p_game_running;
 	_error_count = p_error_count;
-	_errors_text = p_errors;
+	_warning_count = p_warning_count;
 
-	// Show/hide pill based on whether there's anything to show
-	set_visible(_error_count > 0 || _game_running);
-
-	// Update error detail text
-	if (_error_label) {
-		_error_label->set_text(_errors_text.is_empty() ? "No error details." : _errors_text);
-	}
-	// Collapse if errors cleared
-	if (_error_count == 0 && _expanded) {
-		_expanded = false;
-		if (_error_details) {
-			_error_details->set_visible(false);
-		}
-		if (_dropdown_btn) {
-			_dropdown_btn->set_text(String::utf8("\xe2\x96\xb8"));
-		}
-	}
+	set_visible((_error_count + _warning_count) > 0);
 	_rebuild_label();
 }
 
 String DebugContextPill::get_context_summary() const {
-	String text;
-	if (_error_count > 0) {
-		text += vformat("Including Debug Session Errors (%d)\n", _error_count);
+	if (_error_count == 0 && _warning_count == 0) {
+		return String();
 	}
-	if (_game_running) {
-		text += "Current State: Running Debug Session\n";
+	String counts;
+	if (_error_count > 0 && _warning_count > 0) {
+		counts = vformat("%d error%s, %d warning%s",
+				_error_count, _error_count == 1 ? "" : "s",
+				_warning_count, _warning_count == 1 ? "" : "s");
+	} else if (_error_count > 0) {
+		counts = vformat("%d error%s", _error_count, _error_count == 1 ? "" : "s");
+	} else {
+		counts = vformat("%d warning%s", _warning_count, _warning_count == 1 ? "" : "s");
 	}
-	if (!_errors_text.is_empty()) {
-		text += "\n" + _errors_text;
-	}
-	return text.strip_edges();
+	return vformat("Including  %s", counts);
 }
 
 DebugContextPill::DebugContextPill() {
-	set_visible(false); // Hidden until there's something to show
-
-	// Outer margin
+	set_visible(false);
 	add_theme_constant_override("separation", 0);
+
+	// Pre-build enabled/disabled styles
+	_style_enabled.instantiate();
+	_style_enabled->set_bg_color(Color(0.0f, 0.0f, 0.0f, 0.0f));
+	_style_enabled->set_border_width_all(1);
+	_style_enabled->set_border_color(Color(0.7f, 0.3f, 0.3f, 0.6f));
+	_style_enabled->set_corner_radius_all(6 * EDSCALE);
+	_style_enabled->set_content_margin_all(6 * EDSCALE);
+
+	_style_disabled.instantiate();
+	_style_disabled->set_bg_color(Color(0.0f, 0.0f, 0.0f, 0.0f));
+	_style_disabled->set_border_width_all(1);
+	_style_disabled->set_border_color(Color(0.4f, 0.4f, 0.4f, 0.4f));
+	_style_disabled->set_corner_radius_all(6 * EDSCALE);
+	_style_disabled->set_content_margin_all(6 * EDSCALE);
 
 	// Main pill panel
 	_pill_container = memnew(PanelContainer);
-	Ref<StyleBoxFlat> pill_style;
-	pill_style.instantiate();
-	pill_style->set_bg_color(Color(0.18f, 0.22f, 0.28f, 1.0f));
-	pill_style->set_border_width_all(1);
-	pill_style->set_border_color(Color(0.35f, 0.5f, 0.7f, 0.6f));
-	pill_style->set_corner_radius_all(6 * EDSCALE);
-	pill_style->set_content_margin_all(6 * EDSCALE);
-	_pill_container->add_theme_style_override("panel", pill_style);
+	_pill_container->add_theme_style_override("panel", _style_enabled);
 	add_child(_pill_container);
 
-	// Header row inside pill
+	// Header row
 	_header_row = memnew(HBoxContainer);
 	_header_row->set_h_size_flags(SIZE_EXPAND_FILL);
 	_pill_container->add_child(_header_row);
 
-	// Clickable area (left side) — a HBoxContainer so label sizes correctly
-	HBoxContainer *click_hbox = memnew(HBoxContainer);
-	click_hbox->set_h_size_flags(SIZE_EXPAND_FILL);
-	click_hbox->set_mouse_filter(MOUSE_FILTER_STOP);
-	click_hbox->connect("gui_input", callable_mp(this, &DebugContextPill::_on_click_area_input));
-	_header_row->add_child(click_hbox);
-	_click_area = click_hbox;
-
+	// Label (left side)
 	_main_label = memnew(RichTextLabel);
-	_main_label->set_use_bbcode(true);
+	_main_label->set_use_bbcode(false);
 	_main_label->set_fit_content(true);
 	_main_label->set_scroll_active(false);
 	_main_label->set_h_size_flags(SIZE_EXPAND_FILL);
+	_main_label->set_v_size_flags(SIZE_SHRINK_CENTER);
 	_main_label->set_mouse_filter(MOUSE_FILTER_IGNORE);
-	_main_label->add_theme_color_override("default_color", Color(0.7f, 0.85f, 1.0f, 1.0f));
+	_main_label->add_theme_color_override("default_color", Color(1.0f, 0.5f, 0.45f, 1.0f));
 	_main_label->add_theme_font_size_override("normal_font_size", 11 * EDSCALE);
-	click_hbox->add_child(_main_label);
+	_header_row->add_child(_main_label);
 
-	// Dropdown button (right side) — expands error details
-	_dropdown_btn = memnew(Button);
-	_dropdown_btn->set_text(String::utf8("\xe2\x96\xb8"));
-	_dropdown_btn->set_flat(true);
-	_dropdown_btn->set_visible(false);
-	_dropdown_btn->add_theme_color_override("font_color", Color(0.7f, 0.85f, 1.0f, 0.7f));
-	_dropdown_btn->connect(SceneStringNames::get_singleton()->pressed, callable_mp(this, &DebugContextPill::_on_dropdown_pressed));
-	_header_row->add_child(_dropdown_btn);
+	// Toggle button (right side)
+	_toggle_btn = memnew(Button);
+	_toggle_btn->set_text("exclude");
+	_toggle_btn->set_v_size_flags(SIZE_SHRINK_CENTER);
+	_toggle_btn->add_theme_color_override("font_color", Color(1.0f, 0.5f, 0.45f, 1.0f));
+	_toggle_btn->add_theme_color_override("font_hover_color", Color(1.0f, 0.5f, 0.45f, 1.0f));
+	_toggle_btn->add_theme_color_override("font_pressed_color", Color(1.0f, 0.5f, 0.45f, 1.0f));
+	_toggle_btn->add_theme_font_size_override("font_size", 11 * EDSCALE);
 
-	// Error details panel (collapsed by default)
-	_error_details = memnew(VBoxContainer);
-	_error_details->set_visible(false);
-	_error_details->add_theme_constant_override("separation", 2 * EDSCALE);
-	add_child(_error_details);
-
-	HSeparator *sep = memnew(HSeparator);
-	Ref<StyleBoxLine> sep_style;
-	sep_style.instantiate();
-	sep_style->set_color(Color(0.35f, 0.5f, 0.7f, 0.4f));
-	sep->add_theme_style_override("separator", sep_style);
-	_error_details->add_child(sep);
-
-	_error_label = memnew(RichTextLabel);
-	_error_label->set_use_bbcode(false);
-	_error_label->set_fit_content(true);
-	_error_label->set_scroll_active(false);
-	_error_label->set_h_size_flags(SIZE_EXPAND_FILL);
-	_error_label->add_theme_color_override("default_color", Color(1.0f, 0.6f, 0.5f, 0.9f));
-	_error_label->add_theme_font_size_override("normal_font_size", 10 * EDSCALE);
-	_error_details->add_child(_error_label);
+	// Red outlined style for the button
+	Ref<StyleBoxFlat> btn_style;
+	btn_style.instantiate();
+	btn_style->set_bg_color(Color(0.0f, 0.0f, 0.0f, 0.0f));
+	btn_style->set_border_width_all(1);
+	btn_style->set_border_color(Color(0.7f, 0.3f, 0.3f, 0.6f));
+	btn_style->set_corner_radius_all(4 * EDSCALE);
+	btn_style->set_content_margin(SIDE_LEFT, 8 * EDSCALE);
+	btn_style->set_content_margin(SIDE_RIGHT, 8 * EDSCALE);
+	btn_style->set_content_margin(SIDE_TOP, 2 * EDSCALE);
+	btn_style->set_content_margin(SIDE_BOTTOM, 2 * EDSCALE);
+	_toggle_btn->add_theme_style_override("normal", btn_style);
+	_toggle_btn->add_theme_style_override("hover", btn_style);
+	_toggle_btn->add_theme_style_override("pressed", btn_style);
+	_toggle_btn->connect(SceneStringNames::get_singleton()->pressed, callable_mp(this, &DebugContextPill::_on_toggle_pressed));
+	_header_row->add_child(_toggle_btn);
 }
 
 // ============================================================================
@@ -848,6 +826,11 @@ void AIStatusPanel::_notification(int p_what) {
 			}
 			// Initial connectivity check
 			check_api_connectivity();
+
+			// Start the debug pill polling timer now that we're in the tree
+			if (debug_pill_update_timer) {
+				debug_pill_update_timer->start();
+			}
 
 			// Track scroll position (user scrolls) and range changes (content added)
 			ScrollBar *vbar = transcript_scroll->get_v_scroll_bar();
@@ -2630,7 +2613,7 @@ void AIStatusPanel::_update_debug_pill() {
 #ifdef TOOLS_ENABLED
 	bool game_running = false;
 	int error_count = 0;
-	String errors_text;
+	int warning_count = 0;
 
 	EditorRunBar *run_bar = EditorRunBar::get_singleton();
 	if (run_bar) {
@@ -2641,12 +2624,10 @@ void AIStatusPanel::_update_debug_pill() {
 		ScriptEditorDebugger *dbg = edn->get_default_debugger();
 		if (dbg) {
 			error_count = dbg->get_error_count();
-			if (error_count > 0) {
-				errors_text = dbg->get_errors_text();
-			}
+			warning_count = dbg->get_warning_count();
 		}
 	}
-	debug_pill->update_state(game_running, error_count, errors_text);
+	debug_pill->update_state(game_running, error_count, warning_count);
 #endif
 }
 
@@ -2674,13 +2655,13 @@ Control *AIStatusPanel::_create_debug_context_bubble() {
 		return nullptr;
 	}
 
-	// Styled bubble matching the pill look but non-interactive
+	// Styled bubble matching the pill's red scheme but non-interactive
 	PanelContainer *bubble = memnew(PanelContainer);
 	Ref<StyleBoxFlat> style;
 	style.instantiate();
-	style->set_bg_color(Color(0.18f, 0.22f, 0.28f, 1.0f));
+	style->set_bg_color(Color(0.28f, 0.16f, 0.16f, 1.0f));
 	style->set_border_width_all(1);
-	style->set_border_color(Color(0.35f, 0.5f, 0.7f, 0.6f));
+	style->set_border_color(Color(0.7f, 0.3f, 0.3f, 0.6f));
 	style->set_corner_radius_all(6 * EDSCALE);
 	style->set_content_margin_all(8 * EDSCALE);
 	bubble->add_theme_style_override("panel", style);
@@ -2692,7 +2673,7 @@ Control *AIStatusPanel::_create_debug_context_bubble() {
 	label->set_scroll_active(false);
 	label->set_h_size_flags(SIZE_EXPAND_FILL);
 	label->set_mouse_filter(MOUSE_FILTER_IGNORE);
-	label->add_theme_color_override("default_color", Color(0.7f, 0.85f, 1.0f, 1.0f));
+	label->add_theme_color_override("default_color", Color(1.0f, 0.5f, 0.45f, 1.0f));
 	label->add_theme_font_size_override("normal_font_size", 11 * EDSCALE);
 	label->set_text(summary);
 	bubble->add_child(label);
@@ -3685,7 +3666,7 @@ AIStatusPanel::AIStatusPanel() {
 	debug_pill_update_timer->set_one_shot(false);
 	debug_pill_update_timer->connect("timeout", callable_mp(this, &AIStatusPanel::_on_debug_pill_update_tick));
 	add_child(debug_pill_update_timer);
-	debug_pill_update_timer->start();
+	// start() is deferred to NOTIFICATION_READY so the timer is in the scene tree
 
 	// Image preview strip (hidden when empty)
 	// ========================================

@@ -142,29 +142,27 @@ class DebugContextPill : public VBoxContainer {
 
 	PanelContainer *_pill_container = nullptr;
 	HBoxContainer *_header_row = nullptr;
-	HBoxContainer *_click_area = nullptr;
 	RichTextLabel *_main_label = nullptr;
-	Button *_dropdown_btn = nullptr;
-	VBoxContainer *_error_details = nullptr;
-	RichTextLabel *_error_label = nullptr;
+	Button *_toggle_btn = nullptr;
+
+	Ref<StyleBoxFlat> _style_enabled;
+	Ref<StyleBoxFlat> _style_disabled;
 
 	bool _enabled = true;
-	bool _expanded = false;
 	int _error_count = 0;
-	String _errors_text;
+	int _warning_count = 0;
 	bool _game_running = false;
 
-	void _on_click_area_input(const Ref<InputEvent> &p_event);
-	void _on_dropdown_pressed();
+	void _on_toggle_pressed();
 	void _rebuild_label();
 
 protected:
 	static void _bind_methods();
 
 public:
-	void update_state(bool p_game_running, int p_error_count, const String &p_errors);
+	void update_state(bool p_game_running, int p_error_count, int p_warning_count);
 	bool is_enabled() const { return _enabled; }
-	bool has_content() const { return _error_count > 0 || _game_running; }
+	bool has_content() const { return (_error_count + _warning_count) > 0; }
 	String get_context_summary() const;
 	DebugContextPill();
 };
