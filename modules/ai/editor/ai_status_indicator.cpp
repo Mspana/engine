@@ -2520,6 +2520,34 @@ void AIStatusPanel::_show_history_popup() {
 	history_popup->popup();
 }
 
+void AIStatusPanel::_on_drag_handle_gui_input(const Ref<InputEvent> &p_event) {
+	Ref<InputEventMouseButton> mb = p_event;
+	if (mb.is_valid() && mb->get_button_index() == MouseButton::LEFT) {
+		if (mb->is_pressed()) {
+			_dragging_input = true;
+			_drag_start_y = mb->get_global_position().y;
+			_drag_start_height = prompt_edit->get_custom_minimum_size().y;
+			input_drag_handle->accept_event();
+		} else {
+			_dragging_input = false;
+		}
+		return;
+	}
+
+	Ref<InputEventMouseMotion> mm = p_event;
+	if (mm.is_valid() && _dragging_input) {
+		float delta = _drag_start_y - mm->get_global_position().y; // drag up = bigger
+		float new_height = _drag_start_height + delta;
+
+		float min_h = 60 * EDSCALE;
+		float max_h = get_size().y * 0.5f;
+		new_height = CLAMP(new_height, min_h, max_h);
+
+		prompt_edit->set_custom_minimum_size(Size2(0, new_height));
+		input_drag_handle->accept_event();
+	}
+}
+
 void AIStatusPanel::_on_prompt_text_changed() {
 	_update_send_button_state();
 }
@@ -3722,7 +3750,7 @@ AIStatusPanel::AIStatusPanel() {
 
 	// Token count toggle button
 	token_toggle_button = memnew(Button);
-	token_toggle_button->set_text(TTR("tok"));
+	token_toggle_button->set_text(TTR("Tokens"));
 	token_toggle_button->set_flat(true);
 	token_toggle_button->set_toggle_mode(true);
 	token_toggle_button->set_tooltip_text(TTR("Toggle token counts on tool results"));
@@ -3846,6 +3874,15 @@ AIStatusPanel::AIStatusPanel() {
 	image_preview_strip->add_theme_constant_override("separation", AIColors::PADDING_XS * EDSCALE);
 	image_preview_strip->set_visible(false);
 	add_child(image_preview_strip);
+
+	// ========================================
+	// Drag handle for resizing input box
+	// ========================================
+	input_drag_handle = memnew(Control);
+	input_drag_handle->set_custom_minimum_size(Size2(0, 6 * EDSCALE));
+	input_drag_handle->set_default_cursor_shape(Control::CURSOR_VSIZE);
+	input_drag_handle->connect("gui_input", callable_mp(this, &AIStatusPanel::_on_drag_handle_gui_input));
+	add_child(input_drag_handle);
 
 	// ========================================
 	// Input bar (bottom)

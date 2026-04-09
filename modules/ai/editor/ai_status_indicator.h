@@ -226,6 +226,11 @@ private:
 	// Input area
 	TextEdit *prompt_edit = nullptr;
 	Button *send_button = nullptr;  // Toggles between Send/Stop
+	Control *input_drag_handle = nullptr;
+	bool _dragging_input = false;
+	float _drag_start_y = 0;
+	float _drag_start_height = 0;
+	void _on_drag_handle_gui_input(const Ref<InputEvent> &p_event);
 
 	// Chat toolbar (top of panel)
 	HBoxContainer *chat_toolbar = nullptr;
