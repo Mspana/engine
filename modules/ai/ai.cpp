@@ -51,7 +51,7 @@ static const Vector<String> ALLOWED_ACTIONS = {
     "create_script","update_script","attach_script","detach_script","rename_script","delete_script",
     "connect_signal","disconnect_signal","run_project","play_test",
     "rename_node","reparent_node","create_scene","open_scene","save_scene","close_scene","set_main_scene",
-    "get_node_info","find_nodes_by_type","list_nodes","list_files","read_script","set_project_setting","get_project_settings","create_autoload_singleton","remove_autoload_singleton","import_asset","delete_asset",
+    "get_node_info","find_nodes_by_type","list_nodes","list_files","read_script","preview_asset","set_project_setting","get_project_settings","create_autoload_singleton","remove_autoload_singleton","import_asset","delete_asset",
     "write_dev_note",
     "update_todos",
     "run_and_screenshot",
@@ -557,6 +557,8 @@ Dictionary AI::execute_single_action(const Dictionary &p_action) {
         action_result = AIReadActions::exec_list_files(action_args);
     } else if (action_name == "read_script") {
         action_result = AIReadActions::exec_read_script(action_args);
+    } else if (action_name == "preview_asset") {
+        action_result = AIReadActions::exec_preview_asset(action_args);
     } else if (action_name == "connect_signal") {
         action_result = AISignalActions::exec_connect_signal(action_args);
     } else if (action_name == "disconnect_signal") {

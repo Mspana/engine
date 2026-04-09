@@ -338,6 +338,23 @@
 	req.push_back("file_path");
 	tools.push_back(_make_tool("read_script", "Read the source content of a script file. For .gd files, also validates with the GDScript compiler.", props, req));
 }
+{
+	Dictionary props;
+	Dictionary paths_prop;
+	paths_prop["type"] = "array";
+	paths_prop["description"] = "Image file paths to preview (res://...)";
+	Dictionary paths_items;
+	paths_items["type"] = "string";
+	paths_prop["items"] = paths_items;
+	props["paths"] = paths_prop;
+	props["max_size"] = _make_prop("integer", "Max dimension in px (default 128, range 32-256)");
+	Array req;
+	req.push_back("paths");
+	tools.push_back(_make_tool("preview_asset",
+		"Get low-res image previews. Returns visible thumbnails for each image file. "
+		"Use after list_files to see what images contain before placing them.",
+		props, req));
+}
 
 // ==========================================================================
 // Internal / meta actions

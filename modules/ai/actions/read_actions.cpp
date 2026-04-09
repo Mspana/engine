@@ -6,7 +6,9 @@
 
 #include "core/io/json.h"
 #include "core/io/dir_access.h"
+#include "core/io/image.h"
 #include "core/io/resource.h"
+#include "core/core_bind.h"
 #include "scene/main/node.h"
 #include "modules/gdscript/gdscript_parser.h"
 #include "modules/gdscript/gdscript_analyzer.h"
@@ -486,6 +488,127 @@ Dictionary exec_read_script(const Dictionary &args) {
 	}
 
 	print_line(vformat("AI: Read script '%s' (%d chars)", file_path, content.length()));
+	return ai_create_success_result(result_data);
+#else
+	return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+		"Editor API not available in non-editor builds");
+#endif
+}
+
+static const char *SUPPORTED_IMAGE_EXTENSIONS[] = {
+	".png", ".jpg", ".jpeg", ".bmp", ".tga", ".webp", ".svg", nullptr
+};
+
+static bool _is_image_extension(const String &p_path) {
+	String lower = p_path.to_lower();
+	for (int i = 0; SUPPORTED_IMAGE_EXTENSIONS[i]; i++) {
+		if (lower.ends_with(SUPPORTED_IMAGE_EXTENSIONS[i])) {
+			return true;
+		}
+	}
+	return false;
+}
+
+Dictionary exec_preview_asset(const Dictionary &args) {
+#ifdef TOOLS_ENABLED
+	if (!args.has("paths") || args["paths"].get_type() != Variant::ARRAY) {
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			"'paths' must be an array of image file paths");
+	}
+
+	Array paths = args["paths"];
+	if (paths.is_empty()) {
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			"'paths' array is empty");
+	}
+
+	int max_size = 128;
+	if (args.has("max_size")) {
+		Variant::Type mt = args["max_size"].get_type();
+		if (mt == Variant::INT) {
+			max_size = (int)args["max_size"];
+		} else if (mt == Variant::FLOAT) {
+			max_size = (int)(float)args["max_size"];
+		}
+		max_size = CLAMP(max_size, 32, 256);
+	}
+
+	Array previews;
+	Array images;
+
+	for (int i = 0; i < paths.size(); i++) {
+		String path = paths[i];
+		Dictionary entry;
+		entry["path"] = path;
+
+		if (!path.begins_with("res://")) {
+			entry["error"] = "Path must start with 'res://'";
+			previews.push_back(entry);
+			continue;
+		}
+
+		if (!_is_image_extension(path)) {
+			entry["error"] = "Not a supported image format";
+			previews.push_back(entry);
+			continue;
+		}
+
+		if (!FileAccess::exists(path)) {
+			entry["error"] = "File not found";
+			previews.push_back(entry);
+			continue;
+		}
+
+		Ref<Image> img;
+		img.instantiate();
+		Error err = img->load(path);
+		if (err != OK || img->is_empty()) {
+			entry["error"] = "Failed to load image";
+			previews.push_back(entry);
+			continue;
+		}
+
+		// Resize if larger than max_size, preserving aspect ratio.
+		int w = img->get_width();
+		int h = img->get_height();
+		if (w > max_size || h > max_size) {
+			if (w >= h) {
+				int new_h = MAX(1, h * max_size / w);
+				img->resize(max_size, new_h, Image::INTERPOLATE_BILINEAR);
+			} else {
+				int new_w = MAX(1, w * max_size / h);
+				img->resize(new_w, max_size, Image::INTERPOLATE_BILINEAR);
+			}
+		}
+
+		Vector<uint8_t> png_bytes = img->save_png_to_buffer();
+		if (png_bytes.is_empty()) {
+			entry["error"] = "Failed to encode PNG";
+			previews.push_back(entry);
+			continue;
+		}
+
+		PackedByteArray pba;
+		pba.resize(png_bytes.size());
+		memcpy(pba.ptrw(), png_bytes.ptr(), png_bytes.size());
+		String b64 = CoreBind::Marshalls::get_singleton()->raw_to_base64(pba);
+
+		entry["width"] = img->get_width();
+		entry["height"] = img->get_height();
+		previews.push_back(entry);
+		images.push_back(b64);
+	}
+
+	print_line(vformat("AI: preview_asset — %d paths, %d images generated (max_size=%d)",
+		paths.size(), images.size(), max_size));
+
+	Dictionary result_data;
+	result_data["previews"] = previews;
+	result_data["image_count"] = images.size();
+	if (!images.is_empty()) {
+		result_data["_images"] = images;
+	}
+
 	return ai_create_success_result(result_data);
 #else
 	return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,

@@ -610,6 +610,20 @@ Dictionary AgenticOrchestrator::_execute_tool_call(const String &p_call_id, cons
 	message["tool_call_id"] = p_call_id;
 	message["content"] = JSON::stringify(exec_result);
 
+	// Attach images from tool result (e.g. preview_asset thumbnails).
+	// Strip _images from JSON content to avoid inflating token count as text.
+	if (status == "success") {
+		Dictionary result_inner = exec_result.get("result", Dictionary());
+		if (result_inner.has("_images")) {
+			message["_images"] = result_inner["_images"];
+			Dictionary clean = exec_result.duplicate();
+			Dictionary r = result_inner.duplicate();
+			r.erase("_images");
+			clean["result"] = r;
+			message["content"] = JSON::stringify(clean);
+		}
+	}
+
 	// Attach structured data for UI (not sent to API, just for display)
 	message["_tool_result_data"] = tool_result_data;
 

@@ -35,6 +35,12 @@ Dictionary exec_list_files(const Dictionary &args);
 // Returns: Dictionary with status="success"|"error", result/error fields
 Dictionary exec_read_script(const Dictionary &args);
 
+// Returns low-res image previews as base64 PNG thumbnails.
+// Required args: paths (Array of Strings) - res:// image paths
+// Optional args: max_size (int) - max dimension in px (default 128)
+// Returns: Dictionary with previews array and _images array for vision
+Dictionary exec_preview_asset(const Dictionary &args);
+
 } // namespace AIReadActions
 
 #endif // AI_READ_ACTIONS_H
