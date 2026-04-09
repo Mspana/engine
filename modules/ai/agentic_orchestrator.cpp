@@ -135,6 +135,15 @@ void AgenticOrchestrator::run_agentic_loop(const Array &p_initial_messages, Ref<
 					ctx_text += (String)session_ctx["game_output"] + "\n";
 				}
 
+				if (session_ctx.has("parse_errors")) {
+					Array parse_errors = session_ctx["parse_errors"];
+					if (parse_errors.size() > 0) {
+						String pe_file = session_ctx.get("parse_error_file", "");
+						ctx_text += vformat("\n[PARSE ERRORS] %s\n", pe_file);
+						ctx_text += JSON::stringify(parse_errors, "  ") + "\n";
+					}
+				}
+
 				Dictionary ctx_msg;
 				ctx_msg["role"] = "user";
 				ctx_msg["content"] = ctx_text;

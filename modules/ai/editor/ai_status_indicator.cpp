@@ -59,6 +59,16 @@
 #include "scene/scene_string_names.h"
 #include "servers/display_server.h"
 
+// Forward declarations for error bubble helpers (defined later, used in _rebuild_message_list)
+enum ErrorBubbleFormat {
+	ERROR_BUBBLE_RUNTIME, // [E]/[W] message (file:line) xN
+	ERROR_BUBBLE_PARSE,   // Line N: message
+};
+static Control *_create_error_bubble_impl(
+		const String &p_summary, const Array &p_errors,
+		const Color &p_bg_color, const Color &p_border_color, const Color &p_text_color,
+		ErrorBubbleFormat p_format);
+
 // Fallback char budget when model context window is unknown
 static const int DEFAULT_MAX_CONTEXT_CHARS = 120000;
 
@@ -500,6 +510,152 @@ ToolCollapsibleEntry::ToolCollapsibleEntry() {
 }
 
 // ============================================================================
+// ParseErrorPill - Shows parse errors from script actions above the input box
+// ============================================================================
+
+void ParseErrorPill::_bind_methods() {
+}
+
+void ParseErrorPill::_on_header_clicked(const Ref<InputEvent> &p_event) {
+	Ref<InputEventMouseButton> mb = p_event;
+	if (mb.is_valid() && mb->get_button_index() == MouseButton::LEFT && mb->is_pressed()) {
+		_set_expanded(!_expanded);
+	}
+}
+
+void ParseErrorPill::_set_expanded(bool p_expanded) {
+	_expanded = p_expanded;
+	if (_error_list) {
+		_error_list->set_visible(_expanded);
+	}
+	_rebuild_ui();
+}
+
+void ParseErrorPill::set_errors(const String &p_file_path, const Array &p_errors) {
+	_file_path = p_file_path;
+	_errors = p_errors;
+
+	set_visible(!_errors.is_empty());
+	if (_errors.is_empty() && _expanded) {
+		_set_expanded(false);
+	}
+	_rebuild_ui();
+}
+
+void ParseErrorPill::clear_for_file(const String &p_file_path) {
+	if (_file_path == p_file_path) {
+		clear_all();
+	}
+}
+
+void ParseErrorPill::clear_all() {
+	_file_path = "";
+	_errors.clear();
+	set_visible(false);
+	_set_expanded(false);
+	_rebuild_ui();
+}
+
+String ParseErrorPill::get_context_summary() const {
+	if (_errors.is_empty()) {
+		return String();
+	}
+	return vformat("%d parse error%s in %s",
+			_errors.size(), _errors.size() == 1 ? "" : "s", _file_path.get_file());
+}
+
+void ParseErrorPill::_rebuild_ui() {
+	if (!_main_label || !_error_list) {
+		return;
+	}
+
+	// Header label
+	if (_errors.is_empty()) {
+		_main_label->set_text("");
+	} else {
+		String filename = _file_path.get_file();
+		String arrow = _expanded ? String::utf8("\u25BC ") : String::utf8("\u25B6 "); // ▼ or ▶
+		_main_label->set_text(vformat("%s%d parse error%s in %s",
+				arrow, _errors.size(), _errors.size() == 1 ? "" : "s", filename));
+	}
+
+	// Rebuild error list
+	while (_error_list->get_child_count() > 0) {
+		Node *child = _error_list->get_child(0);
+		_error_list->remove_child(child);
+		child->queue_free();
+	}
+
+	for (int i = 0; i < _errors.size(); i++) {
+		Dictionary err = _errors[i];
+		String message = err.get("message", "Unknown error");
+		int line = err.get("line", 0);
+		String type = err.get("type", "syntax");
+
+		String entry_text;
+		if (line > 0) {
+			entry_text = vformat("Line %d: %s", line, message);
+		} else {
+			entry_text = message;
+		}
+
+		Label *entry_label = memnew(Label);
+		entry_label->set_text(entry_text);
+		entry_label->add_theme_font_size_override("font_size", 10 * EDSCALE);
+		entry_label->set_text_overrun_behavior(TextServer::OVERRUN_TRIM_ELLIPSIS);
+		entry_label->add_theme_color_override("font_color", Color(1.0f, 0.6f, 0.3f, 0.8f));
+		_error_list->add_child(entry_label);
+	}
+}
+
+ParseErrorPill::ParseErrorPill() {
+	set_visible(false);
+	add_theme_constant_override("separation", 0);
+
+	// Orange-tinted style for parse errors (distinct from red runtime errors)
+	_style.instantiate();
+	_style->set_bg_color(Color(0.0f, 0.0f, 0.0f, 0.0f));
+	_style->set_border_width_all(1);
+	_style->set_border_color(Color(0.8f, 0.5f, 0.2f, 0.6f));
+	_style->set_corner_radius_all(6 * EDSCALE);
+	_style->set_content_margin_all(6 * EDSCALE);
+
+	// Main pill panel
+	_pill_container = memnew(PanelContainer);
+	_pill_container->add_theme_style_override("panel", _style);
+	_pill_container->connect("gui_input", callable_mp(this, &ParseErrorPill::_on_header_clicked));
+	add_child(_pill_container);
+
+	// Inner VBox for header + expandable list
+	VBoxContainer *pill_vbox = memnew(VBoxContainer);
+	pill_vbox->add_theme_constant_override("separation", 4 * EDSCALE);
+	_pill_container->add_child(pill_vbox);
+
+	// Header row
+	_header_row = memnew(HBoxContainer);
+	_header_row->set_h_size_flags(SIZE_EXPAND_FILL);
+	pill_vbox->add_child(_header_row);
+
+	// Label
+	_main_label = memnew(RichTextLabel);
+	_main_label->set_use_bbcode(false);
+	_main_label->set_fit_content(true);
+	_main_label->set_scroll_active(false);
+	_main_label->set_h_size_flags(SIZE_EXPAND_FILL);
+	_main_label->set_v_size_flags(SIZE_SHRINK_CENTER);
+	_main_label->set_mouse_filter(MOUSE_FILTER_IGNORE);
+	_main_label->add_theme_color_override("default_color", Color(1.0f, 0.6f, 0.3f, 1.0f));
+	_main_label->add_theme_font_size_override("normal_font_size", 11 * EDSCALE);
+	_header_row->add_child(_main_label);
+
+	// Expandable error list (hidden by default)
+	_error_list = memnew(VBoxContainer);
+	_error_list->set_visible(false);
+	_error_list->add_theme_constant_override("separation", 2 * EDSCALE);
+	pill_vbox->add_child(_error_list);
+}
+
+// ============================================================================
 // DebugContextPill - Shows game session errors above the input box
 // ============================================================================
 
@@ -527,7 +683,8 @@ void DebugContextPill::_rebuild_label() {
 	// Use fixed-width prefix so the count doesn't shift when toggling
 	// "Excluding" is 9 chars, "Including" is 9 chars — same length, no shift
 	String prefix = _enabled ? "Including" : "Excluding";
-	_main_label->set_text(vformat("%s  %s", prefix, counts));
+	String arrow = _expanded ? String::utf8("\u25BC ") : String::utf8("\u25B6 "); // ▼ or ▶
+	_main_label->set_text(vformat("%s%s  %s", arrow, prefix, counts));
 
 	_toggle_btn->set_text(_enabled ? "exclude" : "include");
 
@@ -546,13 +703,83 @@ void DebugContextPill::_on_toggle_pressed() {
 	emit_signal("enabled_changed", _enabled);
 }
 
-void DebugContextPill::update_state(bool p_game_running, int p_error_count, int p_warning_count) {
+void DebugContextPill::update_state(bool p_game_running, int p_error_count, int p_warning_count, const Array &p_errors) {
 	_game_running = p_game_running;
 	_error_count = p_error_count;
 	_warning_count = p_warning_count;
+	_errors = p_errors;
 
-	set_visible((_error_count + _warning_count) > 0);
+	bool should_show = (_error_count + _warning_count) > 0;
+	set_visible(should_show);
+	if (!should_show && _expanded) {
+		_set_expanded(false);
+	}
 	_rebuild_label();
+	_rebuild_error_list();
+}
+
+void DebugContextPill::_on_header_clicked(const Ref<InputEvent> &p_event) {
+	Ref<InputEventMouseButton> mb = p_event;
+	if (mb.is_valid() && mb->get_button_index() == MouseButton::LEFT && mb->is_pressed()) {
+		_set_expanded(!_expanded);
+	}
+}
+
+void DebugContextPill::_set_expanded(bool p_expanded) {
+	_expanded = p_expanded;
+	if (_error_list) {
+		_error_list->set_visible(_expanded);
+	}
+	_rebuild_label();
+}
+
+void DebugContextPill::_rebuild_error_list() {
+	if (!_error_list) {
+		return;
+	}
+
+	// Clear existing entries
+	while (_error_list->get_child_count() > 0) {
+		Node *child = _error_list->get_child(0);
+		_error_list->remove_child(child);
+		child->queue_free();
+	}
+
+	for (int i = 0; i < _errors.size(); i++) {
+		Dictionary err = _errors[i];
+		String severity = err.get("severity", "error");
+		String message = err.get("message", "Unknown error");
+		String script = err.get("script", "");
+		int line = err.get("line", 0);
+		int occurrences = err.get("occurrences", 1);
+
+		String entry_text;
+		if (severity == "warning") {
+			entry_text = vformat("[W] %s", message);
+		} else {
+			entry_text = vformat("[E] %s", message);
+		}
+		if (!script.is_empty() && line > 0) {
+			entry_text += vformat("  (%s:%d)", script.get_file(), line);
+		}
+		if (occurrences > 1) {
+			entry_text += vformat("  x%d", occurrences);
+		}
+
+		Label *entry_label = memnew(Label);
+		entry_label->set_text(entry_text);
+		entry_label->add_theme_font_size_override("font_size", 10 * EDSCALE);
+		entry_label->set_text_overrun_behavior(TextServer::OVERRUN_TRIM_ELLIPSIS);
+
+		Color entry_color = (severity == "warning")
+				? Color(1.0f, 0.85f, 0.4f, 0.8f)
+				: Color(1.0f, 0.5f, 0.45f, 0.8f);
+		if (!_enabled) {
+			entry_color = Color(0.5f, 0.5f, 0.5f, 0.6f);
+		}
+		entry_label->add_theme_color_override("font_color", entry_color);
+		_error_list->add_child(entry_label);
+	}
 }
 
 String DebugContextPill::get_context_summary() const {
@@ -596,10 +823,15 @@ DebugContextPill::DebugContextPill() {
 	_pill_container->add_theme_style_override("panel", _style_enabled);
 	add_child(_pill_container);
 
+	// Inner VBox to hold header + expandable error list inside the PanelContainer
+	VBoxContainer *pill_vbox = memnew(VBoxContainer);
+	pill_vbox->add_theme_constant_override("separation", 4 * EDSCALE);
+	_pill_container->add_child(pill_vbox);
+
 	// Header row
 	_header_row = memnew(HBoxContainer);
 	_header_row->set_h_size_flags(SIZE_EXPAND_FILL);
-	_pill_container->add_child(_header_row);
+	pill_vbox->add_child(_header_row);
 
 	// Label (left side)
 	_main_label = memnew(RichTextLabel);
@@ -613,7 +845,7 @@ DebugContextPill::DebugContextPill() {
 	_main_label->add_theme_font_size_override("normal_font_size", 11 * EDSCALE);
 	_header_row->add_child(_main_label);
 
-	// Toggle button (right side)
+	// Toggle button (right side) — no border, just text
 	_toggle_btn = memnew(Button);
 	_toggle_btn->set_text("exclude");
 	_toggle_btn->set_v_size_flags(SIZE_SHRINK_CENTER);
@@ -622,13 +854,11 @@ DebugContextPill::DebugContextPill() {
 	_toggle_btn->add_theme_color_override("font_pressed_color", Color(1.0f, 0.5f, 0.45f, 1.0f));
 	_toggle_btn->add_theme_font_size_override("font_size", 11 * EDSCALE);
 
-	// Red outlined style for the button
+	// Flat transparent style — no border to avoid double-border with pill container
 	Ref<StyleBoxFlat> btn_style;
 	btn_style.instantiate();
 	btn_style->set_bg_color(Color(0.0f, 0.0f, 0.0f, 0.0f));
-	btn_style->set_border_width_all(1);
-	btn_style->set_border_color(Color(0.7f, 0.3f, 0.3f, 0.6f));
-	btn_style->set_corner_radius_all(4 * EDSCALE);
+	btn_style->set_border_width_all(0);
 	btn_style->set_content_margin(SIDE_LEFT, 8 * EDSCALE);
 	btn_style->set_content_margin(SIDE_RIGHT, 8 * EDSCALE);
 	btn_style->set_content_margin(SIDE_TOP, 2 * EDSCALE);
@@ -638,6 +868,15 @@ DebugContextPill::DebugContextPill() {
 	_toggle_btn->add_theme_style_override("pressed", btn_style);
 	_toggle_btn->connect(SceneStringNames::get_singleton()->pressed, callable_mp(this, &DebugContextPill::_on_toggle_pressed));
 	_header_row->add_child(_toggle_btn);
+
+	// Make header row clickable to expand/collapse error list
+	_pill_container->connect("gui_input", callable_mp(this, &DebugContextPill::_on_header_clicked));
+
+	// Expandable error list (hidden by default)
+	_error_list = memnew(VBoxContainer);
+	_error_list->set_visible(false);
+	_error_list->add_theme_constant_override("separation", 2 * EDSCALE);
+	pill_vbox->add_child(_error_list);
 }
 
 // ============================================================================
@@ -951,7 +1190,49 @@ void AIStatusPanel::_rebuild_message_list() {
 			const HistoryItem &item = items[i];
 
 			if (item.is_injection()) {
-				continue; // skip engine_state / todo_state — not shown in UI
+				// Render engine_state and parse_error_state as inline error bubbles
+				String item_type = item.data.get("type", "");
+				if (item_type == "engine_state") {
+					Array errors = item.data.get("errors", Array());
+					int error_count = item.data.get("error_count", 0);
+					int warning_count = item.data.get("warning_count", 0);
+					if (error_count > 0 || warning_count > 0) {
+						String summary;
+						if (error_count > 0 && warning_count > 0) {
+							summary = vformat("Including %d error%s, %d warning%s",
+									error_count, error_count == 1 ? "" : "s",
+									warning_count, warning_count == 1 ? "" : "s");
+						} else if (error_count > 0) {
+							summary = vformat("Including %d error%s", error_count, error_count == 1 ? "" : "s");
+						} else {
+							summary = vformat("Including %d warning%s", warning_count, warning_count == 1 ? "" : "s");
+						}
+						Control *bubble = _create_error_bubble_impl(
+								summary, errors,
+								Color(0, 0, 0, 0),
+								Color(0.7f, 0.3f, 0.3f, 0.6f),
+								Color(1.0f, 0.5f, 0.45f, 1.0f),
+								ERROR_BUBBLE_RUNTIME);
+						message_list->add_child(bubble);
+					}
+				} else if (item_type == "parse_error_state") {
+					Array errors = item.data.get("errors", Array());
+					String file_path = item.data.get("file_path", "");
+					int error_count = item.data.get("error_count", 0);
+					if (error_count > 0) {
+						String summary = vformat("%d parse error%s in %s",
+								error_count, error_count == 1 ? "" : "s",
+								file_path.get_file());
+						Control *bubble = _create_error_bubble_impl(
+								summary, errors,
+								Color(0, 0, 0, 0),
+								Color(0.8f, 0.5f, 0.2f, 0.6f),
+								Color(1.0f, 0.6f, 0.3f, 1.0f),
+								ERROR_BUBBLE_PARSE);
+						message_list->add_child(bubble);
+					}
+				}
+				continue; // skip other injections (todo_state, etc.)
 			}
 
 			String role = item.role();
@@ -1809,6 +2090,37 @@ void AIStatusPanel::_start_run(const String &p_message) {
 	Control *debug_bubble = _create_debug_context_bubble();
 	if (debug_bubble && message_list) {
 		message_list->add_child(debug_bubble);
+	}
+
+	// Add parse error bubble above user message (if pill is active)
+	Control *parse_bubble = _create_parse_error_bubble();
+	if (parse_bubble && message_list) {
+		message_list->add_child(parse_bubble);
+	}
+
+	// Persist parse_error_state to chat store for external dashboards
+	if (chat_store.is_valid() && parse_error_pill && parse_error_pill->has_content()) {
+		chat_store->append_item(AIChatStore::make_parse_error_state_item(
+				parse_error_pill->get_file_path(), parse_error_pill->get_errors()));
+	}
+
+	// Persist engine_state to chat store so external dashboards can display included errors
+	if (chat_store.is_valid() && debug_pill && debug_pill->has_content()) {
+		bool game_running = EditorRunBar::get_singleton() ? EditorRunBar::get_singleton()->is_playing() : false;
+		EditorDebuggerNode *edn = EditorDebuggerNode::get_singleton();
+		int err_count = 0;
+		int warn_count = 0;
+		Array errors;
+		if (edn) {
+			ScriptEditorDebugger *dbg = edn->get_default_debugger();
+			if (dbg) {
+				err_count = dbg->get_error_count();
+				warn_count = dbg->get_warning_count();
+				errors = dbg->get_structured_errors(20, 4);
+			}
+		}
+		chat_store->append_item(AIChatStore::make_engine_state_item(
+				game_running, err_count, warn_count, errors));
 	}
 
 	// Append user message to store
@@ -2731,6 +3043,7 @@ void AIStatusPanel::_update_debug_pill() {
 	bool game_running = false;
 	int error_count = 0;
 	int warning_count = 0;
+	Array errors;
 
 	EditorRunBar *run_bar = EditorRunBar::get_singleton();
 	if (run_bar) {
@@ -2742,9 +3055,12 @@ void AIStatusPanel::_update_debug_pill() {
 		if (dbg) {
 			error_count = dbg->get_error_count();
 			warning_count = dbg->get_warning_count();
+			if ((error_count + warning_count) > 0) {
+				errors = dbg->get_structured_errors(20, 4);
+			}
 		}
 	}
-	debug_pill->update_state(game_running, error_count, warning_count);
+	debug_pill->update_state(game_running, error_count, warning_count, errors);
 #endif
 }
 
@@ -2763,6 +3079,130 @@ void AIStatusPanel::_on_debug_context_toggled(bool p_enabled) {
 	}
 }
 
+// Static callback for collapsible error bubbles in the chat transcript.
+static void _on_error_bubble_gui_input(const Ref<InputEvent> &p_event, Object *p_bubble_obj) {
+	Ref<InputEventMouseButton> mb = p_event;
+	if (mb.is_valid() && mb->get_button_index() == MouseButton::LEFT && mb->is_pressed()) {
+		Node *bubble = Object::cast_to<Node>(p_bubble_obj);
+		if (!bubble) {
+			return;
+		}
+		Variant hl_var = bubble->get_meta("_header_label", Variant());
+		Variant el_var = bubble->get_meta("_error_list", Variant());
+		RichTextLabel *header_label = Object::cast_to<RichTextLabel>(hl_var.operator Object *());
+		VBoxContainer *error_list = Object::cast_to<VBoxContainer>(el_var.operator Object *());
+		String summary = bubble->get_meta("_summary", "");
+		if (header_label && error_list) {
+			bool expanding = !error_list->is_visible();
+			error_list->set_visible(expanding);
+			String arrow = expanding ? String::utf8("\u25BC ") : String::utf8("\u25B6 ");
+			header_label->set_text(arrow + summary);
+		}
+	}
+}
+
+// Shared helper: creates a collapsible error bubble for the chat transcript.
+// p_summary: header text (e.g. "Including 2 errors"), shown with a triangle.
+// p_errors: array of error dicts to display when expanded.
+// p_bg_color, p_border_color, p_text_color: color scheme.
+// p_error_format: enum to control per-entry formatting (declared near top of file).
+
+static Control *_create_error_bubble_impl(
+		const String &p_summary, const Array &p_errors,
+		const Color &p_bg_color, const Color &p_border_color, const Color &p_text_color,
+		ErrorBubbleFormat p_format) {
+	// Outer panel
+	PanelContainer *bubble = memnew(PanelContainer);
+	Ref<StyleBoxFlat> style;
+	style.instantiate();
+	style->set_bg_color(p_bg_color);
+	style->set_border_width_all(1);
+	style->set_border_color(p_border_color);
+	style->set_corner_radius_all(6 * EDSCALE);
+	style->set_content_margin_all(8 * EDSCALE);
+	bubble->add_theme_style_override("panel", style);
+	bubble->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+
+	// Inner VBox for header + error list
+	VBoxContainer *vbox = memnew(VBoxContainer);
+	vbox->add_theme_constant_override("separation", 4 * EDSCALE);
+	bubble->add_child(vbox);
+
+	// Header label with triangle
+	RichTextLabel *header_label = memnew(RichTextLabel);
+	header_label->set_use_bbcode(false);
+	header_label->set_fit_content(true);
+	header_label->set_scroll_active(false);
+	header_label->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	header_label->set_mouse_filter(Control::MOUSE_FILTER_IGNORE);
+	// Remove default RichTextLabel background/border to avoid double-border
+	Ref<StyleBoxEmpty> header_empty_style;
+	header_empty_style.instantiate();
+	header_label->add_theme_style_override("normal", header_empty_style);
+	header_label->add_theme_style_override("focus", header_empty_style);
+	header_label->add_theme_color_override("default_color", p_text_color);
+	header_label->add_theme_font_size_override("normal_font_size", 11 * EDSCALE);
+	header_label->set_text(String::utf8("\u25B6 ") + p_summary); // ▶
+	vbox->add_child(header_label);
+
+	// Error list (hidden by default)
+	VBoxContainer *error_list = memnew(VBoxContainer);
+	error_list->set_visible(false);
+	error_list->add_theme_constant_override("separation", 2 * EDSCALE);
+	vbox->add_child(error_list);
+
+	for (int i = 0; i < p_errors.size(); i++) {
+		Dictionary err = p_errors[i];
+		String entry_text;
+		Color entry_color = p_text_color;
+		entry_color.a = 0.8f;
+
+		if (p_format == ERROR_BUBBLE_RUNTIME) {
+			String severity = err.get("severity", "error");
+			String message = err.get("message", "Unknown error");
+			String script = err.get("script", "");
+			int line = err.get("line", 0);
+			int occurrences = err.get("occurrences", 1);
+
+			entry_text = (severity == "warning") ? vformat("[W] %s", message) : vformat("[E] %s", message);
+			if (!script.is_empty() && line > 0) {
+				entry_text += vformat("  (%s:%d)", script.get_file(), line);
+			}
+			if (occurrences > 1) {
+				entry_text += vformat("  x%d", occurrences);
+			}
+			if (severity == "warning") {
+				entry_color = Color(1.0f, 0.85f, 0.4f, 0.8f);
+			}
+		} else {
+			String message = err.get("message", "Unknown error");
+			int line = err.get("line", 0);
+			entry_text = (line > 0) ? vformat("Line %d: %s", line, message) : message;
+		}
+
+		Label *entry_label = memnew(Label);
+		entry_label->set_text(entry_text);
+		entry_label->add_theme_font_size_override("font_size", 10 * EDSCALE);
+		entry_label->set_text_overrun_behavior(TextServer::OVERRUN_TRIM_ELLIPSIS);
+		entry_label->add_theme_color_override("font_color", entry_color);
+		error_list->add_child(entry_label);
+	}
+
+	// Click to expand/collapse — store references on the bubble for the callback
+	bubble->set_meta("_header_label", header_label);
+	bubble->set_meta("_error_list", error_list);
+	bubble->set_meta("_summary", p_summary);
+	bubble->connect("gui_input", callable_mp_static(&_on_error_bubble_gui_input).bind(bubble));
+
+	// Wrap in align container
+	HBoxContainer *align = memnew(HBoxContainer);
+	align->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	align->add_child(bubble);
+	bubble->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	bubble->set_stretch_ratio(0.95f);
+	return align;
+}
+
 Control *AIStatusPanel::_create_debug_context_bubble() {
 	if (!debug_pill || !debug_pill->is_visible() || !debug_pill->is_enabled()) {
 		return nullptr;
@@ -2771,37 +3211,28 @@ Control *AIStatusPanel::_create_debug_context_bubble() {
 	if (summary.is_empty()) {
 		return nullptr;
 	}
+	return _create_error_bubble_impl(
+			summary, debug_pill->get_errors(),
+			Color(0, 0, 0, 0), // bg
+			Color(0.7f, 0.3f, 0.3f, 0.6f),     // border
+			Color(1.0f, 0.5f, 0.45f, 1.0f),     // text
+			ERROR_BUBBLE_RUNTIME);
+}
 
-	// Styled bubble matching the pill's red scheme but non-interactive
-	PanelContainer *bubble = memnew(PanelContainer);
-	Ref<StyleBoxFlat> style;
-	style.instantiate();
-	style->set_bg_color(Color(0.28f, 0.16f, 0.16f, 1.0f));
-	style->set_border_width_all(1);
-	style->set_border_color(Color(0.7f, 0.3f, 0.3f, 0.6f));
-	style->set_corner_radius_all(6 * EDSCALE);
-	style->set_content_margin_all(8 * EDSCALE);
-	bubble->add_theme_style_override("panel", style);
-	bubble->set_h_size_flags(SIZE_EXPAND_FILL);
-
-	RichTextLabel *label = memnew(RichTextLabel);
-	label->set_use_bbcode(false);
-	label->set_fit_content(true);
-	label->set_scroll_active(false);
-	label->set_h_size_flags(SIZE_EXPAND_FILL);
-	label->set_mouse_filter(MOUSE_FILTER_IGNORE);
-	label->add_theme_color_override("default_color", Color(1.0f, 0.5f, 0.45f, 1.0f));
-	label->add_theme_font_size_override("normal_font_size", 11 * EDSCALE);
-	label->set_text(summary);
-	bubble->add_child(label);
-
-	// Wrap in align container (same left-align as assistant bubbles)
-	HBoxContainer *align = memnew(HBoxContainer);
-	align->set_h_size_flags(SIZE_EXPAND_FILL);
-	align->add_child(bubble);
-	bubble->set_h_size_flags(SIZE_EXPAND_FILL);
-	bubble->set_stretch_ratio(0.95f);
-	return align;
+Control *AIStatusPanel::_create_parse_error_bubble() {
+	if (!parse_error_pill || !parse_error_pill->has_content()) {
+		return nullptr;
+	}
+	String summary = parse_error_pill->get_context_summary();
+	if (summary.is_empty()) {
+		return nullptr;
+	}
+	return _create_error_bubble_impl(
+			summary, parse_error_pill->get_errors(),
+			Color(0, 0, 0, 0),  // bg
+			Color(0.8f, 0.5f, 0.2f, 0.6f),     // border
+			Color(1.0f, 0.6f, 0.3f, 1.0f),      // text
+			ERROR_BUBBLE_PARSE);
 }
 
 void AIStatusPanel::_append_thinking_ui(const String &p_text) {
@@ -3000,6 +3431,30 @@ void AIStatusPanel::_on_orchestrator_tool_result(const Dictionary &p_tool_result
 		}
 
 		chat_store->append_item(AIChatStore::make_tool_item(call_id, content));
+	}
+
+	// Check for parse errors in script tool results and update pill + AI singleton
+	if (parse_error_pill) {
+		String tool_name = p_tool_result.get("tool_name", "");
+		if (tool_name == "update_script" || tool_name == "create_script") {
+			Dictionary result = p_tool_result.get("result", Dictionary());
+			String file_path = result.get("file_path", "");
+			Array parse_errors = result.get("parse_errors", Array());
+
+			AI *ai = AI::get_singleton();
+			if (!parse_errors.is_empty()) {
+				parse_error_pill->set_errors(file_path, parse_errors);
+				if (ai) {
+					ai->set_parse_errors(file_path, parse_errors);
+				}
+			} else if (!file_path.is_empty()) {
+				// Script compiled clean — clear any previous errors for this file
+				parse_error_pill->clear_for_file(file_path);
+				if (ai) {
+					ai->clear_parse_errors();
+				}
+			}
+		}
 	}
 
 	// Refresh context usage to reflect the new tool result added to the store
@@ -3849,6 +4304,15 @@ AIStatusPanel::AIStatusPanel() {
 	queue_header_label->set_text(TTR("Queued"));
 	queue_header_label->add_theme_color_override("font_color", AIColors::TEXT_SECONDARY);
 	queue_container->add_child(queue_header_label);
+
+	// ========================================
+	// Parse error pill (hidden until script actions have parse errors)
+	// ========================================
+	parse_error_pill = memnew(ParseErrorPill);
+	parse_error_pill->add_theme_constant_override("margin_left", AIColors::PADDING_SM * EDSCALE);
+	parse_error_pill->add_theme_constant_override("margin_right", AIColors::PADDING_SM * EDSCALE);
+	parse_error_pill->add_theme_constant_override("margin_bottom", AIColors::PADDING_XS * EDSCALE);
+	add_child(parse_error_pill);
 
 	// ========================================
 	// Debug context pill (hidden until game has errors or is running)

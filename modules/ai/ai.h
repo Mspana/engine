@@ -52,6 +52,10 @@ private:
 	bool _debug_context_enabled = true;
 	bool _errors_consumed_by_tool = false;
 
+	// Parse error context (set by UI when script tool results have parse errors)
+	String _parse_error_file;
+	Array _parse_errors;
+
 	void _connect_debugger_signals();
 	void _on_game_session_stopped();
 	void _setup_chat_junction();
@@ -130,6 +134,10 @@ public:
 	void set_errors_consumed_by_tool(bool p_consumed);
 	bool get_errors_consumed_by_tool() const { return _errors_consumed_by_tool; }
 	bool get_debug_context_enabled() const { return _debug_context_enabled; }
+
+	void set_parse_errors(const String &p_file, const Array &p_errors);
+	void clear_parse_errors();
+	bool has_parse_errors() const { return !_parse_errors.is_empty(); }
 
 	// Check if a file was read via read_script in the current conversation
 	bool was_file_read(const String &file_path) const;

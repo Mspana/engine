@@ -1065,6 +1065,16 @@ void AI::set_debug_context_enabled(bool p_enabled) {
     _debug_context_enabled = p_enabled;
 }
 
+void AI::set_parse_errors(const String &p_file, const Array &p_errors) {
+    _parse_error_file = p_file;
+    _parse_errors = p_errors;
+}
+
+void AI::clear_parse_errors() {
+    _parse_error_file = "";
+    _parse_errors.clear();
+}
+
 void AI::set_errors_consumed_by_tool(bool p_consumed) {
     _errors_consumed_by_tool = p_consumed;
 }
@@ -1115,6 +1125,12 @@ Dictionary AI::consume_session_context() {
     if (!_last_session_screenshot_b64.is_empty()) {
         ctx["screenshot_b64"] = _last_session_screenshot_b64;
         _last_session_screenshot_b64 = "";
+    }
+
+    // Outstanding parse errors from script actions
+    if (!_parse_errors.is_empty()) {
+        ctx["parse_error_file"] = _parse_error_file;
+        ctx["parse_errors"] = _parse_errors;
     }
 #endif
     return ctx;

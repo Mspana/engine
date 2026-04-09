@@ -150,9 +150,12 @@ public:
 	// p_content = {status, tool_name, args, result|error|reason}
 	static Dictionary make_tool_item(const String &p_tool_call_id, const Dictionary &p_content);
 
-	// context injection: engine state (written for future use, not yet consumed by _build_model_messages)
-	static Dictionary make_engine_state_item(bool p_running, int p_error_count,
-			const String &p_errors_text, const String &p_screenshot_path = "");
+	// context injection: engine state (persisted so external dashboards can display included errors)
+	static Dictionary make_engine_state_item(bool p_running, int p_error_count, int p_warning_count,
+			const Array &p_errors = Array());
+
+	// context injection: parse error state (persisted so external dashboards can display parse errors)
+	static Dictionary make_parse_error_state_item(const String &p_file_path, const Array &p_errors);
 
 	// context injection: todo state
 	static Dictionary make_todo_state_item(const Array &p_tasks);

@@ -280,15 +280,27 @@ Dictionary AIChatStore::make_tool_item(const String &p_tool_call_id, const Dicti
 	return d;
 }
 
-Dictionary AIChatStore::make_engine_state_item(bool p_running, int p_error_count,
-		const String &p_errors_text, const String &p_screenshot_path) {
+Dictionary AIChatStore::make_engine_state_item(bool p_running, int p_error_count, int p_warning_count,
+		const Array &p_errors) {
 	Dictionary d;
 	d["type"] = "engine_state";
 	d["game_running"] = p_running;
 	d["error_count"] = p_error_count;
-	d["errors"] = p_errors_text;
-	if (!p_screenshot_path.is_empty()) {
-		d["screenshot_path"] = p_screenshot_path;
+	d["warning_count"] = p_warning_count;
+	if (!p_errors.is_empty()) {
+		d["errors"] = p_errors;
+	}
+	d["timestamp"] = _now_ms();
+	return d;
+}
+
+Dictionary AIChatStore::make_parse_error_state_item(const String &p_file_path, const Array &p_errors) {
+	Dictionary d;
+	d["type"] = "parse_error_state";
+	d["file_path"] = p_file_path;
+	d["error_count"] = p_errors.size();
+	if (!p_errors.is_empty()) {
+		d["errors"] = p_errors;
 	}
 	d["timestamp"] = _now_ms();
 	return d;

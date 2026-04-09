@@ -135,6 +135,42 @@ public:
 };
 
 // ============================================================================
+// ParseErrorPill — shows parse errors from script actions above the input box
+// ============================================================================
+
+class ParseErrorPill : public VBoxContainer {
+	GDCLASS(ParseErrorPill, VBoxContainer);
+
+	PanelContainer *_pill_container = nullptr;
+	HBoxContainer *_header_row = nullptr;
+	RichTextLabel *_main_label = nullptr;
+	VBoxContainer *_error_list = nullptr;
+	bool _expanded = false;
+
+	Ref<StyleBoxFlat> _style;
+
+	String _file_path;
+	Array _errors; // [{line, column, message, type}]
+
+	void _on_header_clicked(const Ref<InputEvent> &p_event);
+	void _set_expanded(bool p_expanded);
+	void _rebuild_ui();
+
+protected:
+	static void _bind_methods();
+
+public:
+	void set_errors(const String &p_file_path, const Array &p_errors);
+	void clear_for_file(const String &p_file_path);
+	void clear_all();
+	bool has_content() const { return !_errors.is_empty(); }
+	String get_file_path() const { return _file_path; }
+	const Array &get_errors() const { return _errors; }
+	String get_context_summary() const;
+	ParseErrorPill();
+};
+
+// ============================================================================
 // DebugContextPill — shows game session error state above the input box
 // ============================================================================
 
@@ -146,6 +182,10 @@ class DebugContextPill : public VBoxContainer {
 	RichTextLabel *_main_label = nullptr;
 	Button *_toggle_btn = nullptr;
 
+	// Expandable error list
+	VBoxContainer *_error_list = nullptr;
+	bool _expanded = false;
+
 	Ref<StyleBoxFlat> _style_enabled;
 	Ref<StyleBoxFlat> _style_disabled;
 
@@ -153,17 +193,22 @@ class DebugContextPill : public VBoxContainer {
 	int _error_count = 0;
 	int _warning_count = 0;
 	bool _game_running = false;
+	Array _errors; // Structured error dicts from get_structured_errors()
 
 	void _on_toggle_pressed();
+	void _on_header_clicked(const Ref<InputEvent> &p_event);
+	void _set_expanded(bool p_expanded);
 	void _rebuild_label();
+	void _rebuild_error_list();
 
 protected:
 	static void _bind_methods();
 
 public:
-	void update_state(bool p_game_running, int p_error_count, int p_warning_count);
+	void update_state(bool p_game_running, int p_error_count, int p_warning_count, const Array &p_errors = Array());
 	bool is_enabled() const { return _enabled; }
 	bool has_content() const { return (_error_count + _warning_count) > 0; }
+	const Array &get_errors() const { return _errors; }
 	String get_context_summary() const;
 	DebugContextPill();
 };
@@ -307,6 +352,10 @@ private:
 	// Pending images (staged for next send, cleared after _start_run)
 	Vector<String> pending_images;          // base64-encoded PNG strings (512px max)
 	Vector<Ref<Image>> pending_images_raw;  // kept for thumbnail display in preview strip
+
+	// Parse error pill (shown above input bar when script actions have parse errors)
+	ParseErrorPill *parse_error_pill = nullptr;
+	Control *_create_parse_error_bubble();
 
 	// Debug context pill (shown above input bar when game has errors or is running)
 	DebugContextPill *debug_pill = nullptr;
