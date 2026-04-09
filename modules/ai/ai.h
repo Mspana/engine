@@ -50,6 +50,7 @@ private:
 	String _last_session_screenshot_b64;
 	bool _session_screenshot_pending = false;
 	bool _debug_context_enabled = true;
+	bool _errors_consumed_by_tool = false;
 
 	void _connect_debugger_signals();
 	void _on_game_session_stopped();
@@ -126,6 +127,8 @@ public:
 	// Game session context (auto-captured on stop, injected into next AI turn)
 	Dictionary consume_session_context();                  // returns and clears stored session data
 	void set_debug_context_enabled(bool p_enabled);        // UI pill toggle
+	void set_errors_consumed_by_tool(bool p_consumed);
+	bool get_errors_consumed_by_tool() const { return _errors_consumed_by_tool; }
 	bool get_debug_context_enabled() const { return _debug_context_enabled; }
 
 	// Check if a file was read via read_script in the current conversation

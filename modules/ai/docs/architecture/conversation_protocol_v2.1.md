@@ -5,6 +5,9 @@ Specification for message structure, persistence, and API serialization in the A
 Supersedes conversation_protocol_v2.md.
 
 **Changes from v2:**
+- §3 engine_state: structured error schema with dedup, stack traces, and lifecycle rules
+- §3.1 Error Schema: shared error object format for both tool results and engine_state injection
+- §3.2 Game Output: `game_output` field for print/log capture from running game
 - §6 Cancellation: enforcement via execution logic (not truncation walkback); synthetic cancelled results; system prompt guidance added
 - §8 Persistence: JSONL rewrite rule on rewind; `delivered` inference rule for `user_injection`; backward compat not required (MVP)
 - §9 Context management: simplified truncation — no orphan-safe walkback needed
@@ -128,12 +131,136 @@ User messages may be a plain string or an array of content blocks when images ar
 {
   "type": "engine_state",
   "game_running": false,
-  "error_count": 0,
-  "errors": [],
+  "error_count": 2,
+  "errors": [
+    {
+      "type": "runtime",
+      "severity": "error",
+      "message": "Invalid get index 'position' (on base: 'null instance')",
+      "script": "res://Player.gd",
+      "line": 42,
+      "function": "_physics_process",
+      "occurrences": 1,
+      "stack": [
+        { "function": "_physics_process", "script": "res://Player.gd", "line": 42 },
+        { "function": "_on_hit", "script": "res://Combat.gd", "line": 17 }
+      ],
+      "timestamp": 1743751260000
+    },
+    {
+      "type": "parse",
+      "severity": "error",
+      "message": "Expected end of statement after expression, found \"Identifier\"",
+      "script": "res://Enemy.gd",
+      "line": 15,
+      "function": null,
+      "occurrences": 1,
+      "stack": null,
+      "timestamp": 1743751260500
+    }
+  ],
+  "game_output": "Player spawned at (100, 200)\nLoading level 3...",
   "screenshot_path": null,
-  "timestamp": 1743751234567
+  "timestamp": 1743751261000
 }
 ```
+
+The `errors` array uses the shared error schema defined in §3.1. The `game_output` field contains recent print/log output from the game process (see §3.2).
+
+### 3.1 Error Schema
+
+Errors from the Godot engine use a single structured format regardless of how they reach the model — whether through `engine_state` injection (manual testing) or tool results (`run_and_screenshot`, `run_scene`).
+
+#### Error object
+
+```json
+{
+  "type": "runtime | parse | shader | scene",
+  "severity": "error | warning",
+  "message": "the error string from Godot",
+  "script": "res://path/to/file.gd",
+  "line": 42,
+  "function": "_physics_process",
+  "occurrences": 1,
+  "stack": [
+    { "function": "_physics_process", "script": "res://Player.gd", "line": 42 },
+    { "function": "_on_hit", "script": "res://Combat.gd", "line": 17 }
+  ],
+  "timestamp": 1743751237000
+}
+```
+
+| Field | Type | Nullable | Description |
+|-------|------|----------|-------------|
+| `type` | string | no | Error category: `runtime` (null instance, index out of bounds, etc.), `parse` (GDScript syntax), `shader` (shader compilation), `scene` (scene validation, missing dependencies) |
+| `severity` | string | no | `error` or `warning`. Info-level messages go in `game_output`, not `errors`. |
+| `message` | string | no | The error string as Godot reports it. |
+| `script` | string | yes | `res://` path to the source file, if traceable. Null for errors without a source location (e.g. scene load failures). |
+| `line` | int | yes | Source line number. Null when `script` is null. |
+| `function` | string | yes | Function name from the call stack. Null for parse errors and errors outside a function scope. |
+| `occurrences` | int | no | How many times this exact error fired. Deduplication key is `(message, script, line)`. Default 1. |
+| `stack` | array | yes | Call stack frames, present for runtime errors and crashes only. Null for parse errors, warnings, and shader errors. Capped at 8 frames. Each frame: `{ "function": string, "script": string, "line": int }`. |
+| `timestamp` | int | no | Unix timestamp in milliseconds when the error was first observed. |
+
+#### Error types
+
+| Type | When | Has stack? | Has script+line? |
+|------|------|-----------|-------------------|
+| `runtime` | Null instance, index OOB, assertion, signal errors during game execution | Yes (on crash) | Usually |
+| `parse` | GDScript syntax errors caught by parser/analyzer | No | Always |
+| `shader` | Shader compilation failures | No | Sometimes (shader file path) |
+| `scene` | Scene load failures, missing dependencies, circular references | No | Sometimes (scene path in `script` field) |
+
+#### Two entry points, one schema
+
+**Tool results** — When the AI calls `run_and_screenshot` or `run_scene` and errors occur during execution, those errors appear in the tool result alongside the screenshot/status:
+
+```json
+{
+  "role": "tool",
+  "tool_call_id": "call_rns_001",
+  "content": {
+    "status": "success",
+    "tool_name": "run_and_screenshot",
+    "result": {
+      "screenshot_b64": "...",
+      "format": "png",
+      "game_crashed": true,
+      "errors": [ { "...same schema..." } ],
+      "game_output": "Player spawned at (100, 200)"
+    }
+  }
+}
+```
+
+Note: `status` is `"success"` here because the tool itself succeeded (launched the game, captured a screenshot). `game_crashed: true` indicates the game process crashed during execution. The model should treat `game_crashed: true` or a non-empty `errors` array as requiring investigation, regardless of `status`.
+
+**engine_state injection** — When the user manually tests (or the game is already running from a prior turn), errors accumulate in the engine and surface through `engine_state` at the next turn. Same error objects, same schema.
+
+#### Error lifecycle
+
+**Accumulation:** Errors accumulate from game launch until the next game launch. Capped at 20 unique errors (by dedup key `(message, script, line)`). Beyond the cap, new unique errors are dropped but `error_count` continues incrementing to signal "there are more errors than shown."
+
+**Clearing:** Errors clear on game launch. Not on game exit, not on script save. This ensures:
+- Errors from a crashed run are still available when the model's next turn starts
+- A successful re-run after a fix shows zero errors (confirming the fix worked)
+- The model never sees stale errors from a previous run mixed with a current run
+
+**Consumption:** When `consume_session_context()` reads errors for `engine_state`, the errors remain available (not cleared) so they persist through the tool result path as well. Errors only clear on the next game launch.
+
+**Tool result deduplication:** When `run_and_screenshot` completes, it reads accumulated errors and includes them in the tool result. The subsequent `engine_state` injection for the same turn should not double-report them. The orchestrator sets a `_errors_consumed_by_tool` flag after reading errors for a tool result; `consume_session_context()` checks this flag and omits errors if already delivered via tool result in the same turn.
+
+### 3.2 Game Output
+
+`game_output` captures recent `print()`, `push_warning()`, and `push_error()` output from the running game process. This is distinct from `errors` — it includes informational print statements, not just failures.
+
+**Source:** `EditorLog::get_recent_messages_text()` reads the last N log entries, excluding `MSG_TYPE_EDITOR` (internal editor messages like "Scene saved" that aren't game output).
+
+**Cap:** 200 lines. Oldest entries are dropped first.
+
+**Clearing:** Same lifecycle as errors — clears on game launch.
+
+**Presence:** The `game_output` field is included in both `engine_state` and `run_and_screenshot` tool results. It is omitted (or set to `null`) when empty.
 
 ### todo_state
 
@@ -205,7 +332,7 @@ The provider adapter is the only layer that knows about API-specific message sha
 | `user` message | `{ role: "user", content: "..." }` wrapped in `<user_message>` tags with timestamp and injection guard |
 | `assistant` message | `{ role: "assistant", content: "...", tool_calls: [...] }` — `text` blocks joined into OpenAI's `content` string; `tool_call` blocks serialized into the `tool_calls` array |
 | `tool` result | `{ role: "tool", tool_call_id: "...", content: "{...}" }` |
-| `engine_state` | `{ role: "user", content: "[GAME SESSION]\nStatus: ...\nErrors: ..." }` |
+| `engine_state` | `{ role: "user", content: "[GAME SESSION]\nStatus: ...\nErrors: ...\nGame Output: ..." }` |
 | `todo_state` | `{ role: "user", content: "[CURRENT_TODOS]\n..." }` |
 | `scene_snapshot` | `{ role: "user", content: "[SCENE STATE]\n..." }` or omitted if stale |
 | `user_injection` | `{ role: "user", content: "<user_message>...</user_message>" }` |
@@ -302,7 +429,7 @@ Each line is a timestamped item:
 
 ```jsonl
 {"ts":1743751234567,"item":{"role":"user","content":"Make the player jump higher","images":[]}}
-{"ts":1743751235000,"item":{"type":"engine_state","game_running":false,"error_count":0,"errors":[],"screenshot_path":null,"timestamp":1743751235000}}
+{"ts":1743751235000,"item":{"type":"engine_state","game_running":false,"error_count":0,"errors":[],"game_output":null,"screenshot_path":null,"timestamp":1743751235000}}
 {"ts":1743751236000,"item":{"role":"assistant","content":[{"type":"text","text":"I'll check your player script."},{"type":"tool_call","id":"call_abc","name":"read_script","args":{"file_path":"res://Player.gd"}}]}}
 {"ts":1743751237000,"item":{"role":"tool","tool_call_id":"call_abc","content":{"status":"success","tool_name":"read_script","result":{"content":"extends CharacterBody2D..."}}}}
 {"ts":1743751238000,"item":{"role":"assistant","content":[{"type":"text","text":"Done! I updated JUMP_VELOCITY to -500."}]}}
@@ -419,7 +546,7 @@ A complete conversation showing a user request, two sequential tool calls, a can
 
 ```jsonl
 {"ts":1743751234567,"item":{"role":"user","content":"Make the player jump higher","images":[]}}
-{"ts":1743751235000,"item":{"type":"engine_state","game_running":false,"error_count":0,"errors":[],"screenshot_path":null,"timestamp":1743751235000}}
+{"ts":1743751235000,"item":{"type":"engine_state","game_running":false,"error_count":0,"errors":[],"game_output":null,"screenshot_path":null,"timestamp":1743751235000}}
 {"ts":1743751236000,"item":{"role":"assistant","content":[{"type":"text","text":"I'll read the player script first to find the current jump velocity."},{"type":"tool_call","id":"call_001","name":"read_script","args":{"file_path":"res://Player.gd"}}]}}
 {"ts":1743751237000,"item":{"role":"tool","tool_call_id":"call_001","content":{"status":"success","tool_name":"read_script","result":{"content":"extends CharacterBody2D\nconst JUMP_VELOCITY = -300.0"}}}}
 {"ts":1743751238000,"item":{"role":"assistant","content":[{"type":"text","text":"Found it — JUMP_VELOCITY is -300. I'll increase it to -500."},{"type":"tool_call","id":"call_002","name":"update_script","args":{"file_path":"res://Player.gd","old_string":"JUMP_VELOCITY = -300.0","new_string":"JUMP_VELOCITY = -500.0"}}]}}

@@ -32,6 +32,7 @@
 
 #include "core/debugger/debugger_marshalls.h"
 #include "core/debugger/remote_debugger.h"
+#include "core/os/time.h"
 #include "core/string/ustring.h"
 #include "core/version.h"
 #include "editor/debugger/editor_expression_evaluator.h"
@@ -720,6 +721,12 @@ void ScriptEditorDebugger::_msg_error(uint64_t p_thread_id, const Array &p_data)
 	} else {
 		error_count++;
 	}
+
+	// Store structured error record for AI consumption.
+	ErrorRecord rec;
+	rec.error = oe;
+	rec.timestamp_ms = (uint64_t)(Time::get_singleton()->get_unix_time_from_system() * 1000.0);
+	_error_records.push_back(rec);
 }
 
 void ScriptEditorDebugger::_msg_servers_function_signature(uint64_t p_thread_id, const Array &p_data) {
@@ -1447,6 +1454,87 @@ String ScriptEditorDebugger::get_errors_text() const {
 	return result;
 }
 
+String ScriptEditorDebugger::_classify_error_type(const DebuggerMarshalls::OutputError &p_error) {
+	String ext = p_error.source_file.get_extension().to_lower();
+	String msg = (p_error.error_descr.is_empty() ? p_error.error : p_error.error_descr).to_lower();
+
+	if (ext == "gdshader" || ext == "shader" || msg.contains("shader")) {
+		return "shader";
+	}
+	if (ext == "tscn" || ext == "scn" || msg.contains("packedscene") || msg.contains("missing dependency")) {
+		return "scene";
+	}
+	if (ext == "gd" && p_error.callstack.is_empty() && p_error.source_func.is_empty()) {
+		return "parse";
+	}
+	return "runtime";
+}
+
+Array ScriptEditorDebugger::get_structured_errors(int p_max, int p_max_stack_frames) const {
+	HashMap<String, int> dedup;
+	Array result;
+
+	for (const ErrorRecord &rec : _error_records) {
+		const DebuggerMarshalls::OutputError &oe = rec.error;
+		bool is_project = oe.source_file.begins_with("res://");
+		String message = oe.error_descr.is_empty() ? oe.error : oe.error_descr;
+		String script = is_project ? oe.source_file : String();
+		int line = is_project ? oe.source_line : -1;
+
+		// Dedup key: same message at the same location is the same bug.
+		String key = message + "|" + script + "|" + itos(line);
+
+		if (dedup.has(key)) {
+			Dictionary existing = result[dedup[key]];
+			existing["occurrences"] = (int)existing["occurrences"] + 1;
+			continue;
+		}
+
+		if (result.size() >= p_max) {
+			continue;
+		}
+
+		Dictionary err;
+		err["type"] = _classify_error_type(oe);
+		err["severity"] = oe.warning ? "warning" : "error";
+		err["message"] = message;
+		err["script"] = is_project ? Variant(oe.source_file) : Variant();
+		err["line"] = is_project ? Variant(oe.source_line) : Variant();
+
+		if (!oe.source_func.is_empty() && is_project) {
+			err["function"] = oe.source_func;
+		} else if (oe.callstack.size() > 0) {
+			err["function"] = oe.callstack[0].func;
+		} else {
+			err["function"] = Variant();
+		}
+
+		err["occurrences"] = 1;
+
+		if (oe.callstack.size() > 0) {
+			Array stack;
+			int cap = MIN(oe.callstack.size(), p_max_stack_frames);
+			for (int i = 0; i < cap; i++) {
+				Dictionary frame;
+				frame["function"] = oe.callstack[i].func;
+				frame["script"] = oe.callstack[i].file;
+				frame["line"] = oe.callstack[i].line;
+				stack.push_back(frame);
+			}
+			err["stack"] = stack;
+		} else {
+			err["stack"] = Variant();
+		}
+
+		err["timestamp"] = (int64_t)rec.timestamp_ms;
+
+		dedup[key] = result.size();
+		result.push_back(err);
+	}
+
+	return result;
+}
+
 String ScriptEditorDebugger::get_stack_script_file() const {
 	TreeItem *ti = stack_dump->get_selected();
 	if (!ti) {
@@ -1734,6 +1822,7 @@ void ScriptEditorDebugger::_clear_errors_list() {
 	error_tree->clear();
 	error_count = 0;
 	warning_count = 0;
+	_error_records.clear();
 	emit_signal(SNAME("errors_cleared"));
 	update_tabs();
 

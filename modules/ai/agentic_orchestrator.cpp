@@ -35,6 +35,10 @@
 #include "core/io/json.h"
 #include "core/os/os.h"
 #include "core/os/time.h"
+#include "editor/debugger/editor_debugger_node.h"
+#include "editor/debugger/script_editor_debugger.h"
+#include "editor/editor_log.h"
+#include "editor/editor_node.h"
 #include "scene/main/scene_tree.h"
 #include "scene/main/timer.h"
 
@@ -120,8 +124,15 @@ void AgenticOrchestrator::run_agentic_loop(const Array &p_initial_messages, Ref<
 				} else {
 					ctx_text += vformat("Errors: %d\n", error_count);
 					if (session_ctx.has("errors")) {
-						ctx_text += vformat("%s\n", (String)session_ctx["errors"]);
+						Array errors = session_ctx["errors"];
+						if (errors.size() > 0) {
+							ctx_text += JSON::stringify(errors, "  ") + "\n";
+						}
 					}
+				}
+				if (session_ctx.has("game_output")) {
+					ctx_text += "\n[GAME OUTPUT]\n";
+					ctx_text += (String)session_ctx["game_output"] + "\n";
 				}
 
 				Dictionary ctx_msg;
@@ -810,6 +821,52 @@ void AgenticOrchestrator::_on_async_rns_capture_received(const String &p_b64) {
 }
 
 void AgenticOrchestrator::_on_async_rns_complete(const Dictionary &p_exec_result) {
+	// Capture errors and game output (errors clear on next launch, not on stop).
+	Array game_errors;
+	String game_output;
+	EditorDebuggerNode *edn = EditorDebuggerNode::get_singleton();
+	if (edn) {
+		ScriptEditorDebugger *dbg = edn->get_default_debugger();
+		if (dbg) {
+			game_errors = dbg->get_structured_errors(20, 8);
+		}
+	}
+	EditorLog *editor_log = EditorNode::get_log();
+	if (editor_log) {
+		game_output = editor_log->get_recent_messages_text(200);
+	}
+	if (game_errors.size() > 0) {
+		AI *ai_flag = AI::get_singleton();
+		if (ai_flag) {
+			ai_flag->set_errors_consumed_by_tool(true);
+		}
+	}
+
+	// Enrich the exec result with errors and game output.
+	Dictionary enriched = p_exec_result.duplicate();
+	String status = enriched.get("status", "error");
+	if (status == "success") {
+		Dictionary rd = ((Dictionary)enriched.get("result", Dictionary())).duplicate();
+		if (game_errors.size() > 0) {
+			rd["game_crashed"] = true;
+			rd["errors"] = game_errors;
+		}
+		if (!game_output.is_empty()) {
+			rd["game_output"] = game_output;
+		}
+		enriched["result"] = rd;
+	} else {
+		// Even on tool error (timeout), include game errors — they explain why it timed out.
+		Dictionary ed = ((Dictionary)enriched.get("error", Dictionary())).duplicate();
+		if (game_errors.size() > 0) {
+			ed["game_errors"] = game_errors;
+		}
+		if (!game_output.is_empty()) {
+			ed["game_output"] = game_output;
+		}
+		enriched["error"] = ed;
+	}
+
 	// Build tool result directly (don't re-execute — we already have the result from async capture)
 	Dictionary tool_result_data;
 	tool_result_data["tool_name"] = "run_and_screenshot";
@@ -817,22 +874,21 @@ void AgenticOrchestrator::_on_async_rns_complete(const Dictionary &p_exec_result
 	tool_result_data["type"] = "run_and_screenshot";
 	tool_result_data["args"] = _async_rns_action_args;
 
-	String status = p_exec_result.get("status", "error");
 	tool_result_data["status"] = status;
 	if (status == "success") {
-		tool_result_data["result"] = p_exec_result.get("result", Dictionary());
+		tool_result_data["result"] = enriched.get("result", Dictionary());
 	} else {
-		tool_result_data["error"] = p_exec_result.get("error", Dictionary());
+		tool_result_data["error"] = enriched.get("error", Dictionary());
 	}
 
 	// Build native tool result message.
 	// Strip screenshot_b64 from the JSON content (it inflates the token count as text)
 	// and attach it as _images instead so providers can send it as a real image.
-	Dictionary content_for_wire = p_exec_result;
+	Dictionary content_for_wire = enriched;
 	if (status == "success") {
-		Dictionary result = p_exec_result.get("result", Dictionary());
+		Dictionary result = enriched.get("result", Dictionary());
 		if (result.has("screenshot_b64")) {
-			content_for_wire = p_exec_result.duplicate();
+			content_for_wire = enriched.duplicate();
 			Dictionary r = result.duplicate();
 			r.erase("screenshot_b64");
 			r["screenshot"] = "<see attached image>";
@@ -848,7 +904,7 @@ void AgenticOrchestrator::_on_async_rns_complete(const Dictionary &p_exec_result
 
 	// Attach screenshot as _images for vision-capable models
 	if (status == "success") {
-		Dictionary result = p_exec_result.get("result", Dictionary());
+		Dictionary result = enriched.get("result", Dictionary());
 		if (result.has("screenshot_b64")) {
 			Array imgs;
 			imgs.push_back(result["screenshot_b64"]);

@@ -186,6 +186,7 @@ public:
 
 	void clear();
 	String get_text() const { return log ? log->get_parsed_text() : String(); }
+	String get_recent_messages_text(int p_max_lines = 100) const;
 
 	EditorLog();
 	~EditorLog();

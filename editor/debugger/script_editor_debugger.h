@@ -30,6 +30,7 @@
 
 #pragma once
 
+#include "core/debugger/debugger_marshalls.h"
 #include "core/object/script_language.h"
 #include "core/os/os.h"
 #include "editor/debugger/editor_debugger_inspector.h"
@@ -111,6 +112,14 @@ private:
 
 	int error_count;
 	int warning_count;
+
+	struct ErrorRecord {
+		DebuggerMarshalls::OutputError error;
+		uint64_t timestamp_ms = 0;
+	};
+	Vector<ErrorRecord> _error_records;
+
+	static String _classify_error_type(const DebuggerMarshalls::OutputError &p_error);
 
 	bool skip_breakpoints_value = false;
 	bool ignore_error_breaks_value = false;
@@ -321,6 +330,7 @@ public:
 	int get_error_count() const { return error_count; }
 	int get_warning_count() const { return warning_count; }
 	String get_errors_text() const;
+	Array get_structured_errors(int p_max = 100, int p_max_stack_frames = 50) const;
 	String get_stack_script_file() const;
 	int get_stack_script_line() const;
 	int get_stack_script_frame() const;

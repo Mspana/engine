@@ -1065,6 +1065,10 @@ void AI::set_debug_context_enabled(bool p_enabled) {
     _debug_context_enabled = p_enabled;
 }
 
+void AI::set_errors_consumed_by_tool(bool p_consumed) {
+    _errors_consumed_by_tool = p_consumed;
+}
+
 Dictionary AI::consume_session_context() {
     Dictionary ctx;
 #ifdef TOOLS_ENABLED
@@ -1074,21 +1078,37 @@ Dictionary AI::consume_session_context() {
     ctx["game_is_running"] = is_running;
     ctx["include"] = _debug_context_enabled;
 
-    // Always report error count from the debugger stack trace tab
+    // Report error count and structured errors from the debugger.
     EditorDebuggerNode *edn = EditorDebuggerNode::get_singleton();
     if (edn) {
         ScriptEditorDebugger *dbg = edn->get_default_debugger();
         if (dbg) {
-            int err_count = dbg->get_error_count();
+            int err_count = dbg->get_error_count() + dbg->get_warning_count();
             ctx["error_count"] = err_count;
-            if (err_count > 0) {
-                ctx["errors"] = dbg->get_errors_text();
+            if (!_errors_consumed_by_tool) {
+                ctx["errors"] = dbg->get_structured_errors(20, 8);
+            } else {
+                ctx["errors"] = Array(); // Already delivered via tool result.
+                _errors_consumed_by_tool = false;
             }
         } else {
             ctx["error_count"] = 0;
+            ctx["errors"] = Array();
         }
     } else {
         ctx["error_count"] = 0;
+        ctx["errors"] = Array();
+    }
+
+    // Game output log (print(), push_error(), etc. from the running game).
+    if (!_errors_consumed_by_tool) {
+        EditorLog *editor_log = EditorNode::get_log();
+        if (editor_log) {
+            String log_text = editor_log->get_recent_messages_text(200);
+            if (!log_text.is_empty()) {
+                ctx["game_output"] = log_text;
+            }
+        }
     }
 
     // Screenshot captured at session end (async, may arrive slightly after)

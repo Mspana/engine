@@ -222,6 +222,25 @@ void EditorLog::clear() {
 	_clear_request();
 }
 
+String EditorLog::get_recent_messages_text(int p_max_lines) const {
+	String result;
+	int start = MAX(0, messages.size() - p_max_lines);
+	for (int i = start; i < messages.size(); i++) {
+		const LogMessage &msg = messages[i];
+		if (msg.type == MSG_TYPE_EDITOR) {
+			continue;
+		}
+		if (!result.is_empty()) {
+			result += "\n";
+		}
+		result += msg.text;
+		if (msg.count > 1) {
+			result += " (x" + itos(msg.count) + ")";
+		}
+	}
+	return result;
+}
+
 void EditorLog::_process_message(const String &p_msg, MessageType p_type, bool p_clear) {
 	if (messages.size() > 0 && messages[messages.size() - 1].text == p_msg && messages[messages.size() - 1].type == p_type) {
 		// If previous message is the same as the new one, increase previous count rather than adding another
