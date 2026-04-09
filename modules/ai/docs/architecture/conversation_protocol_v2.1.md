@@ -374,8 +374,8 @@ When a run is cancelled:
 
 1. **Complete any tool that has already started executing.** If the engine dispatched a tool call and is waiting for the result, wait for it and record the real result.
 2. **Write synthetic `cancelled` results for any tool calls that were not dispatched.** If the assistant message contained 3 tool calls and only 1 was dispatched before cancellation, write synthetic cancelled results for calls 2 and 3 before stopping.
-3. **Do not write a cancellation message to the item list.** The cancellation itself is not an item. The model infers interruption from the pattern: `assistant (with tool_calls) → tool results (some cancelled) → user (next message)`.
-4. **Show an ephemeral cancellation indicator in the UI** ("Cancelled. Tell me what to do next.") that is not persisted to the item list.
+3. **Write a `<turn_cancelled>` marker to the item list.** After all tool results (real or synthetic) are written, persist a user-role message containing XML-wrapped guidance: `<turn_cancelled>\nThe previous turn was cancelled by the user. Any in-progress work was stopped. Verify current state before continuing.\n</turn_cancelled>`. This gives the model explicit context about the interruption on the next turn.
+4. **Show an inline cancellation notice in the UI** ("User interrupted the conversation.") rendered as bold muted text — not a bubble. This notice is persisted (it is the display form of the `<turn_cancelled>` marker).
 
 ### Async run_and_screenshot during cancellation
 
@@ -390,9 +390,11 @@ The `_async_rns_tool_call_id` field already tracks which call ID to use for the 
 
 ### System prompt guidance for cancelled runs
 
-The system prompt must include guidance for how the model should behave when it encounters `status: "cancelled"` tool results at the start of a turn. The intended behavior is:
+The model receives explicit cancellation context via a `<turn_cancelled>` user-role message persisted in the conversation history. This marker tells the model to verify current state before continuing, and not to silently re-attempt cancelled work.
 
-> When you see `status: "cancelled"` tool results in the conversation history, acknowledge to the user that some work was interrupted and ask them how to proceed. Do not silently re-attempt the cancelled work — the user may have changed their mind or want to take a different approach. Example: "It looks like we were mid-way through [task] when you stopped the run. Would you like me to continue, or take a different approach?"
+When the model encounters both `status: "cancelled"` tool results and a `<turn_cancelled>` marker, the intended behavior is:
+
+> Acknowledge to the user that some work was interrupted and ask them how to proceed. Do not silently re-attempt the cancelled work — the user may have changed their mind or want to take a different approach. Example: "It looks like we were mid-way through [task] when you stopped the run. Would you like me to continue, or take a different approach?"
 
 This applies when cancellation left unexecuted work. If all tools completed normally and the user simply stopped the run (no cancelled results), no special acknowledgment is needed.
 
@@ -452,7 +454,7 @@ On reload, undelivered injections (those with no subsequent assistant message) a
 
 ### What is NOT persisted
 
-- Cancellation labels ("Cancelled. Tell me what to do next.")
+- Cancellation notices (displayed as inline bold text; the underlying `<turn_cancelled>` marker IS persisted as a user-role item)
 - Separators between API rounds
 - Token count labels
 - "Thinking..." pending animation
@@ -557,11 +559,12 @@ A complete conversation showing a user request, two sequential tool calls, a can
 {"ts":1743751252000,"item":{"role":"assistant","content":[{"type":"text","text":"I'll read the current player script and check the scene to plan the double jump implementation."},{"type":"tool_call","id":"call_003","name":"read_script","args":{"file_path":"res://Player.gd"}},{"type":"tool_call","id":"call_004","name":"list_nodes","args":{"root_path":"."}}]}}
 {"ts":1743751253000,"item":{"role":"tool","tool_call_id":"call_003","content":{"status":"success","tool_name":"read_script","result":{"content":"extends CharacterBody2D\nconst JUMP_VELOCITY = -500.0"}}}}
 {"ts":1743751253500,"item":{"role":"tool","tool_call_id":"call_004","content":{"status":"cancelled","tool_name":"list_nodes","args":{"root_path":"."},"reason":"user_cancelled_run"}}}
+{"ts":1743751253600,"item":{"role":"user","content":"<turn_cancelled>\nThe previous turn was cancelled by the user. Any in-progress work was stopped. Verify current state before continuing.\n</turn_cancelled>"}}
 {"ts":1743751254000,"item":{"role":"user","content":"Actually, make it a triple jump instead","images":[]}}
 {"ts":1743751255000,"item":{"role":"assistant","content":[{"type":"text","text":"It looks like we were in the middle of adding a double jump when you stopped the run — I had started reading your player script but the scene inspection was cancelled. You'd like a triple jump instead. I already have the player script content from the read that completed. I'll add a jump counter allowing up to 3 jumps before requiring a landing."},{"type":"tool_call","id":"call_005","name":"update_script","args":{"file_path":"res://Player.gd","old_string":"const JUMP_VELOCITY = -500.0","new_string":"const JUMP_VELOCITY = -500.0\nvar jump_count := 0\nconst MAX_JUMPS := 3"}}]}}
 ```
 
-Note: `call_004` (`list_nodes`) was in the assistant message's tool_calls list but was not dispatched before cancellation. A synthetic cancelled result is written before the next user message, maintaining the no-orphan invariant.
+Note: `call_004` (`list_nodes`) was in the assistant message's tool_calls list but was not dispatched before cancellation. A synthetic cancelled result is written, followed by a `<turn_cancelled>` user-role marker, before the next user message. This maintains the no-orphan invariant and gives the model explicit context about the interruption.
 
 ---
 
