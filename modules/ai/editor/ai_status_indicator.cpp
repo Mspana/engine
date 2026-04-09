@@ -2220,44 +2220,52 @@ void AIStatusPanel::_new_chat() {
 
 String AIStatusPanel::_get_chat_display_name(const String &p_id) const {
 	String path = AIChatStore::make_chat_path(p_id);
-	if (!FileAccess::exists(path)) {
-		return p_id;
-	}
 	Ref<FileAccess> f = FileAccess::open(path, FileAccess::READ);
 	if (f.is_null()) {
 		return p_id;
 	}
-	// Read just the first 2KB to find the first user message content
-	Vector<uint8_t> buf = f->get_buffer(2048);
-	f.unref();
-	String chunk = String::utf8((const char *)buf.ptr(), buf.size());
+	// Read JSONL lines until we find the first user message.
+	while (!f->eof_reached()) {
+		String line = f->get_line().strip_edges();
+		if (line.is_empty()) {
+			continue;
+		}
+		Variant parsed = JSON::parse_string(line);
+		if (parsed.get_type() != Variant::DICTIONARY) {
+			continue;
+		}
+		Dictionary d = parsed;
+		// JSONL format: {"ts": ..., "item": {"role":"user", "content":"..."}}
+		Dictionary item = d.get("item", Dictionary());
+		if (item.get("role", "") != "user") {
+			continue;
+		}
+		String text = item.get("content", "");
+		text = text.replace("\n", " ").replace("\t", " ").strip_edges();
+		return text.is_empty() ? p_id : text;
+	}
+	return p_id;
+}
 
-	// Quick-parse: find "role":"user" then nearby "content":"..."
-	int role_pos = chunk.find("\"user\"");
-	if (role_pos < 0) {
-		return p_id;
+String AIStatusPanel::_format_relative_time(uint64_t p_unix_time) {
+	uint64_t now = Time::get_singleton()->get_unix_time_from_system();
+	if (p_unix_time > now) {
+		return "now";
 	}
-	int content_pos = chunk.find("\"content\"", role_pos);
-	if (content_pos < 0) {
-		return p_id;
+	uint64_t diff = now - p_unix_time;
+	if (diff < 60) {
+		return "now";
+	} else if (diff < 3600) {
+		return vformat("%dm", diff / 60);
+	} else if (diff < 86400) {
+		return vformat("%dh", diff / 3600);
+	} else if (diff < 86400 * 30) {
+		return vformat("%dd", diff / 86400);
+	} else if (diff < 86400 * 365) {
+		return vformat("%dmo", diff / (86400 * 30));
+	} else {
+		return vformat("%dy", diff / (86400 * 365));
 	}
-	int quote_start = chunk.find("\"", content_pos + 9); // past "content":
-	if (quote_start < 0) {
-		return p_id;
-	}
-	quote_start++; // move past opening quote
-	int quote_end = chunk.find("\"", quote_start);
-	if (quote_end <= quote_start) {
-		return p_id;
-	}
-	String text = chunk.substr(quote_start, quote_end - quote_start);
-	// Unescape basic JSON escapes
-	text = text.replace("\\n", " ").replace("\\t", " ").replace("\\\"", "\"");
-	text = text.strip_edges();
-	if (text.length() > 40) {
-		text = text.substr(0, 40) + U"…";
-	}
-	return text.is_empty() ? p_id : text;
 }
 
 void AIStatusPanel::_switch_to_chat(const String &p_id) {
@@ -2387,6 +2395,17 @@ void AIStatusPanel::_rebuild_history_popup() {
 
 		name_btn->connect(SceneStringNames::get_singleton()->pressed, callable_mp(this, &AIStatusPanel::_switch_to_chat).bind(id));
 		row->add_child(name_btn);
+
+		// Time-since-last-activity label
+		String chat_path = AIChatStore::make_chat_path(id);
+		uint64_t mod_time = FileAccess::get_modified_time(chat_path);
+		Label *time_label = memnew(Label);
+		time_label->set_text(_format_relative_time(mod_time));
+		time_label->set_horizontal_alignment(HORIZONTAL_ALIGNMENT_RIGHT);
+		time_label->set_custom_minimum_size(Size2(36 * EDSCALE, 0));
+		time_label->add_theme_color_override("font_color", AIColors::TEXT_MUTED);
+		time_label->add_theme_font_size_override("font_size", 11 * EDSCALE);
+		row->add_child(time_label);
 
 		// Delete button
 		Button *del_btn = memnew(Button);

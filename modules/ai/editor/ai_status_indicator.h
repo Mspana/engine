@@ -369,6 +369,7 @@ private:
 	void _show_history_popup();
 	void _rebuild_history_popup();
 	String _get_chat_display_name(const String &p_id) const;
+	static String _format_relative_time(uint64_t p_unix_time);
 	void _switch_to_chat(const String &p_id);
 	void _delete_chat(const String &p_id);
 	void _on_delete_chat_confirmed();
