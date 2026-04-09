@@ -253,6 +253,12 @@ void AgenticOrchestrator::_send_model_request() {
 	}
 	print_line("============================================");
 
+	// Log raw request for dashboard
+	{
+		Dictionary req_body = provider->build_request_body_with_messages(messages_to_send, "");
+		AI::get_singleton()->log_raw_api("request", current_run.model_turns, req_body);
+	}
+
 	// Call provider asynchronously - response will come via _on_provider_response
 	provider->send_request_with_messages(messages_to_send, "");
 }
@@ -356,6 +362,15 @@ void AgenticOrchestrator::_process_native_tool_response(const Dictionary &p_api_
 	}
 	if (_current_turn_tokens > 0) {
 		emit_signal("turn_tokens_ready", _current_turn_tokens);
+	}
+
+	// Log raw response for dashboard
+	{
+		Dictionary tokens;
+		if (p_api_response.has("usage")) {
+			tokens = p_api_response["usage"];
+		}
+		AI::get_singleton()->log_raw_api("response", current_run.model_turns, p_api_response, 200, tokens);
 	}
 
 	String content = message.get("content", "");

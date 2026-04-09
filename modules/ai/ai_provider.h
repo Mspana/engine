@@ -76,6 +76,9 @@ public:
 	// New method to build request body from message history
 	virtual Dictionary build_request_body_with_messages(const Array &p_messages, const String &context_block = "") const;
 	
+	// Provider name for logging/dashboard
+	virtual String get_provider_name() const { return "unknown"; }
+
 	// Helper to load API key from environment or .env file
 	static String load_api_key_from_env(const String &env_var_name);
 	static String load_from_env_file(const String &key_name, const String &env_file_path = ".env");
@@ -104,6 +107,7 @@ public:
 	virtual String get_request_url() const override;
 	virtual void send_request(const String &user_prompt, const String &context_block = "") override;
 	virtual void send_request_with_messages(const Array &p_messages, const String &context_block = "") override;
+	virtual String get_provider_name() const override { return "openai"; }
 
 	OpenAIProvider();
 	~OpenAIProvider();
@@ -129,6 +133,7 @@ public:
 	virtual String get_request_url() const override;
 	virtual void send_request(const String &user_prompt, const String &context_block = "") override;
 	virtual void send_request_with_messages(const Array &p_messages, const String &context_block = "") override;
+	virtual String get_provider_name() const override { return "gemini"; }
 
 	GeminiProvider();
 	~GeminiProvider();
@@ -154,9 +159,36 @@ public:
 	virtual String get_request_url() const override;
 	virtual void send_request(const String &user_prompt, const String &context_block = "") override;
 	virtual void send_request_with_messages(const Array &p_messages, const String &context_block = "") override;
+	virtual String get_provider_name() const override { return "xai"; }
 
 	XAIProvider();
 	~XAIProvider();
+};
+
+// Anthropic Provider (Claude)
+class AnthropicProvider : public AIProvider {
+	GDCLASS(AnthropicProvider, AIProvider);
+
+protected:
+	void _perform_request(const String &user_prompt, const String &context_block);
+	void _perform_request_with_messages(const Array &p_messages, const String &context_block);
+
+	static void _bind_methods();
+
+public:
+	virtual String get_default_base_url() const override;
+	virtual String get_default_model() const override;
+	virtual Dictionary build_request_body(const String &user_prompt, const String &context_block = "") const override;
+	virtual Dictionary build_request_body_with_messages(const Array &p_messages, const String &context_block = "") const override;
+	virtual String parse_response(const Dictionary &response_data) const override;
+	virtual PackedStringArray get_request_headers() const override;
+	virtual String get_request_url() const override;
+	virtual void send_request(const String &user_prompt, const String &context_block = "") override;
+	virtual void send_request_with_messages(const Array &p_messages, const String &context_block = "") override;
+	virtual String get_provider_name() const override { return "anthropic"; }
+
+	AnthropicProvider();
+	~AnthropicProvider();
 };
 
 // Dummy Provider (for testing/simulation)
@@ -176,7 +208,8 @@ public:
 	virtual String get_request_url() const override;
 	virtual void send_request(const String &user_prompt, const String &context_block = "") override;
 	virtual void send_request_with_messages(const Array &p_messages, const String &context_block = "") override;
-	
+	virtual String get_provider_name() const override { return "dummy"; }
+
 	// Returns simulated response directly (doesn't need HTTP)
 	String get_dummy_response(const String &user_prompt) const;
 

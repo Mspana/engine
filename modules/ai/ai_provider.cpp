@@ -163,6 +163,13 @@ String AIProvider::load_from_env_file(const String &key_name, const String &env_
 		full_path = parent_dir.path_join(env_file_path);
 		file = FileAccess::open(full_path, FileAccess::READ);
 	}
+
+	// If not found in engine root, try modules/ai/
+	if (file.is_null()) {
+		String engine_root = exe_dir.get_base_dir();
+		full_path = engine_root.path_join("modules/ai").path_join(env_file_path);
+		file = FileAccess::open(full_path, FileAccess::READ);
+	}
 	
 	if (file.is_null()) {
 		// .env file doesn't exist, which is fine
@@ -587,6 +594,15 @@ int AIProvider::get_context_window_tokens(const String &p_model) {
 		return 32768;
 	}
 
+	// Anthropic Claude
+	if (p_model.begins_with("claude-opus-4") || p_model.begins_with("claude-sonnet-4")) {
+		return 200000; // 200k
+	}
+	if (p_model.begins_with("claude-3-5") || p_model.begins_with("claude-3-opus") ||
+		p_model.begins_with("claude-3-sonnet") || p_model.begins_with("claude-3-haiku")) {
+		return 200000; // 200k
+	}
+
 	return 0; // Unknown model
 }
 
@@ -605,6 +621,12 @@ bool AIProvider::model_supports_vision(const String &p_model) {
 	// xAI Grok 4 and vision-tagged models
 	if (p_model == "grok-4" || p_model == "grok-4-fast" ||
 		p_model == "grok-2-vision-1212" || p_model == "grok-vision-beta") {
+		return true;
+	}
+	// Anthropic Claude (all Claude 3+ models support vision)
+	if (p_model.begins_with("claude-opus-4") || p_model.begins_with("claude-sonnet-4") ||
+		p_model.begins_with("claude-3-5") || p_model.begins_with("claude-3-opus") ||
+		p_model.begins_with("claude-3-sonnet") || p_model.begins_with("claude-3-haiku")) {
 		return true;
 	}
 	return false;
@@ -844,17 +866,16 @@ Dictionary OpenAIProvider::build_request_body_with_messages(const Array &p_messa
 	body["temperature"] = temperature;
 	body["max_tokens"] = max_tokens;
 
-	// Enforce JSON output at the token-sampling level (prevents plain-text responses)
-	Dictionary response_format;
-	response_format["type"] = "json_object";
-	body["response_format"] = response_format;
+	// Native tool-calling: provide tool definitions, let model respond naturally
+	body["tools"] = AIProvider::build_tools_array();
+	body["tool_choice"] = "auto";
 
 	// Build messages array with system prompt first
 	Array messages;
-	
+
 	Dictionary system_msg;
 	system_msg["role"] = "system";
-	String system_content = get_system_prompt();
+	String system_content = get_system_prompt_native_tools();
 	if (!context_block.is_empty()) {
 		system_content += context_block;
 	}
@@ -1030,16 +1051,9 @@ void OpenAIProvider::_perform_request_with_messages(const Array &p_messages, con
 		return;
 	}
 	
-	// Check response code
+	// Read response body (needed for both success and error)
 	int response_code = http_client->get_response_code();
-	if (response_code != 200) {
-		ERR_PRINT(vformat("OpenAIProvider: HTTP error code: %d", response_code));
-		call_deferred("emit_signal", "request_completed", false, "", vformat("HTTP error: %d", response_code));
-		memdelete(http_client);
-		return;
-	}
-	
-	// Read response body
+
 	PackedByteArray response_body;
 	while (http_client->get_status() == HTTPClient::STATUS_BODY) {
 		http_client->poll();
@@ -1050,32 +1064,33 @@ void OpenAIProvider::_perform_request_with_messages(const Array &p_messages, con
 			OS::get_singleton()->delay_usec(10000); // 10ms
 		}
 	}
-	
+
 	String response_str = String::utf8((const char *)response_body.ptr(), response_body.size());
-	
-	// Parse JSON response
-	JSON json_parser;
-	err = json_parser.parse(response_str);
-	if (err != Error::OK) {
-		ERR_PRINT(vformat("OpenAIProvider: Failed to parse response JSON: %s", json_parser.get_error_message()));
-		call_deferred("emit_signal", "request_completed", false, "", "Failed to parse response JSON");
+
+	if (response_code != 200) {
+		// Try to extract error message from response body
+		String error_detail;
+		JSON err_json;
+		if (err_json.parse(response_str) == OK) {
+			Dictionary err_data = err_json.get_data();
+			if (err_data.has("error")) {
+				Dictionary err_obj = err_data["error"];
+				error_detail = err_obj.get("message", "");
+			}
+		}
+		String error_msg = error_detail.is_empty()
+			? vformat("HTTP error: %d", response_code)
+			: vformat("HTTP %d: %s", response_code, error_detail);
+		ERR_PRINT(vformat("OpenAIProvider: %s", error_msg));
+		call_deferred("emit_signal", "request_completed", false, "", error_msg);
 		memdelete(http_client);
 		return;
 	}
-	
-	Dictionary response_data = json_parser.get_data();
-	String ai_response = parse_response(response_data);
-	
-	if (ai_response.is_empty()) {
-		ERR_PRINT("OpenAIProvider: Empty response from AI");
-		call_deferred("emit_signal", "request_completed", false, "", "Empty response");
-		memdelete(http_client);
-		return;
-	}
-	
-	print_line(vformat("OpenAIProvider: Received response: %s", ai_response));
-	call_deferred("emit_signal", "request_completed", true, ai_response, "");
-	
+
+	// Return the full API response JSON — orchestrator needs finish_reason, tool_calls, content
+	print_line(vformat("OpenAIProvider: Received full API response (%d bytes)", response_str.length()));
+	call_deferred("emit_signal", "request_completed", true, response_str, "");
+
 	// Clean up
 	memdelete(http_client);
 }
@@ -1107,7 +1122,7 @@ String GeminiProvider::get_default_base_url() const {
 }
 
 String GeminiProvider::get_default_model() const {
-	return "gemini-pro";
+	return "gemini-2.0-flash";
 }
 
 Dictionary GeminiProvider::build_request_body(const String &user_prompt, const String &context_block) const {
@@ -1328,49 +1343,107 @@ void GeminiProvider::_perform_request(const String &user_prompt, const String &c
 Dictionary GeminiProvider::build_request_body_with_messages(const Array &p_messages, const String &context_block) const {
 	Dictionary body;
 
-	// Build contents array for Gemini format
-	// Gemini uses role: "user" and role: "model" (not "assistant")
-	// System prompt is prepended to the first user message
-	Array contents;
-	
-	String system_content = get_system_prompt();
+	// Convert OpenAI tool definitions to Gemini functionDeclarations format
+	Array openai_tools = AIProvider::build_tools_array();
+	Array function_declarations;
+	for (int i = 0; i < openai_tools.size(); i++) {
+		Dictionary tool = openai_tools[i];
+		if (!tool.has("function")) {
+			continue;
+		}
+		Dictionary func = tool["function"];
+		Dictionary decl;
+		decl["name"] = func.get("name", "");
+		decl["description"] = func.get("description", "");
+		if (func.has("parameters")) {
+			decl["parameters"] = func["parameters"];
+		}
+		function_declarations.push_back(decl);
+	}
+	Array tools_array;
+	Dictionary tools_obj;
+	tools_obj["functionDeclarations"] = function_declarations;
+	tools_array.push_back(tools_obj);
+	body["tools"] = tools_array;
+
+	// System instruction (Gemini supports this as a top-level field)
+	String system_content = get_system_prompt_native_tools();
 	if (!context_block.is_empty()) {
 		system_content += context_block;
 	}
-	
-	bool system_prepended = false;
-	
+	Dictionary system_instruction;
+	Array system_parts;
+	Dictionary system_text_part;
+	system_text_part["text"] = system_content;
+	system_parts.push_back(system_text_part);
+	system_instruction["parts"] = system_parts;
+	body["systemInstruction"] = system_instruction;
+
+	// Build contents array for Gemini format
+	// Gemini uses role: "user" and role: "model" (not "assistant")
+	Array contents;
+
 	for (int i = 0; i < p_messages.size(); i++) {
 		Dictionary msg = p_messages[i];
 		String role = msg.get("role", "");
-		String content = msg.get("content", "");
-		
-		Dictionary gemini_content;
-		Array parts;
-		Dictionary text_part;
-		
-		// Convert role: assistant -> model for Gemini
-		if (role == "assistant") {
-			gemini_content["role"] = "model";
-			text_part["text"] = content;
-		} else if (role == "user") {
-			gemini_content["role"] = "user";
-			// Prepend system prompt to first user message
-			if (!system_prepended) {
-				text_part["text"] = system_content + "\n\nUser request: " + content;
-				system_prepended = true;
-			} else {
-				text_part["text"] = content;
-			}
-		} else {
-			// Skip system messages (handled above)
-			continue;
+
+		if (role == "system") {
+			continue; // Handled via systemInstruction
 		}
 
-		parts.push_back(text_part);
+		Dictionary gemini_content;
+		Array parts;
 
-		// Add inline image parts for user messages (Gemini multimodal)
-		if (role == "user") {
+		if (role == "assistant" && msg.has("tool_calls")) {
+			// Assistant message with tool calls → model message with functionCall parts
+			gemini_content["role"] = "model";
+			String text_content = msg.get("content", "");
+			if (!text_content.is_empty()) {
+				Dictionary text_part;
+				text_part["text"] = text_content;
+				parts.push_back(text_part);
+			}
+			Array tool_calls = msg["tool_calls"];
+			for (int j = 0; j < tool_calls.size(); j++) {
+				Dictionary tc = tool_calls[j];
+				Dictionary func = tc.get("function", Dictionary());
+				Dictionary fc_part;
+				fc_part["functionCall"] = Dictionary();
+				Dictionary &fc = const_cast<Dictionary &>(fc_part["functionCall"].operator Dictionary());
+				fc["name"] = func.get("name", "");
+				// Parse arguments from JSON string to Dictionary
+				String args_str = func.get("arguments", "{}");
+				JSON args_json;
+				if (args_json.parse(args_str) == OK) {
+					fc["args"] = args_json.get_data();
+				} else {
+					fc["args"] = Dictionary();
+				}
+				parts.push_back(fc_part);
+			}
+		} else if (role == "tool") {
+			// Tool result → user message with functionResponse part
+			gemini_content["role"] = "user";
+			Dictionary fr_part;
+			Dictionary func_response;
+			func_response["name"] = msg.get("name", "unknown");
+			Dictionary response_content;
+			response_content["result"] = msg.get("content", "");
+			func_response["response"] = response_content;
+			fr_part["functionResponse"] = func_response;
+			parts.push_back(fr_part);
+		} else if (role == "assistant") {
+			gemini_content["role"] = "model";
+			Dictionary text_part;
+			text_part["text"] = msg.get("content", "");
+			parts.push_back(text_part);
+		} else if (role == "user") {
+			gemini_content["role"] = "user";
+			Dictionary text_part;
+			text_part["text"] = msg.get("content", "");
+			parts.push_back(text_part);
+
+			// Add inline image parts for user messages (Gemini multimodal)
 			bool has_images = msg.has("_images") && !msg["_images"].operator Array().is_empty();
 			if (has_images && supports_vision()) {
 				Array imgs = msg["_images"];
@@ -1385,19 +1458,21 @@ Dictionary GeminiProvider::build_request_body_with_messages(const Array &p_messa
 			} else if (has_images) {
 				WARN_PRINT(vformat("GeminiProvider: Model '%s' does not support vision. Dropping %d image(s) from message.", model, msg["_images"].operator Array().size()));
 			}
+		} else {
+			continue;
 		}
 
 		gemini_content["parts"] = parts;
 		contents.push_back(gemini_content);
 	}
-	
-	// If no user messages (empty transcript), add system as first user message
-	if (!system_prepended) {
+
+	// If no contents, add a placeholder user message
+	if (contents.is_empty()) {
 		Dictionary gemini_content;
 		gemini_content["role"] = "user";
 		Array parts;
 		Dictionary text_part;
-		text_part["text"] = system_content;
+		text_part["text"] = "Begin.";
 		parts.push_back(text_part);
 		gemini_content["parts"] = parts;
 		contents.push_back(gemini_content);
@@ -1409,7 +1484,6 @@ Dictionary GeminiProvider::build_request_body_with_messages(const Array &p_messa
 	Dictionary generation_config;
 	generation_config["temperature"] = temperature;
 	generation_config["maxOutputTokens"] = max_tokens;
-	generation_config["responseMimeType"] = "application/json"; // Enforce JSON output at token level
 	body["generationConfig"] = generation_config;
 
 	return body;
@@ -1497,16 +1571,9 @@ void GeminiProvider::_perform_request_with_messages(const Array &p_messages, con
 		return;
 	}
 	
-	// Check response code
+	// Read response body (needed for both success and error)
 	int response_code = http_client->get_response_code();
-	if (response_code != 200) {
-		ERR_PRINT(vformat("GeminiProvider: HTTP error code: %d", response_code));
-		call_deferred("emit_signal", "request_completed", false, "", vformat("HTTP error: %d", response_code));
-		memdelete(http_client);
-		return;
-	}
-	
-	// Read response body
+
 	PackedByteArray response_body;
 	while (http_client->get_status() == HTTPClient::STATUS_BODY) {
 		http_client->poll();
@@ -1517,10 +1584,30 @@ void GeminiProvider::_perform_request_with_messages(const Array &p_messages, con
 			OS::get_singleton()->delay_usec(10000); // 10ms
 		}
 	}
-	
+
 	String response_str = String::utf8((const char *)response_body.ptr(), response_body.size());
-	
-	// Parse JSON response
+
+	if (response_code != 200) {
+		// Try to extract error message from response body
+		String error_detail;
+		JSON err_json;
+		if (err_json.parse(response_str) == OK) {
+			Dictionary err_data = err_json.get_data();
+			if (err_data.has("error")) {
+				Dictionary err_obj = err_data["error"];
+				error_detail = err_obj.get("message", "");
+			}
+		}
+		String error_msg = error_detail.is_empty()
+			? vformat("HTTP error: %d", response_code)
+			: vformat("HTTP %d: %s", response_code, error_detail);
+		ERR_PRINT(vformat("GeminiProvider: %s", error_msg));
+		call_deferred("emit_signal", "request_completed", false, "", error_msg);
+		memdelete(http_client);
+		return;
+	}
+
+	// Parse Gemini response and translate to OpenAI-compatible format
 	JSON json_parser;
 	err = json_parser.parse(response_str);
 	if (err != Error::OK) {
@@ -1529,20 +1616,77 @@ void GeminiProvider::_perform_request_with_messages(const Array &p_messages, con
 		memdelete(http_client);
 		return;
 	}
-	
-	Dictionary response_data = json_parser.get_data();
-	String ai_response = parse_response(response_data);
-	
-	if (ai_response.is_empty()) {
-		ERR_PRINT("GeminiProvider: Empty response from AI");
-		call_deferred("emit_signal", "request_completed", false, "", "Empty response");
-		memdelete(http_client);
-		return;
+
+	Dictionary gemini_response = json_parser.get_data();
+
+	// Extract from Gemini format: candidates[0].content.parts
+	String text_content;
+	Array tool_calls;
+	bool has_function_calls = false;
+
+	if (gemini_response.has("candidates")) {
+		Array candidates = gemini_response["candidates"];
+		if (!candidates.is_empty()) {
+			Dictionary candidate = candidates[0];
+			if (candidate.has("content")) {
+				Dictionary content = candidate["content"];
+				if (content.has("parts")) {
+					Array parts = content["parts"];
+					for (int i = 0; i < parts.size(); i++) {
+						Dictionary part = parts[i];
+						if (part.has("text")) {
+							text_content += String(part["text"]);
+						} else if (part.has("functionCall")) {
+							has_function_calls = true;
+							Dictionary fc = part["functionCall"];
+							Dictionary tool_call;
+							tool_call["id"] = vformat("call_%d", tool_calls.size());
+							tool_call["type"] = "function";
+							Dictionary function;
+							function["name"] = fc.get("name", "");
+							// Serialize args Dictionary back to JSON string
+							Dictionary args = fc.get("args", Dictionary());
+							function["arguments"] = JSON::stringify(args);
+							tool_call["function"] = function;
+							tool_calls.push_back(tool_call);
+						}
+					}
+				}
+			}
+		}
 	}
-	
-	print_line(vformat("GeminiProvider: Received response: %s", ai_response));
-	call_deferred("emit_signal", "request_completed", true, ai_response, "");
-	
+
+	// Build OpenAI-compatible response
+	Dictionary openai_response;
+	Array choices;
+	Dictionary choice;
+	Dictionary message;
+	message["role"] = "assistant";
+	message["content"] = text_content.is_empty() ? Variant() : Variant(text_content);
+	if (has_function_calls) {
+		message["tool_calls"] = tool_calls;
+		choice["finish_reason"] = "tool_calls";
+	} else {
+		choice["finish_reason"] = "stop";
+	}
+	choice["message"] = message;
+	choices.push_back(choice);
+	openai_response["choices"] = choices;
+
+	// Translate usage metadata
+	if (gemini_response.has("usageMetadata")) {
+		Dictionary gemini_usage = gemini_response["usageMetadata"];
+		Dictionary usage;
+		usage["prompt_tokens"] = gemini_usage.get("promptTokenCount", 0);
+		usage["completion_tokens"] = gemini_usage.get("candidatesTokenCount", 0);
+		usage["total_tokens"] = gemini_usage.get("totalTokenCount", 0);
+		openai_response["usage"] = usage;
+	}
+
+	String translated_response = JSON::stringify(openai_response);
+	print_line(vformat("GeminiProvider: Translated response to OpenAI format (%d bytes)", translated_response.length()));
+	call_deferred("emit_signal", "request_completed", true, translated_response, "");
+
 	// Clean up
 	memdelete(http_client);
 }
@@ -1976,16 +2120,9 @@ void XAIProvider::_perform_request_with_messages(const Array &p_messages, const 
 		return;
 	}
 	
-	// Check response code
+	// Read response body (needed for both success and error)
 	int response_code = http_client->get_response_code();
-	if (response_code != 200) {
-		ERR_PRINT(vformat("XAIProvider: HTTP error code: %d", response_code));
-		call_deferred("emit_signal", "request_completed", false, "", vformat("HTTP error: %d", response_code));
-		memdelete(http_client);
-		return;
-	}
-	
-	// Read response body
+
 	PackedByteArray response_body;
 	while (http_client->get_status() == HTTPClient::STATUS_BODY) {
 		http_client->poll();
@@ -1996,14 +2133,673 @@ void XAIProvider::_perform_request_with_messages(const Array &p_messages, const 
 			OS::get_singleton()->delay_usec(10000); // 10ms
 		}
 	}
-	
+
 	String response_str = String::utf8((const char *)response_body.ptr(), response_body.size());
+
+	if (response_code != 200) {
+		// Try to extract error message from response body
+		String error_detail;
+		JSON err_json;
+		if (err_json.parse(response_str) == OK) {
+			Dictionary err_data = err_json.get_data();
+			if (err_data.has("error")) {
+				Dictionary err_obj = err_data["error"];
+				error_detail = err_obj.get("message", "");
+			}
+		}
+		String error_msg = error_detail.is_empty()
+			? vformat("HTTP error: %d", response_code)
+			: vformat("HTTP %d: %s", response_code, error_detail);
+		ERR_PRINT(vformat("XAIProvider: %s", error_msg));
+		call_deferred("emit_signal", "request_completed", false, "", error_msg);
+		memdelete(http_client);
+		return;
+	}
 
 	// Return the full API response JSON — orchestrator needs finish_reason, tool_calls, content
 	print_line(vformat("XAIProvider: Received full API response (%d bytes)", response_str.length()));
 	call_deferred("emit_signal", "request_completed", true, response_str, "");
 
 	// Clean up
+	memdelete(http_client);
+}
+
+// ============================================================================
+// AnthropicProvider Implementation (Claude)
+// ============================================================================
+
+AnthropicProvider::AnthropicProvider() : AIProvider() {
+	model = get_default_model();
+	base_url = get_default_base_url();
+
+	// Try to load API key from environment
+	String env_key = load_api_key_from_env("ANTHROPIC_API_KEY");
+	if (!env_key.is_empty()) {
+		api_key = env_key;
+	}
+}
+
+AnthropicProvider::~AnthropicProvider() {
+}
+
+void AnthropicProvider::_bind_methods() {
+	// No additional methods to bind for now
+}
+
+String AnthropicProvider::get_default_base_url() const {
+	return "https://api.anthropic.com";
+}
+
+String AnthropicProvider::get_default_model() const {
+	return "claude-sonnet-4-20250514";
+}
+
+Dictionary AnthropicProvider::build_request_body(const String &user_prompt, const String &context_block) const {
+	Dictionary body;
+	body["model"] = model;
+	body["max_tokens"] = max_tokens;
+
+	// System prompt as top-level field
+	String system_content = get_system_prompt();
+	if (!context_block.is_empty()) {
+		system_content += context_block;
+	}
+	body["system"] = system_content;
+
+	Array messages;
+	Dictionary user_msg;
+	user_msg["role"] = "user";
+	user_msg["content"] = user_prompt;
+	messages.push_back(user_msg);
+	body["messages"] = messages;
+
+	return body;
+}
+
+String AnthropicProvider::parse_response(const Dictionary &response_data) const {
+	// Anthropic format: {"content": [{"type": "text", "text": "..."}]}
+	if (!response_data.has("content")) {
+		ERR_PRINT("Anthropic response missing 'content' field");
+		return "";
+	}
+
+	Array content = response_data["content"];
+	for (int i = 0; i < content.size(); i++) {
+		Dictionary block = content[i];
+		if (String(block.get("type", "")) == "text") {
+			return block.get("text", "");
+		}
+	}
+
+	ERR_PRINT("Anthropic response has no text content block");
+	return "";
+}
+
+PackedStringArray AnthropicProvider::get_request_headers() const {
+	PackedStringArray headers;
+	headers.push_back("Content-Type: application/json");
+	headers.push_back("x-api-key: " + api_key);
+	headers.push_back("anthropic-version: 2023-06-01");
+	return headers;
+}
+
+String AnthropicProvider::get_request_url() const {
+	return base_url + "/v1/messages";
+}
+
+void AnthropicProvider::send_request(const String &user_prompt, const String &context_block) {
+	if (api_key.is_empty()) {
+		ERR_PRINT("AnthropicProvider::send_request() - API key is not set");
+		call_deferred("emit_signal", "request_completed", false, "", "API key is not set");
+		return;
+	}
+
+	print_line(vformat("AnthropicProvider: Sending request to %s", get_request_url()));
+
+	WorkerThreadPool::get_singleton()->add_task(
+		callable_mp(this, &AnthropicProvider::_perform_request).bind(user_prompt, context_block)
+	);
+}
+
+void AnthropicProvider::_perform_request(const String &user_prompt, const String &context_block) {
+	HTTPClient *http_client = HTTPClient::create();
+
+	String host = "api.anthropic.com";
+	int port = 443;
+
+	Ref<TLSOptions> tls_options = TLSOptions::client();
+	Error err = http_client->connect_to_host(host, port, tls_options);
+	if (err != OK) {
+		ERR_PRINT(vformat("AnthropicProvider: Failed to connect to host: %d", err));
+		call_deferred("emit_signal", "request_completed", false, "", vformat("Failed to connect: %d", err));
+		memdelete(http_client);
+		return;
+	}
+
+	while (http_client->get_status() == HTTPClient::STATUS_CONNECTING ||
+	       http_client->get_status() == HTTPClient::STATUS_RESOLVING) {
+		http_client->poll();
+		OS::get_singleton()->delay_usec(10000);
+	}
+
+	if (http_client->get_status() != HTTPClient::STATUS_CONNECTED) {
+		ERR_PRINT(vformat("AnthropicProvider: Connection failed, status: %d", http_client->get_status()));
+		call_deferred("emit_signal", "request_completed", false, "", "Connection failed");
+		memdelete(http_client);
+		return;
+	}
+
+	Dictionary request_body = build_request_body(user_prompt, context_block);
+	String json_body = JSON::stringify(request_body);
+	PackedStringArray headers_array = get_request_headers();
+
+	Vector<String> headers_vector;
+	for (int i = 0; i < headers_array.size(); i++) {
+		headers_vector.push_back(headers_array[i]);
+	}
+
+	CharString body_data = json_body.utf8();
+	err = http_client->request(HTTPClient::METHOD_POST, "/v1/messages", headers_vector, (const uint8_t *)body_data.get_data(), body_data.length());
+	if (err != OK) {
+		ERR_PRINT(vformat("AnthropicProvider: Failed to send request: %d", err));
+		call_deferred("emit_signal", "request_completed", false, "", vformat("Failed to send request: %d", err));
+		memdelete(http_client);
+		return;
+	}
+
+	while (http_client->get_status() == HTTPClient::STATUS_REQUESTING) {
+		http_client->poll();
+		OS::get_singleton()->delay_usec(10000);
+	}
+
+	if (http_client->get_status() != HTTPClient::STATUS_BODY &&
+	    http_client->get_status() != HTTPClient::STATUS_CONNECTED) {
+		ERR_PRINT(vformat("AnthropicProvider: Request failed, status: %d", http_client->get_status()));
+		call_deferred("emit_signal", "request_completed", false, "", "Request failed");
+		memdelete(http_client);
+		return;
+	}
+
+	int response_code = http_client->get_response_code();
+	if (response_code != 200) {
+		// Read error body for diagnostics
+		PackedByteArray err_body;
+		while (http_client->get_status() == HTTPClient::STATUS_BODY) {
+			http_client->poll();
+			PackedByteArray chunk = http_client->read_response_body_chunk();
+			if (chunk.size() > 0) {
+				err_body.append_array(chunk);
+			} else {
+				OS::get_singleton()->delay_usec(10000);
+			}
+		}
+		String err_str = String::utf8((const char *)err_body.ptr(), err_body.size());
+		String error_detail;
+		JSON err_json;
+		if (err_json.parse(err_str) == OK) {
+			Dictionary err_data = err_json.get_data();
+			if (err_data.has("error")) {
+				Dictionary err_obj = err_data["error"];
+				error_detail = err_obj.get("message", "");
+			}
+		}
+		String error_msg = error_detail.is_empty()
+			? vformat("HTTP error: %d", response_code)
+			: vformat("HTTP %d: %s", response_code, error_detail);
+		ERR_PRINT(vformat("AnthropicProvider: %s", error_msg));
+		call_deferred("emit_signal", "request_completed", false, "", error_msg);
+		memdelete(http_client);
+		return;
+	}
+
+	PackedByteArray response_body;
+	while (http_client->get_status() == HTTPClient::STATUS_BODY) {
+		http_client->poll();
+		PackedByteArray chunk = http_client->read_response_body_chunk();
+		if (chunk.size() > 0) {
+			response_body.append_array(chunk);
+		} else {
+			OS::get_singleton()->delay_usec(10000);
+		}
+	}
+
+	String response_str = String::utf8((const char *)response_body.ptr(), response_body.size());
+
+	JSON json;
+	err = json.parse(response_str);
+	if (err != Error::OK) {
+		ERR_PRINT(vformat("AnthropicProvider: Failed to parse response JSON: %s", json.get_error_message()));
+		call_deferred("emit_signal", "request_completed", false, "", "Failed to parse response JSON");
+		memdelete(http_client);
+		return;
+	}
+
+	Dictionary response_data = json.get_data();
+	String ai_response = parse_response(response_data);
+
+	if (ai_response.is_empty()) {
+		ERR_PRINT("AnthropicProvider: Empty response from AI");
+		call_deferred("emit_signal", "request_completed", false, "", "Empty response");
+		memdelete(http_client);
+		return;
+	}
+
+	print_line(vformat("AnthropicProvider: Received response: %s", ai_response));
+	call_deferred("emit_signal", "request_completed", true, ai_response, "");
+
+	memdelete(http_client);
+}
+
+Dictionary AnthropicProvider::build_request_body_with_messages(const Array &p_messages, const String &context_block) const {
+	Dictionary body;
+	body["model"] = model;
+	body["max_tokens"] = max_tokens;
+
+	// System prompt as top-level field (Anthropic keeps it separate from messages)
+	String system_content = get_system_prompt_native_tools();
+	if (!context_block.is_empty()) {
+		system_content += context_block;
+	}
+	body["system"] = system_content;
+
+	// Convert OpenAI tool definitions to Anthropic format
+	Array openai_tools = AIProvider::build_tools_array();
+	Array anthropic_tools;
+	for (int i = 0; i < openai_tools.size(); i++) {
+		Dictionary tool = openai_tools[i];
+		if (!tool.has("function")) {
+			continue;
+		}
+		Dictionary func = tool["function"];
+		Dictionary anthropic_tool;
+		anthropic_tool["name"] = func.get("name", "");
+		anthropic_tool["description"] = func.get("description", "");
+		if (func.has("parameters")) {
+			anthropic_tool["input_schema"] = func["parameters"];
+		} else {
+			Dictionary empty_schema;
+			empty_schema["type"] = "object";
+			empty_schema["properties"] = Dictionary();
+			anthropic_tool["input_schema"] = empty_schema;
+		}
+		anthropic_tools.push_back(anthropic_tool);
+	}
+	body["tools"] = anthropic_tools;
+
+	// Build messages array
+	Array messages;
+
+	for (int i = 0; i < p_messages.size(); i++) {
+		Dictionary msg = p_messages[i];
+		String role = msg.get("role", "");
+
+		if (role == "system") {
+			continue; // Handled via top-level system field
+		}
+
+		if (role == "assistant" && msg.has("tool_calls")) {
+			// Assistant message with tool calls → content blocks with tool_use
+			Dictionary out_msg;
+			out_msg["role"] = "assistant";
+			Array content;
+
+			String text_content = msg.get("content", "");
+			if (!text_content.is_empty()) {
+				Dictionary text_block;
+				text_block["type"] = "text";
+				text_block["text"] = text_content;
+				content.push_back(text_block);
+			}
+
+			Array tool_calls = msg["tool_calls"];
+			for (int j = 0; j < tool_calls.size(); j++) {
+				Dictionary tc = tool_calls[j];
+				Dictionary func = tc.get("function", Dictionary());
+				Dictionary tool_use_block;
+				tool_use_block["type"] = "tool_use";
+				tool_use_block["id"] = tc.get("id", "");
+				tool_use_block["name"] = func.get("name", "");
+				// Parse arguments from JSON string to Dictionary
+				String args_str = func.get("arguments", "{}");
+				JSON args_json;
+				if (args_json.parse(args_str) == OK) {
+					tool_use_block["input"] = args_json.get_data();
+				} else {
+					tool_use_block["input"] = Dictionary();
+				}
+				content.push_back(tool_use_block);
+			}
+
+			out_msg["content"] = content;
+			messages.push_back(out_msg);
+		} else if (role == "tool") {
+			// Tool result → user message with tool_result content block
+			Dictionary out_msg;
+			out_msg["role"] = "user";
+			Array content;
+			Dictionary tool_result_block;
+			tool_result_block["type"] = "tool_result";
+			tool_result_block["tool_use_id"] = msg.get("tool_call_id", "");
+			tool_result_block["content"] = msg.get("content", "");
+
+			// Add image if present
+			bool has_images = msg.has("_images") && !msg["_images"].operator Array().is_empty();
+			if (has_images && supports_vision()) {
+				Array result_content;
+				Dictionary text_part;
+				text_part["type"] = "text";
+				text_part["text"] = msg.get("content", "");
+				result_content.push_back(text_part);
+
+				Array imgs = msg["_images"];
+				for (int j = 0; j < imgs.size(); j++) {
+					Dictionary img_block;
+					img_block["type"] = "image";
+					Dictionary source;
+					source["type"] = "base64";
+					source["media_type"] = "image/png";
+					source["data"] = String(imgs[j]);
+					img_block["source"] = source;
+					result_content.push_back(img_block);
+				}
+				tool_result_block["content"] = result_content;
+			}
+
+			content.push_back(tool_result_block);
+			out_msg["content"] = content;
+			messages.push_back(out_msg);
+		} else if (role == "user") {
+			Dictionary out_msg;
+			out_msg["role"] = "user";
+
+			bool has_images = msg.has("_images") && !msg["_images"].operator Array().is_empty();
+			if (has_images && supports_vision()) {
+				Array content;
+				Dictionary text_block;
+				text_block["type"] = "text";
+				text_block["text"] = msg.get("content", "");
+				content.push_back(text_block);
+
+				Array imgs = msg["_images"];
+				for (int j = 0; j < imgs.size(); j++) {
+					Dictionary img_block;
+					img_block["type"] = "image";
+					Dictionary source;
+					source["type"] = "base64";
+					source["media_type"] = "image/png";
+					source["data"] = String(imgs[j]);
+					img_block["source"] = source;
+					content.push_back(img_block);
+				}
+				out_msg["content"] = content;
+			} else {
+				if (has_images) {
+					WARN_PRINT(vformat("AnthropicProvider: Model '%s' does not support vision. Dropping %d image(s).", model, msg["_images"].operator Array().size()));
+				}
+				out_msg["content"] = msg.get("content", "");
+			}
+			messages.push_back(out_msg);
+		} else if (role == "assistant") {
+			Dictionary out_msg;
+			out_msg["role"] = "assistant";
+			out_msg["content"] = msg.get("content", "");
+			messages.push_back(out_msg);
+		}
+	}
+
+	// Enforce user/assistant alternation (Anthropic requires strict alternation).
+	// Merge consecutive same-role messages by concatenating their text content.
+	// This can happen when a previous run failed without producing an assistant response.
+	Array merged;
+	for (int i = 0; i < messages.size(); i++) {
+		Dictionary msg = messages[i];
+		if (merged.size() > 0) {
+			Dictionary prev = merged[merged.size() - 1];
+			if (String(prev.get("role", "")) == String(msg.get("role", ""))) {
+				// Same role — merge text content
+				String prev_text;
+				String curr_text;
+				if (prev["content"].get_type() == Variant::STRING) {
+					prev_text = prev["content"];
+				} else if (prev["content"].get_type() == Variant::ARRAY) {
+					// Extract text from content blocks
+					Array blocks = prev["content"];
+					for (int j = 0; j < blocks.size(); j++) {
+						Dictionary b = blocks[j];
+						if (String(b.get("type", "")) == "text") {
+							if (!prev_text.is_empty()) prev_text += "\n";
+							prev_text += String(b.get("text", ""));
+						}
+					}
+				}
+				if (msg["content"].get_type() == Variant::STRING) {
+					curr_text = msg["content"];
+				} else if (msg["content"].get_type() == Variant::ARRAY) {
+					Array blocks = msg["content"];
+					for (int j = 0; j < blocks.size(); j++) {
+						Dictionary b = blocks[j];
+						if (String(b.get("type", "")) == "text") {
+							if (!curr_text.is_empty()) curr_text += "\n";
+							curr_text += String(b.get("text", ""));
+						}
+					}
+				}
+				prev["content"] = prev_text + "\n\n" + curr_text;
+				merged[merged.size() - 1] = prev;
+				continue;
+			}
+		}
+		merged.push_back(msg);
+	}
+
+	body["messages"] = merged;
+
+	return body;
+}
+
+void AnthropicProvider::send_request_with_messages(const Array &p_messages, const String &context_block) {
+	if (api_key.is_empty()) {
+		ERR_PRINT("AnthropicProvider::send_request_with_messages() - API key is not set");
+		call_deferred("emit_signal", "request_completed", false, "", "API key is not set");
+		return;
+	}
+
+	print_line(vformat("AnthropicProvider: Sending request with %d messages to %s", p_messages.size(), get_request_url()));
+
+	WorkerThreadPool::get_singleton()->add_task(
+		callable_mp(this, &AnthropicProvider::_perform_request_with_messages).bind(p_messages, context_block)
+	);
+}
+
+void AnthropicProvider::_perform_request_with_messages(const Array &p_messages, const String &context_block) {
+	HTTPClient *http_client = HTTPClient::create();
+
+	String host = "api.anthropic.com";
+	int port = 443;
+
+	Ref<TLSOptions> tls_options = TLSOptions::client();
+	Error err = http_client->connect_to_host(host, port, tls_options);
+	if (err != OK) {
+		ERR_PRINT(vformat("AnthropicProvider: Failed to connect to host: %d", err));
+		call_deferred("emit_signal", "request_completed", false, "", vformat("Failed to connect: %d", err));
+		memdelete(http_client);
+		return;
+	}
+
+	while (http_client->get_status() == HTTPClient::STATUS_CONNECTING ||
+	       http_client->get_status() == HTTPClient::STATUS_RESOLVING) {
+		http_client->poll();
+		OS::get_singleton()->delay_usec(10000);
+	}
+
+	if (http_client->get_status() != HTTPClient::STATUS_CONNECTED) {
+		ERR_PRINT(vformat("AnthropicProvider: Connection failed, status: %d", http_client->get_status()));
+		call_deferred("emit_signal", "request_completed", false, "", "Connection failed");
+		memdelete(http_client);
+		return;
+	}
+
+	Dictionary request_body = build_request_body_with_messages(p_messages, context_block);
+	String json_body = JSON::stringify(request_body);
+	PackedStringArray headers_array = get_request_headers();
+
+	Vector<String> headers_vector;
+	for (int i = 0; i < headers_array.size(); i++) {
+		headers_vector.push_back(headers_array[i]);
+	}
+
+	CharString body_data = json_body.utf8();
+	err = http_client->request(HTTPClient::METHOD_POST, "/v1/messages", headers_vector, (const uint8_t *)body_data.get_data(), body_data.length());
+	if (err != OK) {
+		ERR_PRINT(vformat("AnthropicProvider: Failed to send request: %d", err));
+		call_deferred("emit_signal", "request_completed", false, "", vformat("Failed to send request: %d", err));
+		memdelete(http_client);
+		return;
+	}
+
+	while (http_client->get_status() == HTTPClient::STATUS_REQUESTING) {
+		http_client->poll();
+		OS::get_singleton()->delay_usec(10000);
+	}
+
+	if (http_client->get_status() != HTTPClient::STATUS_BODY &&
+	    http_client->get_status() != HTTPClient::STATUS_CONNECTED) {
+		ERR_PRINT(vformat("AnthropicProvider: Request failed, status: %d", http_client->get_status()));
+		call_deferred("emit_signal", "request_completed", false, "", "Request failed");
+		memdelete(http_client);
+		return;
+	}
+
+	int response_code = http_client->get_response_code();
+	if (response_code != 200) {
+		// Read error body for diagnostics
+		PackedByteArray err_body;
+		while (http_client->get_status() == HTTPClient::STATUS_BODY) {
+			http_client->poll();
+			PackedByteArray chunk = http_client->read_response_body_chunk();
+			if (chunk.size() > 0) {
+				err_body.append_array(chunk);
+			} else {
+				OS::get_singleton()->delay_usec(10000);
+			}
+		}
+		String err_str = String::utf8((const char *)err_body.ptr(), err_body.size());
+		// Try to extract error message from response body
+		String error_detail;
+		JSON err_json;
+		if (err_json.parse(err_str) == OK) {
+			Dictionary err_data = err_json.get_data();
+			if (err_data.has("error")) {
+				Dictionary err_obj = err_data["error"];
+				error_detail = err_obj.get("message", "");
+			}
+		}
+		String error_msg = error_detail.is_empty()
+			? vformat("HTTP error: %d", response_code)
+			: vformat("HTTP %d: %s", response_code, error_detail);
+		ERR_PRINT(vformat("AnthropicProvider: %s", error_msg));
+		call_deferred("emit_signal", "request_completed", false, "", error_msg);
+		memdelete(http_client);
+		return;
+	}
+
+	PackedByteArray response_body;
+	while (http_client->get_status() == HTTPClient::STATUS_BODY) {
+		http_client->poll();
+		PackedByteArray chunk = http_client->read_response_body_chunk();
+		if (chunk.size() > 0) {
+			response_body.append_array(chunk);
+		} else {
+			OS::get_singleton()->delay_usec(10000);
+		}
+	}
+
+	String response_str = String::utf8((const char *)response_body.ptr(), response_body.size());
+
+	// Parse Anthropic response and translate to OpenAI-compatible format
+	JSON json_parser;
+	err = json_parser.parse(response_str);
+	if (err != Error::OK) {
+		ERR_PRINT(vformat("AnthropicProvider: Failed to parse response JSON: %s", json_parser.get_error_message()));
+		call_deferred("emit_signal", "request_completed", false, "", "Failed to parse response JSON");
+		memdelete(http_client);
+		return;
+	}
+
+	Dictionary anthropic_response = json_parser.get_data();
+
+	// Extract from Anthropic format: content[] blocks, stop_reason, usage
+	String text_content;
+	Array tool_calls;
+	bool has_tool_use = false;
+
+	if (anthropic_response.has("content")) {
+		Array content = anthropic_response["content"];
+		for (int i = 0; i < content.size(); i++) {
+			Dictionary block = content[i];
+			String block_type = block.get("type", "");
+
+			if (block_type == "text") {
+				if (!text_content.is_empty()) {
+					text_content += "\n";
+				}
+				text_content += String(block.get("text", ""));
+			} else if (block_type == "tool_use") {
+				has_tool_use = true;
+				Dictionary tool_call;
+				tool_call["id"] = block.get("id", "");
+				tool_call["type"] = "function";
+				Dictionary function;
+				function["name"] = block.get("name", "");
+				// Serialize input Dictionary to JSON string (OpenAI format)
+				Dictionary input = block.get("input", Dictionary());
+				function["arguments"] = JSON::stringify(input);
+				tool_call["function"] = function;
+				tool_calls.push_back(tool_call);
+			}
+		}
+	}
+
+	// Map stop_reason to finish_reason
+	String stop_reason = anthropic_response.get("stop_reason", "end_turn");
+	String finish_reason;
+	if (has_tool_use || stop_reason == "tool_use") {
+		finish_reason = "tool_calls";
+	} else {
+		finish_reason = "stop";
+	}
+
+	// Build OpenAI-compatible response
+	Dictionary openai_response;
+	Array choices;
+	Dictionary choice;
+	Dictionary message;
+	message["role"] = "assistant";
+	message["content"] = text_content.is_empty() ? Variant() : Variant(text_content);
+	if (has_tool_use) {
+		message["tool_calls"] = tool_calls;
+	}
+	choice["finish_reason"] = finish_reason;
+	choice["message"] = message;
+	choices.push_back(choice);
+	openai_response["choices"] = choices;
+
+	// Translate usage
+	if (anthropic_response.has("usage")) {
+		Dictionary anthropic_usage = anthropic_response["usage"];
+		Dictionary usage;
+		int input_tokens = anthropic_usage.get("input_tokens", 0);
+		int output_tokens = anthropic_usage.get("output_tokens", 0);
+		usage["prompt_tokens"] = input_tokens;
+		usage["completion_tokens"] = output_tokens;
+		usage["total_tokens"] = input_tokens + output_tokens;
+		openai_response["usage"] = usage;
+	}
+
+	String translated_response = JSON::stringify(openai_response);
+	print_line(vformat("AnthropicProvider: Translated response to OpenAI format (%d bytes)", translated_response.length()));
+	call_deferred("emit_signal", "request_completed", true, translated_response, "");
+
 	memdelete(http_client);
 }
 

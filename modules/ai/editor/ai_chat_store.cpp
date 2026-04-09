@@ -84,7 +84,7 @@ Vector<String> AIChatStore::list_chat_ids() {
 	da->list_dir_begin();
 	String fname = da->get_next();
 	while (!fname.is_empty()) {
-		if (!da->current_is_dir() && fname.begins_with("chat_") && fname.ends_with(".jsonl")) {
+		if (!da->current_is_dir() && fname.begins_with("chat_") && fname.ends_with(".jsonl") && !fname.contains(".raw.")) {
 			ids.push_back(fname.get_basename()); // "chat_1711200000000"
 		}
 		fname = da->get_next();

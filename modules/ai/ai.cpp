@@ -1377,6 +1377,34 @@ String AI::_get_journal_path(const String &p_filename) const {
     return base + "/" + p_filename;
 }
 
+void AI::log_raw_api(const String &p_direction, int p_turn, const Dictionary &p_payload,
+		int p_status_code, const Dictionary &p_tokens) {
+	if (!_journal_writer || _current_chat_id.is_empty()) {
+		return;
+	}
+
+	String path = OS::get_singleton()->get_user_data_dir() + "/ai_chat/" + _current_chat_id + ".raw.jsonl";
+
+	Dictionary entry;
+	entry["ts"] = (int64_t)Time::get_singleton()->get_unix_time_from_system() * 1000;
+	entry["chat_id"] = _current_chat_id;
+	if (provider.is_valid()) {
+		entry["provider"] = provider->get_provider_name();
+		entry["model"] = provider->get_model();
+	}
+	entry["turn"] = p_turn;
+	entry["direction"] = p_direction;
+	entry["payload"] = p_payload;
+	if (p_status_code > 0) {
+		entry["status_code"] = p_status_code;
+	}
+	if (!p_tokens.is_empty()) {
+		entry["tokens"] = p_tokens;
+	}
+
+	_journal_writer->enqueue(path, entry);
+}
+
 Dictionary AI::_exec_write_dev_note(const Dictionary &args) {
     if (!_journal_writer) {
         Dictionary error_result;

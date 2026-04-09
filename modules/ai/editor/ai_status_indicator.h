@@ -44,6 +44,7 @@
 #include "scene/gui/text_edit.h"
 #include "scene/gui/texture_rect.h"
 #include "scene/gui/check_box.h"
+#include "scene/gui/option_button.h"
 #include "scene/gui/dialogs.h"
 #include "scene/gui/popup.h"
 #include "scene/main/http_request.h"
@@ -258,6 +259,7 @@ private:
 	AIStatusIndicator *status_indicator = nullptr;
 	Label *status_label = nullptr;
 	Label *context_usage_label = nullptr;
+	OptionButton *provider_dropdown = nullptr;
 
 	// HTTP requests for checking each provider
 	HTTPRequest *http_openai = nullptr;
@@ -340,6 +342,7 @@ private:
 	void _append_thinking_ui(const String &p_text);
 	Control *_create_narration_bubble(const String &p_text);
 	Control *_create_cancel_notice();
+	Control *_create_error_notice(const String &p_text);
 	void _scroll_to_bottom();
 	void _on_scrollbar_range_changed();
 	void _on_vscroll_changed(float p_value);
@@ -413,6 +416,9 @@ private:
 
 	// Checkpoint creation (called when orchestrator recommends)
 	void _on_checkpoint_recommended(int64_t p_user_message_id);
+
+	// Provider switching
+	void _on_provider_changed(int p_index);
 
 	// Connectivity check handlers
 	void _on_openai_request_completed(int p_result, int p_code, const PackedStringArray &p_headers, const PackedByteArray &p_body);

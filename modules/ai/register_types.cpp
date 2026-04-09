@@ -26,6 +26,7 @@ void initialize_ai_module(ModuleInitializationLevel p_level) {
 		ClassDB::register_class<OpenAIProvider>();
 		ClassDB::register_class<GeminiProvider>();
 		ClassDB::register_class<XAIProvider>();
+		ClassDB::register_class<AnthropicProvider>();
 		
 		// Register retrieval class
 		ClassDB::register_class<RetrievalIndex>();

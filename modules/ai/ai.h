@@ -134,6 +134,10 @@ public:
 	// Check if a file was read via read_script in the current conversation
 	bool was_file_read(const String &file_path) const;
 
+	// Raw API logging for dashboard
+	void log_raw_api(const String &p_direction, int p_turn, const Dictionary &p_payload,
+			int p_status_code = 0, const Dictionary &p_tokens = Dictionary());
+
 	// Constructor and Destructor
 	AI();
 	~AI();

@@ -1094,6 +1094,15 @@ void AIStatusPanel::_rebuild_message_list() {
 						message_list->add_child(ui);
 					}
 				}
+			} else if (role == "system") {
+				String type = item.data.get("type", "");
+				if (type == "error") {
+					String content = item.data.get("content", "");
+					Control *notice = _create_error_notice(content);
+					if (notice) {
+						message_list->add_child(notice);
+					}
+				}
 			}
 		}
 
@@ -2893,6 +2902,17 @@ Control *AIStatusPanel::_create_cancel_notice() {
 	return lbl;
 }
 
+Control *AIStatusPanel::_create_error_notice(const String &p_text) {
+	Label *lbl = memnew(Label);
+	lbl->set_text(p_text);
+	lbl->set_h_size_flags(SIZE_EXPAND_FILL);
+	lbl->set_horizontal_alignment(HORIZONTAL_ALIGNMENT_LEFT);
+	lbl->add_theme_color_override("font_color", AIColors::TEXT_MUTED);
+	lbl->add_theme_font_size_override("font_size", 13 * EDSCALE);
+	lbl->set_autowrap_mode(TextServer::AUTOWRAP_WORD_SMART);
+	return lbl;
+}
+
 void AIStatusPanel::_on_orchestrator_thinking(const String &p_text) {
 	// No-op in v2.1 — thinking_ready signal removed from orchestrator
 	(void)p_text;
@@ -2984,12 +3004,21 @@ void AIStatusPanel::_on_orchestrator_complete(bool p_success, const String &p_fi
 					should_auto_scroll = true;
 				}
 			}
-		} else if (message_list) {
-			// Error: ephemeral narration bubble (not persisted).
-			Control *notice = _create_narration_bubble(p_final_message);
-			if (notice) {
-				message_list->add_child(notice);
-				should_auto_scroll = true;
+		} else {
+			// Error: persist as system-role message so it survives reload
+			if (chat_store.is_valid()) {
+				Dictionary data;
+				data["role"] = "system";
+				data["type"] = "error";
+				data["content"] = p_final_message;
+				chat_store->append_item(data);
+			}
+			if (message_list) {
+				Control *notice = _create_error_notice(p_final_message);
+				if (notice) {
+					message_list->add_child(notice);
+					should_auto_scroll = true;
+				}
 			}
 		}
 	}
@@ -3425,6 +3454,42 @@ void AIStatusPanel::_cancel_pending_edit() {
 
 	if (status_label) {
 		status_label->set_text(TTR("Ready"));
+	}
+}
+
+void AIStatusPanel::_on_provider_changed(int p_index) {
+	AI *ai = AI::get_singleton();
+	if (!ai) {
+		return;
+	}
+
+	Ref<AIProvider> new_provider;
+	switch (p_index) {
+		case 0: { // xAI
+			Ref<XAIProvider> p;
+			p.instantiate();
+			new_provider = p;
+		} break;
+		case 1: { // OpenAI
+			Ref<OpenAIProvider> p;
+			p.instantiate();
+			new_provider = p;
+		} break;
+		case 2: { // Anthropic
+			Ref<AnthropicProvider> p;
+			p.instantiate();
+			new_provider = p;
+		} break;
+		case 3: { // Gemini
+			Ref<GeminiProvider> p;
+			p.instantiate();
+			new_provider = p;
+		} break;
+	}
+
+	if (new_provider.is_valid()) {
+		ai->set_provider(new_provider);
+		print_line(vformat("AI: Switched provider to %s (%s)", new_provider->get_provider_name(), new_provider->get_model()));
 	}
 }
 
@@ -3895,6 +3960,23 @@ AIStatusPanel::AIStatusPanel() {
 	status_label->set_text(TTR("Unknown"));
 	status_label->add_theme_color_override("font_color", AIColors::TEXT_MUTED);
 	status_bar->add_child(status_label);
+
+	// Provider dropdown
+	provider_dropdown = memnew(OptionButton);
+	provider_dropdown->add_theme_font_size_override("font_size", 11 * EDSCALE);
+	provider_dropdown->add_item("xAI (Grok)", 0);
+	provider_dropdown->add_item("OpenAI (GPT)", 1);
+	provider_dropdown->add_item("Anthropic (Claude)", 2);
+	provider_dropdown->add_item("Gemini", 3);
+	provider_dropdown->select(0); // Default: xAI
+	provider_dropdown->set_tooltip_text(TTR("Switch AI provider"));
+	provider_dropdown->connect("item_selected", callable_mp(this, &AIStatusPanel::_on_provider_changed));
+	// Remove radio dots from popup items
+	PopupMenu *popup = provider_dropdown->get_popup();
+	for (int i = 0; i < popup->get_item_count(); i++) {
+		popup->set_item_as_radio_checkable(i, false);
+	}
+	status_bar->add_child(provider_dropdown);
 
 	// Context usage label - right side of status bar, hidden until first run
 	context_usage_label = memnew(Label);
