@@ -88,6 +88,10 @@
 #define DWMWCP_DONOTROUND 1
 #endif
 
+#ifndef PW_RENDERFULL_CONTENT
+#define PW_RENDERFULL_CONTENT 0x00000002
+#endif
+
 #define WM_INDICATOR_CALLBACK_MESSAGE (WM_USER + 1)
 
 int constexpr FS_TRANSP_BORDER = 2;
@@ -1532,6 +1536,64 @@ Ref<Image> DisplayServerWindows::screen_get_image_rect(const Rect2i &p_rect) con
 			DeleteDC(hdc);
 		}
 		ReleaseDC(NULL, dc);
+	}
+
+	return img;
+}
+
+Ref<Image> DisplayServerWindows::window_get_image_from_pid(OS::ProcessID p_pid) const {
+	Ref<Image> img;
+
+	if (!embedded_processes.has(p_pid)) {
+		return img;
+	}
+
+	HWND hwnd = embedded_processes[p_pid]->window_handle;
+	if (!hwnd || !IsWindow(hwnd)) {
+		return img;
+	}
+
+	RECT client_rect;
+	GetClientRect(hwnd, &client_rect);
+	int width = client_rect.right - client_rect.left;
+	int height = client_rect.bottom - client_rect.top;
+	if (width <= 0 || height <= 0) {
+		return img;
+	}
+
+	HDC window_dc = GetDC(hwnd);
+	if (window_dc) {
+		HDC hdc = CreateCompatibleDC(window_dc);
+		if (hdc) {
+			HBITMAP hbm = CreateCompatibleBitmap(window_dc, width, height);
+			if (hbm) {
+				SelectObject(hdc, hbm);
+
+				if (PrintWindow(hwnd, hdc, PW_RENDERFULL_CONTENT)) {
+					BITMAPINFO bmp_info = {};
+					bmp_info.bmiHeader.biSize = sizeof(bmp_info.bmiHeader);
+					bmp_info.bmiHeader.biWidth = width;
+					bmp_info.bmiHeader.biHeight = -height;
+					bmp_info.bmiHeader.biPlanes = 1;
+					bmp_info.bmiHeader.biBitCount = 32;
+					bmp_info.bmiHeader.biCompression = BI_RGB;
+
+					Vector<uint8_t> img_data;
+					img_data.resize(width * height * 4);
+					GetDIBits(hdc, hbm, 0, height, img_data.ptrw(), &bmp_info, DIB_RGB_COLORS);
+
+					uint8_t *wr = (uint8_t *)img_data.ptrw();
+					for (int i = 0; i < width * height; i++) {
+						SWAP(wr[i * 4 + 0], wr[i * 4 + 2]); // Swap B and R.
+					}
+					img = Image::create_from_data(width, height, false, Image::FORMAT_RGBA8, img_data);
+				}
+
+				DeleteObject(hbm);
+			}
+			DeleteDC(hdc);
+		}
+		ReleaseDC(hwnd, window_dc);
 	}
 
 	return img;

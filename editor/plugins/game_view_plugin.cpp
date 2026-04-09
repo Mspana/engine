@@ -616,15 +616,23 @@ void GameView::_hide_selection_toggled(bool p_pressed) {
 void GameView::_on_ai_screenshot_pressed() {
 	Ref<Image> img;
 
-	// Prefer rect-based capture when game is embedded and we know its screen position
+	// Prefer PrintWindow capture when game is embedded (works even when occluded/unfocused)
 	if (embedded_process && embedded_process->is_embedding_completed()) {
-		Rect2i rect = embedded_process->get_screen_embedded_window_rect();
-		if (rect.size.x > 0 && rect.size.y > 0) {
-			img = DisplayServer::get_singleton()->screen_get_image_rect(rect);
+		int pid = embedded_process->get_embedded_pid();
+		if (pid > 0) {
+			img = DisplayServer::get_singleton()->window_get_image_from_pid(pid);
 		}
 	}
 
-	// Fallback: full screen capture (works for floating game window)
+	// Fallback: screen-rect capture, then full screen capture
+	if (!img.is_valid() || img->is_empty()) {
+		if (embedded_process && embedded_process->is_embedding_completed()) {
+			Rect2i rect = embedded_process->get_screen_embedded_window_rect();
+			if (rect.size.x > 0 && rect.size.y > 0) {
+				img = DisplayServer::get_singleton()->screen_get_image_rect(rect);
+			}
+		}
+	}
 	if (!img.is_valid() || img->is_empty()) {
 		img = DisplayServer::get_singleton()->screen_get_image();
 	}
@@ -658,16 +666,24 @@ void GameView::_do_ai_screenshot_capture() {
 
 	Ref<Image> img;
 	if (embedding_done) {
-		Rect2i rect = embedded_process->get_screen_embedded_window_rect();
-		print_line(vformat("AI_DBG: embedded rect=%d,%d %dx%d", rect.position.x, rect.position.y, rect.size.x, rect.size.y));
-		if (rect.size.x > 0 && rect.size.y > 0) {
-			img = DisplayServer::get_singleton()->screen_get_image_rect(rect);
-			print_line(vformat("AI_DBG: screen_get_image_rect result: valid=%s empty=%s", img.is_valid() ? "YES" : "NO", (img.is_valid() && img->is_empty()) ? "YES" : "NO"));
+		int pid = embedded_process->get_embedded_pid();
+		print_line(vformat("AI_DBG: attempting PrintWindow capture for pid=%d", pid));
+		if (pid > 0) {
+			img = DisplayServer::get_singleton()->window_get_image_from_pid(pid);
+			print_line(vformat("AI_DBG: PrintWindow result: valid=%s empty=%s", img.is_valid() ? "YES" : "NO", (img.is_valid() && img->is_empty()) ? "YES" : "NO"));
+		}
+		// Fallback: screen-rect capture
+		if (!img.is_valid() || img->is_empty()) {
+			Rect2i rect = embedded_process->get_screen_embedded_window_rect();
+			print_line(vformat("AI_DBG: PrintWindow fallback — screen_get_image_rect rect=%d,%d %dx%d", rect.position.x, rect.position.y, rect.size.x, rect.size.y));
+			if (rect.size.x > 0 && rect.size.y > 0) {
+				img = DisplayServer::get_singleton()->screen_get_image_rect(rect);
+			}
 		}
 	}
 	if (!img.is_valid() || img->is_empty()) {
 		img = DisplayServer::get_singleton()->screen_get_image();
-		print_line(vformat("AI_DBG: screen_get_image fallback: valid=%s empty=%s", img.is_valid() ? "YES" : "NO", (img.is_valid() && img->is_empty()) ? "YES" : "NO"));
+		print_line(vformat("AI_DBG: full screen fallback: valid=%s empty=%s", img.is_valid() ? "YES" : "NO", (img.is_valid() && img->is_empty()) ? "YES" : "NO"));
 	}
 
 	String b64;
