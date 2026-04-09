@@ -965,9 +965,18 @@ void AIStatusPanel::_rebuild_message_list() {
 				round_token_total = 0;
 				seen_tools_in_round = false;
 
-				Control *bubble = _create_message_bubble(item);
-				if (bubble) {
-					message_list->add_child(bubble);
+				String content = item.data.get("content", "");
+				if (content.begins_with("<turn_cancelled>")) {
+					// Cancelled run marker — render as bold inline notice, not a user bubble.
+					Control *notice = _create_cancel_notice();
+					if (notice) {
+						message_list->add_child(notice);
+					}
+				} else {
+					Control *bubble = _create_message_bubble(item);
+					if (bubble) {
+						message_list->add_child(bubble);
+					}
 				}
 
 			} else if (role == "assistant") {
@@ -2874,6 +2883,16 @@ Control *AIStatusPanel::_create_narration_bubble(const String &p_text) {
 	return align;
 }
 
+Control *AIStatusPanel::_create_cancel_notice() {
+	Label *lbl = memnew(Label);
+	lbl->set_text(TTR("User interrupted the conversation."));
+	lbl->set_h_size_flags(SIZE_EXPAND_FILL);
+	lbl->set_horizontal_alignment(HORIZONTAL_ALIGNMENT_LEFT);
+	lbl->add_theme_color_override("font_color", AIColors::TEXT_MUTED);
+	lbl->add_theme_font_size_override("font_size", 13 * EDSCALE);
+	return lbl;
+}
+
 void AIStatusPanel::_on_orchestrator_thinking(const String &p_text) {
 	// No-op in v2.1 — thinking_ready signal removed from orchestrator
 	(void)p_text;
@@ -2949,12 +2968,29 @@ void AIStatusPanel::_on_orchestrator_complete(bool p_success, const String &p_fi
 	_run_token_total = 0;
 
 	// Successful final assistant message was already stored and rendered by _on_orchestrator_assistant_item.
-	// For failed/cancelled runs, show an ephemeral UI notice (not persisted).
-	if (!p_success && !p_final_message.is_empty() && message_list) {
-		Control *notice = _create_narration_bubble(p_final_message);
-		if (notice) {
-			message_list->add_child(notice);
-			should_auto_scroll = true;
+	if (!p_success && !p_final_message.is_empty()) {
+		if (p_final_message.begins_with("<turn_cancelled>")) {
+			// Cancelled: persist as user-role message (model-visible context) and show bold inline text.
+			if (chat_store.is_valid()) {
+				Dictionary data;
+				data["role"] = "user";
+				data["content"] = p_final_message;
+				chat_store->append_item(data);
+			}
+			if (message_list) {
+				Control *notice = _create_cancel_notice();
+				if (notice) {
+					message_list->add_child(notice);
+					should_auto_scroll = true;
+				}
+			}
+		} else if (message_list) {
+			// Error: ephemeral narration bubble (not persisted).
+			Control *notice = _create_narration_bubble(p_final_message);
+			if (notice) {
+				message_list->add_child(notice);
+				should_auto_scroll = true;
+			}
 		}
 	}
 

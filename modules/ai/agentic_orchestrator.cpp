@@ -598,7 +598,7 @@ Dictionary AgenticOrchestrator::_execute_tool_call(const String &p_call_id, cons
 //  _create_validation_error_result, _generate_action_id removed — native tool-calling replaces them)
 
 void AgenticOrchestrator::_handle_cancellation() {
-	_emit_run_complete(false, "Cancelled. Tell me what to do next.");
+	_emit_run_complete(false, "<turn_cancelled>\nThe previous turn was cancelled by the user. Any in-progress work was stopped. Verify current state before continuing.\n</turn_cancelled>");
 	_is_running = false;
 	_waiting_for_response = false;
 }

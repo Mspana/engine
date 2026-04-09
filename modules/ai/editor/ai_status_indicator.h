@@ -339,6 +339,7 @@ private:
 	void _append_tool_result_ui(const Dictionary &p_tool_result);
 	void _append_thinking_ui(const String &p_text);
 	Control *_create_narration_bubble(const String &p_text);
+	Control *_create_cancel_notice();
 	void _scroll_to_bottom();
 	void _on_scrollbar_range_changed();
 	void _on_vscroll_changed(float p_value);
