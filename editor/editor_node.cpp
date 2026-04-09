@@ -7966,18 +7966,18 @@ EditorNode::EditorNode() {
 	// FileSystem: Bottom left.
 	editor_dock_manager->add_dock(FileSystemDock::get_singleton(), TTRC("FileSystem"), EditorDockManager::DOCK_SLOT_LEFT_BR, ED_SHORTCUT_AND_COMMAND("docks/open_filesystem", TTRC("Open FileSystem Dock"), KeyModifierMask::ALT | Key::F), "Folder");
 
-	// Inspector: Full height right.
-	editor_dock_manager->add_dock(InspectorDock::get_singleton(), TTRC("Inspector"), EditorDockManager::DOCK_SLOT_RIGHT_UL, ED_SHORTCUT_AND_COMMAND("docks/open_inspector", TTRC("Open Inspector Dock")), "AnimationTrackList");
+	// Inspector: Bottom right (below AI panel).
+	editor_dock_manager->add_dock(InspectorDock::get_singleton(), TTRC("Inspector"), EditorDockManager::DOCK_SLOT_RIGHT_BL, ED_SHORTCUT_AND_COMMAND("docks/open_inspector", TTRC("Open Inspector Dock")), "AnimationTrackList");
 
-	// Node: Full height right, behind Inspector.
-	editor_dock_manager->add_dock(NodeDock::get_singleton(), TTRC("Node"), EditorDockManager::DOCK_SLOT_RIGHT_UL, ED_SHORTCUT_AND_COMMAND("docks/open_node", TTRC("Open Node Dock")), "Object");
+	// Node: Bottom right, behind Inspector.
+	editor_dock_manager->add_dock(NodeDock::get_singleton(), TTRC("Node"), EditorDockManager::DOCK_SLOT_RIGHT_BL, ED_SHORTCUT_AND_COMMAND("docks/open_node", TTRC("Open Node Dock")), "Object");
 
-	// History: Full height right, behind Node.
-	editor_dock_manager->add_dock(history_dock, TTRC("History"), EditorDockManager::DOCK_SLOT_RIGHT_UL, ED_SHORTCUT_AND_COMMAND("docks/open_history", TTRC("Open History Dock")), "History");
+	// History: Bottom right, behind Node.
+	editor_dock_manager->add_dock(history_dock, TTRC("History"), EditorDockManager::DOCK_SLOT_RIGHT_BL, ED_SHORTCUT_AND_COMMAND("docks/open_history", TTRC("Open History Dock")), "History");
 
 	// Add some offsets to left_r and main hsplits to make LEFT_R and RIGHT_L docks wider than minsize.
 	left_r_hsplit->set_split_offset(270 * EDSCALE);
-	main_hsplit->set_split_offset(-270 * EDSCALE);
+	main_hsplit->set_split_offset(-675 * EDSCALE);
 
 	// Define corresponding default layout.
 
@@ -7986,7 +7986,7 @@ EditorNode::EditorNode() {
 	// Dock numbers are based on DockSlot enum value + 1.
 	default_layout->set_value(docks_section, "dock_3", "Scene,Import");
 	default_layout->set_value(docks_section, "dock_4", "FileSystem");
-	default_layout->set_value(docks_section, "dock_5", "Inspector,Node,History");
+	default_layout->set_value(docks_section, "dock_6", "Inspector,Node,History");
 
 	// There are 4 vsplits and 4 hsplits.
 	for (int i = 0; i < editor_dock_manager->get_vsplit_count(); i++) {
@@ -7994,7 +7994,7 @@ EditorNode::EditorNode() {
 	}
 	default_layout->set_value(docks_section, "dock_hsplit_1", 0);
 	default_layout->set_value(docks_section, "dock_hsplit_2", 270);
-	default_layout->set_value(docks_section, "dock_hsplit_3", -270);
+	default_layout->set_value(docks_section, "dock_hsplit_3", -675);
 	default_layout->set_value(docks_section, "dock_hsplit_4", 0);
 
 	_update_layouts_menu();
