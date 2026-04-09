@@ -48,6 +48,13 @@ static bool ai_set_property_values_match(const Variant &actual, const Variant &t
 		return true;
 	}
 
+	// Type mismatch: string target vs object actual (resource load failed —
+	// coercion returned raw path string, engine silently ignored it)
+	if ((ta == Variant::OBJECT && tt == Variant::STRING) ||
+			(ta == Variant::STRING && tt == Variant::OBJECT)) {
+		return false;
+	}
+
 	// Resource: compare by resource path when available, else by pointer identity
 	if (ta == Variant::OBJECT) {
 		Object *ao = actual.operator Object *();
