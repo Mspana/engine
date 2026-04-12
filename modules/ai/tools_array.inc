@@ -295,6 +295,16 @@
 {
 	Dictionary props;
 	Array req;
+	tools.push_back(_make_tool("capture_2d_viewport", "Capture the 2D editor viewport as an image. Use to visually check the 2D scene the user is editing (sprites, UI, layout) without running the game. Much faster than run_and_screenshot for quick visual checks, and shows exactly what the user sees in the 2D canvas (including their current pan/zoom). The image is returned and shown to you automatically.", props, req));
+}
+{
+	Dictionary props;
+	Array req;
+	tools.push_back(_make_tool("capture_3d_viewport", "Capture the currently active 3D editor viewport as an image. Use to visually check the 3D scene the user is editing (meshes, camera angle, lighting) without running the game. If the editor has multiple 3D viewports open, this captures the one the user most recently interacted with. The image is returned and shown to you automatically.", props, req));
+}
+{
+	Dictionary props;
+	Array req;
 	tools.push_back(_make_tool("stop_game", "Stop the currently running game. No-op if the game is not running. Returns was_playing bool.", props, req));
 }
 

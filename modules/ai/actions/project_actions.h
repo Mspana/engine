@@ -50,6 +50,17 @@ Dictionary exec_run_project(const Dictionary &args);
 // Returns: Dictionary with status="success"|"error", result: { screenshot (base64 PNG), wait_seconds }
 Dictionary exec_run_and_screenshot(const Dictionary &args);
 
+// Captures the 2D editor viewport as a base64 PNG and attaches it via _images
+// so the orchestrator forwards it to vision-capable models.
+// No args.
+// Returns: Dictionary with status="success"|"error", result: { width, height, screenshot_b64 }
+Dictionary exec_capture_2d_viewport(const Dictionary &args);
+
+// Captures the currently active 3D editor viewport as a base64 PNG.
+// No args.
+// Returns: Dictionary with status="success"|"error", result: { width, height, screenshot_b64 }
+Dictionary exec_capture_3d_viewport(const Dictionary &args);
+
 } // namespace AIProjectActions
 
 #endif // AI_PROJECT_ACTIONS_H

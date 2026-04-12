@@ -46,6 +46,7 @@
 #include "editor/debugger/editor_debugger_node.h"
 #include "editor/debugger/script_editor_debugger.h"
 #include "editor/editor_node.h"
+#include "editor/editor_settings.h"
 #include "editor/editor_undo_redo_manager.h"
 #include "editor/gui/editor_run_bar.h"
 #include "editor/themes/editor_scale.h"
@@ -1332,7 +1333,7 @@ void AIStatusPanel::_rebuild_message_list() {
 				// Estimate tokens for this tool result (same heuristic as orchestrator)
 				int tokens;
 				String tn = content_dict.get("tool_name", "");
-				if (tn == "run_and_screenshot") {
+				if (tn == "run_and_screenshot" || tn == "capture_2d_viewport" || tn == "capture_3d_viewport") {
 					tokens = 1000;
 				} else {
 					tokens = JSON::stringify(content_dict).length() / 4;
@@ -2129,6 +2130,18 @@ void AIStatusPanel::_start_run(const String &p_message) {
 		HistoryItem user_item = chat_store->append_item(AIChatStore::make_user_item(p_message, images_for_run));
 		current_run_user_message_id = user_item.ts; // ts is used as anchor for checkpoints
 		_append_message_ui(user_item);
+	}
+
+	// Persist which model is handling this turn
+	if (chat_store.is_valid()) {
+		AI *ai_pre = AI::get_singleton();
+		if (ai_pre) {
+			Ref<AIProvider> prov = ai_pre->get_provider();
+			if (prov.is_valid()) {
+				chat_store->append_item(AIChatStore::make_model_info_item(
+						prov->get_model(), prov->get_provider_name()));
+			}
+		}
 	}
 
 	// Show pending message
@@ -3414,8 +3427,11 @@ void AIStatusPanel::_on_orchestrator_tool_result(const Dictionary &p_tool_result
 
 		if (status == String("success")) {
 			Dictionary result = p_tool_result.get("result", Dictionary());
-			// Save screenshot to disk and replace base64 with filename reference
-			if (String(p_tool_result.get("type", "")) == "run_and_screenshot" && result.has("screenshot_b64")) {
+			// Save screenshot to disk and replace base64 with filename reference.
+			// Applies to any tool that returns a screenshot_b64 field (run_and_screenshot,
+			// capture_2d_viewport, capture_3d_viewport) — keeps JSONL files small and
+			// lets the reload path rehydrate the image from a <call_id>.png on disk.
+			if (result.has("screenshot_b64")) {
 				result = result.duplicate();
 				String filename = chat_store->save_screenshot(call_id, result["screenshot_b64"]);
 				result.erase("screenshot_b64");
@@ -3946,33 +3962,45 @@ void AIStatusPanel::_on_provider_changed(int p_index) {
 		return;
 	}
 
+	String model_id = provider_dropdown->get_item_metadata(p_index);
+	if (model_id.is_empty()) {
+		return;
+	}
+
+	// Find the provider type for this model
+	Vector<AIProvider::ModelEntry> models = AIProvider::get_available_models();
+	String provider_name;
+	for (int i = 0; i < models.size(); i++) {
+		if (models[i].model_id == model_id) {
+			provider_name = models[i].provider;
+			break;
+		}
+	}
+
 	Ref<AIProvider> new_provider;
-	switch (p_index) {
-		case 0: { // xAI
-			Ref<XAIProvider> p;
-			p.instantiate();
-			new_provider = p;
-		} break;
-		case 1: { // OpenAI
-			Ref<OpenAIProvider> p;
-			p.instantiate();
-			new_provider = p;
-		} break;
-		case 2: { // Anthropic
-			Ref<AnthropicProvider> p;
-			p.instantiate();
-			new_provider = p;
-		} break;
-		case 3: { // Gemini
-			Ref<GeminiProvider> p;
-			p.instantiate();
-			new_provider = p;
-		} break;
+	if (provider_name == "xai") {
+		Ref<XAIProvider> p;
+		p.instantiate();
+		new_provider = p;
+	} else if (provider_name == "openai") {
+		Ref<OpenAIProvider> p;
+		p.instantiate();
+		new_provider = p;
+	} else if (provider_name == "anthropic") {
+		Ref<AnthropicProvider> p;
+		p.instantiate();
+		new_provider = p;
+	} else if (provider_name == "gemini") {
+		Ref<GeminiProvider> p;
+		p.instantiate();
+		new_provider = p;
 	}
 
 	if (new_provider.is_valid()) {
+		new_provider->set_model(model_id);
 		ai->set_provider(new_provider);
-		print_line(vformat("AI: Switched provider to %s (%s)", new_provider->get_provider_name(), new_provider->get_model()));
+		EditorSettings::get_singleton()->set_project_metadata("ai", "selected_model", model_id);
+		print_line(vformat("AI: Switched to %s (%s)", new_provider->get_provider_name(), model_id));
 	}
 }
 
@@ -4462,22 +4490,30 @@ AIStatusPanel::AIStatusPanel() {
 	status_label->add_theme_color_override("font_color", AIColors::TEXT_MUTED);
 	status_bar->add_child(status_label);
 
-	// Provider dropdown
+	// Model dropdown
 	provider_dropdown = memnew(OptionButton);
 	provider_dropdown->add_theme_font_size_override("font_size", 11 * EDSCALE);
-	provider_dropdown->add_item("xAI (Grok)", 0);
-	provider_dropdown->add_item("OpenAI (GPT)", 1);
-	provider_dropdown->add_item("Anthropic (Claude)", 2);
-	provider_dropdown->add_item("Gemini", 3);
-	provider_dropdown->select(0); // Default: xAI
-	provider_dropdown->set_tooltip_text(TTR("Switch AI provider"));
+	Vector<AIProvider::ModelEntry> models = AIProvider::get_available_models();
+	String saved_model = EditorSettings::get_singleton()->get_project_metadata("ai", "selected_model", "grok-4-fast");
+	int default_idx = 0;
+	for (int i = 0; i < models.size(); i++) {
+		provider_dropdown->add_item(models[i].display_name, i);
+		provider_dropdown->set_item_metadata(i, models[i].model_id);
+		if (models[i].model_id == saved_model) {
+			default_idx = i;
+		}
+	}
+	provider_dropdown->select(default_idx);
+	provider_dropdown->set_tooltip_text(TTR("Switch AI model"));
 	provider_dropdown->connect("item_selected", callable_mp(this, &AIStatusPanel::_on_provider_changed));
-	// Remove radio dots from popup items
 	PopupMenu *popup = provider_dropdown->get_popup();
 	for (int i = 0; i < popup->get_item_count(); i++) {
 		popup->set_item_as_radio_checkable(i, false);
 	}
 	status_bar->add_child(provider_dropdown);
+
+	// Apply saved model selection to the AI singleton
+	_on_provider_changed(default_idx);
 
 	// Context usage label - right side of status bar, hidden until first run
 	context_usage_label = memnew(Label);

@@ -34,9 +34,10 @@ Multiple images can be previewed in a single tool call (batch mode).
 
 ### Image Delivery
 
-Thumbnails are delivered through the `_images` mechanism used by all providers.
-The orchestrator extracts `_images` from the tool result and attaches them to the
-conversation message as vision content blocks, same as `run_and_screenshot`.
+Thumbnails are delivered via the shared tool-result image pipeline -- see
+[tool_result_images.md](tool_result_images.md). `preview_asset` uses the `_images`
+array shape (rather than `screenshot_b64`) so it can return multiple thumbnails in
+one call.
 
 ### Key Files
 

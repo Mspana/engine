@@ -493,6 +493,7 @@ Allowed actions:
 - run_project (alias: play_test): Run/play the project
   Args: {"mode": string (optional, default "play", supported: "play", "headless_smoke"), "scene_path": string (optional)}
 - run_and_screenshot: Runs the game briefly, captures a screenshot, then stops. Use to visually verify the result of changes without asking the user.
+  IMPORTANT: This runs the project's MAIN SCENE, not the scene you have open in the editor. The result includes a "main_scene" field showing which scene was run. If you need to test a different scene, call set_main_scene first.
   Args: {"wait_seconds": float (optional, default 2.0, clamped 0.5-10.0 — Seconds to let game run before capturing. Use more time if the game needs to load or animate.)}
   After this action, you will automatically receive the screenshot as an image. Analyze it and continue.)"
 	R"(- list_nodes: List nodes in the current scene tree
@@ -563,6 +564,18 @@ Array AIProvider::build_tools_array() {
 	return tools;
 }
 
+Vector<AIProvider::ModelEntry> AIProvider::get_available_models() {
+	Vector<ModelEntry> models;
+	models.push_back({ "claude-sonnet-4-20250514", "Claude Sonnet 4", "anthropic" });
+	models.push_back({ "gemini-3-flash-preview", "Gemini 3 Flash", "gemini" });
+	models.push_back({ "gemini-3.1-flash-lite-preview", "Gemini 3.1 Flash Lite", "gemini" });
+	models.push_back({ "gemini-3.1-pro-preview", "Gemini 3.1 Pro", "gemini" });
+	models.push_back({ "gpt-4o-mini", "GPT-4o Mini", "openai" });
+	models.push_back({ "grok-4", "Grok 4", "xai" });
+	models.push_back({ "grok-4-fast", "Grok 4 Fast", "xai" });
+	return models;
+}
+
 int AIProvider::get_context_window_tokens(const String &p_model) {
 	// xAI / Grok
 	if (p_model == "grok-4" || p_model == "grok-4-fast" ||
@@ -587,7 +600,9 @@ int AIProvider::get_context_window_tokens(const String &p_model) {
 
 	// Google Gemini
 	if (p_model == "gemini-1.5-pro" || p_model == "gemini-1.5-flash" ||
-		p_model == "gemini-2.0-flash" || p_model == "gemini-2.5-pro") {
+		p_model == "gemini-2.0-flash" || p_model == "gemini-2.5-pro" ||
+		p_model == "gemini-3.1-pro-preview" || p_model == "gemini-3-flash-preview" ||
+		p_model == "gemini-3.1-flash-lite-preview") {
 		return 1048576; // 1M
 	}
 	if (p_model == "gemini-pro") {
@@ -615,7 +630,9 @@ bool AIProvider::model_supports_vision(const String &p_model) {
 	// Gemini (1.5+ is multimodal; gemini-pro is text-only)
 	if (p_model == "gemini-1.5-pro" || p_model == "gemini-1.5-flash" ||
 		p_model == "gemini-2.0-flash" || p_model == "gemini-2.0-flash-exp" ||
-		p_model == "gemini-2.5-pro" || p_model == "gemini-pro-vision") {
+		p_model == "gemini-2.5-pro" || p_model == "gemini-pro-vision" ||
+		p_model == "gemini-3.1-pro-preview" || p_model == "gemini-3-flash-preview" ||
+		p_model == "gemini-3.1-flash-lite-preview") {
 		return true;
 	}
 	// xAI Grok 4 and vision-tagged models
@@ -1122,7 +1139,7 @@ String GeminiProvider::get_default_base_url() const {
 }
 
 String GeminiProvider::get_default_model() const {
-	return "gemini-2.0-flash";
+	return "gemini-3-flash-preview";
 }
 
 Dictionary GeminiProvider::build_request_body(const String &user_prompt, const String &context_block) const {
@@ -1419,6 +1436,10 @@ Dictionary GeminiProvider::build_request_body_with_messages(const Array &p_messa
 				} else {
 					fc["args"] = Dictionary();
 				}
+				// Echo back thought signature (required by Gemini 3.x)
+				if (tc.has("thought_signature")) {
+					fc_part["thoughtSignature"] = tc["thought_signature"];
+				}
 				parts.push_back(fc_part);
 			}
 		} else if (role == "tool") {
@@ -1432,6 +1453,26 @@ Dictionary GeminiProvider::build_request_body_with_messages(const Array &p_messa
 			func_response["response"] = response_content;
 			fr_part["functionResponse"] = func_response;
 			parts.push_back(fr_part);
+
+			// Attach image parts when the tool result carries images (e.g. run_and_screenshot,
+			// capture_2d_viewport, capture_3d_viewport). Gemini's functionResponse part itself
+			// can't hold binary data, so we append inlineData parts in the same user content
+			// block — valid per Gemini's multipart content spec, and the model reads them
+			// as additional context alongside the function response.
+			bool has_images = msg.has("_images") && !msg["_images"].operator Array().is_empty();
+			if (has_images && supports_vision()) {
+				Array imgs = msg["_images"];
+				for (int j = 0; j < imgs.size(); j++) {
+					Dictionary inline_data;
+					inline_data["mimeType"] = "image/png";
+					inline_data["data"] = String(imgs[j]);
+					Dictionary img_part;
+					img_part["inlineData"] = inline_data;
+					parts.push_back(img_part);
+				}
+			} else if (has_images) {
+				WARN_PRINT(vformat("GeminiProvider: Model '%s' does not support vision. Dropping %d image(s) from tool result.", model, msg["_images"].operator Array().size()));
+			}
 		} else if (role == "assistant") {
 			gemini_content["role"] = "model";
 			Dictionary text_part;
@@ -1648,6 +1689,10 @@ void GeminiProvider::_perform_request_with_messages(const Array &p_messages, con
 							Dictionary args = fc.get("args", Dictionary());
 							function["arguments"] = JSON::stringify(args);
 							tool_call["function"] = function;
+							// Preserve Gemini thought signature (required by Gemini 3.x)
+							if (part.has("thoughtSignature")) {
+								tool_call["thought_signature"] = part["thoughtSignature"];
+							}
 							tool_calls.push_back(tool_call);
 						}
 					}

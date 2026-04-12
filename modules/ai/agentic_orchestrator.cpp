@@ -39,6 +39,7 @@
 #include "editor/debugger/script_editor_debugger.h"
 #include "editor/editor_log.h"
 #include "editor/editor_node.h"
+#include "core/config/project_settings.h"
 #include "scene/main/scene_tree.h"
 #include "scene/main/timer.h"
 
@@ -544,7 +545,8 @@ void AgenticOrchestrator::_process_native_tool_response(const Dictionary &p_api_
 			// Screenshots: base64 inflates content length drastically; image tokens depend on
 			// dimensions, not file size. Use a fixed estimate (~1000 tokens for a typical screenshot).
 			int estimated_tokens;
-			if (String(trd.get("type", "")) == "run_and_screenshot") {
+			String trd_type = trd.get("type", "");
+			if (trd_type == "run_and_screenshot" || trd_type == "capture_2d_viewport" || trd_type == "capture_3d_viewport") {
 				estimated_tokens = 1000;
 			} else {
 				String tool_content = tool_result_msg.get("content", String());
@@ -610,15 +612,34 @@ Dictionary AgenticOrchestrator::_execute_tool_call(const String &p_call_id, cons
 	message["tool_call_id"] = p_call_id;
 	message["content"] = JSON::stringify(exec_result);
 
-	// Attach images from tool result (e.g. preview_asset thumbnails).
-	// Strip _images from JSON content to avoid inflating token count as text.
+	// Attach images from tool result (e.g. preview_asset thumbnails, capture_*_viewport).
+	// Strip the image payload from JSON content to avoid inflating token count as text.
+	// Two input shapes are supported:
+	//   - result._images: [b64, ...]         — generic multi-image (preview_asset)
+	//   - result.screenshot_b64: b64          — single screenshot (capture_*_viewport)
 	if (status == "success") {
 		Dictionary result_inner = exec_result.get("result", Dictionary());
-		if (result_inner.has("_images")) {
-			message["_images"] = result_inner["_images"];
+		bool has_images_field = result_inner.has("_images");
+		bool has_screenshot_field = result_inner.has("screenshot_b64");
+		if (has_images_field || has_screenshot_field) {
+			Array imgs;
+			if (has_images_field) {
+				imgs = result_inner["_images"];
+			}
+			if (has_screenshot_field) {
+				imgs.push_back(result_inner["screenshot_b64"]);
+			}
+			message["_images"] = imgs;
+
 			Dictionary clean = exec_result.duplicate();
 			Dictionary r = result_inner.duplicate();
-			r.erase("_images");
+			if (has_images_field) {
+				r.erase("_images");
+			}
+			if (has_screenshot_field) {
+				r.erase("screenshot_b64");
+				r["screenshot"] = "<see attached image>";
+			}
 			clean["result"] = r;
 			message["content"] = JSON::stringify(clean);
 		}
@@ -880,11 +901,17 @@ void AgenticOrchestrator::_on_async_rns_complete(const Dictionary &p_exec_result
 		}
 	}
 
+	// Include the main scene path so the model knows which scene was actually run.
+	String main_scene = ProjectSettings::get_singleton()->get_setting("application/run/main_scene", "");
+
 	// Enrich the exec result with errors and game output.
 	Dictionary enriched = p_exec_result.duplicate();
 	String status = enriched.get("status", "error");
 	if (status == "success") {
 		Dictionary rd = ((Dictionary)enriched.get("result", Dictionary())).duplicate();
+		if (!main_scene.is_empty()) {
+			rd["main_scene"] = main_scene;
+		}
 		if (game_errors.size() > 0) {
 			rd["game_crashed"] = true;
 			rd["errors"] = game_errors;

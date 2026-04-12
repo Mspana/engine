@@ -55,6 +55,7 @@ static const Vector<String> ALLOWED_ACTIONS = {
     "write_dev_note",
     "update_todos",
     "run_and_screenshot",
+    "capture_2d_viewport","capture_3d_viewport",
     "list_open_scenes","stop_game",
 };
 
@@ -547,6 +548,10 @@ Dictionary AI::execute_single_action(const Dictionary &p_action) {
         action_result = AIProjectActions::exec_run_project(action_args);
     } else if (action_name == "run_and_screenshot") {
         action_result = AIProjectActions::exec_run_and_screenshot(action_args);
+    } else if (action_name == "capture_2d_viewport") {
+        action_result = AIProjectActions::exec_capture_2d_viewport(action_args);
+    } else if (action_name == "capture_3d_viewport") {
+        action_result = AIProjectActions::exec_capture_3d_viewport(action_args);
     } else if (action_name == "list_nodes") {
         action_result = AIReadActions::exec_list_nodes(action_args);
     } else if (action_name == "get_node_info") {

@@ -15,7 +15,14 @@
 #include "core/io/dir_access.h"
 #include "editor/editor_interface.h"
 #include "editor/editor_command_palette.h"
+#include "editor/editor_node.h"
 #include "editor/gui/editor_run_bar.h"
+#include "editor/plugins/canvas_item_editor_plugin.h"
+#include "editor/plugins/node_3d_editor_plugin.h"
+
+#include "core/core_bind.h"
+#include "core/io/image.h"
+#include "scene/main/viewport.h"
 
 namespace AIProjectActions {
 
@@ -532,6 +539,93 @@ Dictionary exec_run_and_screenshot(const Dictionary &args) {
 	// async wait + screenshot via SceneTree timers. This fallback is for
 	// direct/legacy calls only — it just starts the game.
 	return exec_run_project(Dictionary());
+}
+
+#ifdef TOOLS_ENABLED
+// Shared encoder: takes a SubViewport, returns a success/error result dict with
+// a base64 PNG attached via _images for the orchestrator to forward to the model.
+static Dictionary _capture_subviewport_to_result(SubViewport *p_viewport, const String &p_label) {
+	if (!p_viewport) {
+		return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+			vformat("%s viewport is not available (editor not ready?).", p_label));
+	}
+
+	Ref<ViewportTexture> tex = p_viewport->get_texture();
+	if (tex.is_null()) {
+		return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+			vformat("%s viewport texture is null.", p_label));
+	}
+
+	Ref<Image> img = tex->get_image();
+	if (img.is_null() || img->is_empty()) {
+		return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+			vformat("%s viewport image is empty — the panel may be hidden or not yet rendered.", p_label));
+	}
+
+	Vector<uint8_t> png_bytes = img->save_png_to_buffer();
+	if (png_bytes.is_empty()) {
+		return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+			vformat("%s viewport PNG encoding failed.", p_label));
+	}
+
+	PackedByteArray pba;
+	pba.resize(png_bytes.size());
+	memcpy(pba.ptrw(), png_bytes.ptr(), png_bytes.size());
+	String b64 = CoreBind::Marshalls::get_singleton()->raw_to_base64(pba);
+
+	Dictionary result_data;
+	result_data["width"] = img->get_width();
+	result_data["height"] = img->get_height();
+	// Matches run_and_screenshot's shape: the orchestrator strips screenshot_b64 from
+	// the wire content, attaches it to the message as _images, the UI pill renders it,
+	// and the chat store persists it to disk as <call_id>.png.
+	result_data["screenshot_b64"] = b64;
+
+	return ai_create_success_result(result_data);
+}
+#endif
+
+Dictionary exec_capture_2d_viewport(const Dictionary &args) {
+#ifdef TOOLS_ENABLED
+	// The 2D editor displays the shared edited-scene SubViewport (EditorNode::scene_root).
+	// Capturing it gives us exactly what the user sees in the 2D canvas, including the
+	// current pan/zoom applied via the canvas transform.
+	CanvasItemEditor *cie = CanvasItemEditor::get_singleton();
+	if (!cie) {
+		return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+			"CanvasItemEditor singleton is not available.");
+	}
+	EditorNode *en = EditorNode::get_singleton();
+	if (!en) {
+		return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+			"EditorNode singleton is not available.");
+	}
+	SubViewport *sv = en->get_scene_root();
+	return _capture_subviewport_to_result(sv, "2D");
+#else
+	return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+		"Editor API not available in non-editor builds");
+#endif
+}
+
+Dictionary exec_capture_3d_viewport(const Dictionary &args) {
+#ifdef TOOLS_ENABLED
+	Node3DEditor *n3d = Node3DEditor::get_singleton();
+	if (!n3d) {
+		return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+			"Node3DEditor singleton is not available.");
+	}
+	Node3DEditorViewport *v = n3d->get_last_used_viewport();
+	if (!v) {
+		return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+			"No 3D editor viewport is available.");
+	}
+	SubViewport *sv = v->get_viewport_node();
+	return _capture_subviewport_to_result(sv, "3D");
+#else
+	return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+		"Editor API not available in non-editor builds");
+#endif
 }
 
 } // namespace AIProjectActions
