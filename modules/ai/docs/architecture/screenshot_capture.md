@@ -82,13 +82,95 @@ perspective: the tool returns its result (with the PNG attached) in the same tur
    `<call_id>.png`). See [tool_result_images.md](tool_result_images.md) for the
    full pipeline.
 
-### Known Limitation: Hidden Tabs
+### Cold-Start / Hidden-Tab Render
 
-If the 3D tab is not currently visible, its `SubViewport::update_mode` defaults to
-`UPDATE_WHEN_VISIBLE`, so it may return a stale or empty image. Same in reverse for
-2D. A future phase will toggle `update_mode` and force a one-frame render before
-capturing, but for now the model should prefer the viewport the user is actually
-looking at.
+Before reading the texture, the helper runs a small synchronous render pass so
+captures work even when the user has never clicked into the corresponding editor
+panel — fresh project, or any session spent entirely on the Script tab.
+
+The 3D editor viewport keeps rendering continuously via `Node3DEditorViewport`'s
+`_process` (spatial gizmos, grid, camera, etc.), so 3D captures need only the
+forced render. The 2D case has an additional wrinkle.
+
+#### The 2D-disabled trap
+
+`EditorNode` calls `RS::viewport_set_disable_2d(scene_root, true)` at startup
+([editor_node.cpp:805](../../../editor/editor_node.cpp#L805)) and only flips it
+to `false` while the 2D editor is the active main screen
+([canvas_item_editor_plugin.cpp:5804](../../../editor/plugins/canvas_item_editor_plugin.cpp#L5804)).
+With 2D rendering disabled at the RS level, forcing a render still produces just
+the clear color — a grey image. So `exec_capture_2d_viewport` checks whether the
+2D editor is currently visible: if not, it temporarily re-enables 2D and the
+viewport environment for the duration of the capture, then restores both.
+
+#### The 2×2 size trap
+
+`scene_root`'s size is driven by the `SubViewportContainer` that hosts the 2D
+canvas. On a cold start where the user has never opened the 2D tab, that
+container has never run a layout pass — so `scene_root` still has the default
+2×2 size, and the capture would return a 2×2 image. Fix: when the 2D tab is
+hidden and the current size is too small, temporarily resize `scene_root` to
+the project's `display/window/size/viewport_{width,height}` (or 1280×720 as a
+fallback), capture, then restore.
+
+This must use `SubViewport::set_size_force()`, not `set_size()`. The container's
+`stretch=true` causes regular `set_size()` to be silently rejected with a
+warning — `set_size_force()` is the public-in-C++ bypass intended for exactly
+this case (used by `SubViewportContainer` itself when it lays out its child).
+
+#### Render steps
+
+Inside `_capture_subviewport_to_result`:
+
+1. **Flush the MessageQueue.** `MessageQueue::get_singleton()->flush()` forces any
+   pending deferred calls, including `CanvasItem::_redraw_callback`s queued by
+   `CanvasItemEditor::update_viewport()`, to run now. Those callbacks submit the
+   actual draw commands (CanvasItem `_draw()` → RS commands).
+2. **Set the target SubViewport to `UPDATE_ONCE`.** Scene-level API, writes
+   through to RS and keeps the Viewport node's cached state in sync.
+3. **`RS::draw(false)`.** In threaded RS mode this only enqueues the draw; in
+   non-threaded it renders immediately.
+4. **`RS::sync()`.** Blocks until the render thread drains the queue, so
+   `get_image()` sees the rendered texture and not a pre-render snapshot.
+5. **Restore the previous `UpdateMode`.**
+
+We do **not** deactivate the editor's root viewport. The preview plugins do that
+because their target is an isolated off-screen viewport — our target is part of
+the editor's live scene tree, and deactivating the root cancels the render we want.
+
+We do **not** use the preview-plugin `frame_pre_draw` + semaphore path. That blocks
+on a semaphore waiting for the render thread, which only works from a worker thread.
+Our tool runs on the main thread, so that pattern deadlocks — the render thread
+can't emit the signal until the main loop advances, and the main loop is blocked
+in our `wait()`.
+
+### Caveats of the Cold-Start Path
+
+Things to know if you're touching this code or chasing a related bug:
+
+- **Resize ripples.** `set_size_force()` triggers `NOTIFICATION_WM_SIZE_CHANGED`
+  on `scene_root` and a layout pass on every `Control` child of the edited
+  scene. The restore at the end of `exec_capture_2d_viewport` triggers a second
+  one. User scripts hooked to `resized` will fire spuriously twice per
+  hidden-tab capture. Acceptable today; revisit if a user reports stale-state
+  bugs from `_notification(NOTIFICATION_WM_SIZE_CHANGED)` handlers.
+- **`MessageQueue::flush()` runs every pending deferred call.** Not just the
+  `_redraw_callback`s we queued — anything else queued via `call_deferred` from
+  anywhere in the editor runs synchronously inside our tool call. Re-entrancy
+  risk is non-zero.
+- **`RS::draw(false)` renders all viewports.** Including the editor main and
+  any other SubViewports. Causes a small visible hitch per capture.
+- **`RS::sync()` has no timeout.** If the render thread wedges (driver hang,
+  GPU timeout), the editor freezes identically to the deadlock we hit during
+  development. No watchdog.
+- **Tab-visibility check is a heuristic.** We use
+  `CanvasItemEditor::is_visible_in_tree()` to infer whether 2D is the active
+  main screen. That's the same condition `CanvasItemEditorPlugin::make_visible`
+  uses today, but it's a coupling — if either side changes, our toggle/restore
+  will desync.
+- **Environment mode is force-restored to `DISABLED`.** If anything else ever
+  sets it to `ENABLED` on `scene_root` while the 2D tab is hidden, we'd
+  overwrite their state. Quiet assumption.
 
 ### Key Files
 

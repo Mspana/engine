@@ -22,7 +22,9 @@
 
 #include "core/core_bind.h"
 #include "core/io/image.h"
+#include "core/object/message_queue.h"
 #include "scene/main/viewport.h"
+#include "servers/rendering_server.h"
 
 namespace AIProjectActions {
 
@@ -542,6 +544,44 @@ Dictionary exec_run_and_screenshot(const Dictionary &args) {
 }
 
 #ifdef TOOLS_ENABLED
+// Force the given SubViewport to render exactly one frame, so cold-start captures
+// (fresh project, user has never clicked into this viewport) produce a real image
+// instead of a black/empty frame.
+//
+// Implementation notes:
+// - Flush the MessageQueue first. CanvasItem::queue_redraw() uses call_deferred
+//   to schedule its _redraw_callback, which is what actually submits draw
+//   commands to the RenderingServer. On a tab where CanvasItems were recently
+//   queued (e.g. after exec_capture_2d_viewport called update_viewport()), we
+//   need those deferred callbacks to fire BEFORE we draw — otherwise the
+//   viewport renders with an empty command list and we get the clear color.
+// - Scene-level set_update_mode(UPDATE_ONCE) writes through to RS and keeps the
+//   Viewport node's cached state in sync.
+// - Unlike the preview plugins, we do NOT deactivate the editor's root viewport.
+//   Their target is an off-screen viewport unrelated to the scene tree, so
+//   deactivating the root is a harmless optimization. Our target IS part of the
+//   editor's scene tree; deactivating the root would cancel the render we want.
+// - In threaded RS mode, RS::draw(false) only enqueues the draw — so we follow
+//   up with RS::sync(), which blocks until the render thread drains the queue.
+// - We never use the preview-plugin frame_pre_draw + semaphore branch. That
+//   pattern only works from a worker thread; on the main thread it deadlocks.
+static void _force_render_subviewport(SubViewport *p_viewport) {
+	RenderingServer *rs = RenderingServer::get_singleton();
+	if (!rs || !p_viewport->get_viewport_rid().is_valid()) {
+		return;
+	}
+	// Flush pending deferred calls so CanvasItem _redraw_callbacks fire and submit
+	// their draw commands to RS before we trigger the render pass.
+	if (MessageQueue::get_singleton()) {
+		MessageQueue::get_singleton()->flush();
+	}
+	SubViewport::UpdateMode prev_mode = p_viewport->get_update_mode();
+	p_viewport->set_update_mode(SubViewport::UPDATE_ONCE);
+	rs->draw(false);
+	rs->sync(); // Block until render thread drains the queue (threaded RS mode).
+	p_viewport->set_update_mode(prev_mode);
+}
+
 // Shared encoder: takes a SubViewport, returns a success/error result dict with
 // a base64 PNG attached via _images for the orchestrator to forward to the model.
 static Dictionary _capture_subviewport_to_result(SubViewport *p_viewport, const String &p_label) {
@@ -555,6 +595,12 @@ static Dictionary _capture_subviewport_to_result(SubViewport *p_viewport, const 
 		return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
 			vformat("%s viewport texture is null.", p_label));
 	}
+
+	// Force a fresh render before reading the texture. Harmless when the viewport
+	// is already rendering (adds one frame of latency); essential when it is not
+	// (cold-start: user has never interacted with this viewport, so it has never
+	// produced a frame and get_image() would return black).
+	_force_render_subviewport(p_viewport);
 
 	Ref<Image> img = tex->get_image();
 	if (img.is_null() || img->is_empty()) {
@@ -601,7 +647,49 @@ Dictionary exec_capture_2d_viewport(const Dictionary &args) {
 			"EditorNode singleton is not available.");
 	}
 	SubViewport *sv = en->get_scene_root();
-	return _capture_subviewport_to_result(sv, "2D");
+	// EditorNode disables 2D rendering on scene_root whenever the 2D editor tab is
+	// not the active main screen (see editor_node.cpp NOTIFICATION_READY and
+	// CanvasItemEditorPlugin::make_visible). Without re-enabling it, captures from
+	// the Script tab (or any non-2D tab, including cold start) render only the
+	// clear color — a grey image. Temporarily re-enable 2D + environment for the
+	// duration of the capture, then restore if the 2D tab isn't currently visible.
+	//
+	// Additionally, scene_root's size is driven by the SubViewportContainer that
+	// hosts the 2D canvas. When that container has never been laid out (cold start
+	// while on a different tab), scene_root's size is 2×2 — capture would return a
+	// 2×2 image. Force a reasonable size for the capture, then restore.
+	RenderingServer *rs = RenderingServer::get_singleton();
+	RID vp_rid = sv ? sv->get_viewport_rid() : RID();
+	const bool tab_hidden = sv && rs && vp_rid.is_valid() && !cie->is_visible_in_tree();
+	Size2i prev_size;
+	if (tab_hidden) {
+		rs->viewport_set_disable_2d(vp_rid, false);
+		rs->viewport_set_environment_mode(vp_rid, RS::VIEWPORT_ENVIRONMENT_ENABLED);
+		prev_size = sv->get_size();
+		if (prev_size.x < 64 || prev_size.y < 64) {
+			int w = GLOBAL_GET("display/window/size/viewport_width");
+			int h = GLOBAL_GET("display/window/size/viewport_height");
+			if (w < 64 || h < 64) { w = 1280; h = 720; }
+			// scene_root's parent (SubViewportContainer) has stretch enabled, which
+			// causes set_size() to be rejected with a warning. set_size_force bypasses
+			// that — required because the container hasn't laid out scene_root yet
+			// (cold start while on a non-2D tab leaves it at the default 2×2).
+			sv->set_size_force(Size2i(w, h));
+		}
+	}
+	// Queue a redraw of the 2D canvas overlay (grid, rulers, selection, guides) so
+	// it appears on top of the scene contents. The MessageQueue flush inside
+	// _capture_subviewport_to_result fires the deferred _redraw_callback before draw.
+	cie->update_viewport();
+	Dictionary result = _capture_subviewport_to_result(sv, "2D");
+	if (tab_hidden) {
+		rs->viewport_set_disable_2d(vp_rid, true);
+		rs->viewport_set_environment_mode(vp_rid, RS::VIEWPORT_ENVIRONMENT_DISABLED);
+		if (sv->get_size() != prev_size) {
+			sv->set_size_force(prev_size);
+		}
+	}
+	return result;
 #else
 	return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
 		"Editor API not available in non-editor builds");
