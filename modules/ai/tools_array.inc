@@ -290,12 +290,19 @@
 	Dictionary props;
 	props["wait_seconds"] = _make_prop("number", "Seconds to let game run before capturing (default 2.0, range 0.5-10.0)");
 	Array req;
-	tools.push_back(_make_tool("run_and_screenshot", "Run the game briefly, capture a screenshot, then stop. The screenshot is returned as an image you can see — use it to visually verify layout, colors, and positioning. Inform the user if there is an issue with viewing the image.K", props, req));
+	tools.push_back(_make_tool("run_and_screenshot", "Run the game briefly, capture a screenshot, then stop. The screenshot is returned as an image you can see — use it to visually verify layout, colors, and positioning. Inform the user if there is an issue with viewing the image. Prefer capture_2d_viewport / capture_3d_viewport for static visual checks. Note that those work best when the majority of the rendering is not dependent on runtime scripts.", props, req));
 }
 {
 	Dictionary props;
+	Dictionary frame_rect_prop;
+	frame_rect_prop["type"] = "array";
+	frame_rect_prop["description"] = "Optional world-space rectangle [x, y, width, height] to frame in the capture (units match node positions in the scene; e.g. a Sprite2D at position (100, 100) lives in the same coordinate system). Example: frame_rect: [50, 50, 200, 200] frames a 200x200 world region starting at (50, 50). Fits the rect into the viewport preserving aspect ratio (may produce empty bands if the rect's aspect differs from the viewport's). Omit to use the editor's current pan/zoom.";
+	Dictionary frame_rect_items;
+	frame_rect_items["type"] = "number";
+	frame_rect_prop["items"] = frame_rect_items;
+	props["frame_rect"] = frame_rect_prop;
 	Array req;
-	tools.push_back(_make_tool("capture_2d_viewport", "Capture the 2D editor viewport as an image. Use to visually check the 2D scene the user is editing (sprites, UI, layout) without running the game. Much faster than run_and_screenshot for quick visual checks, and shows exactly what the user sees in the 2D canvas (including their current pan/zoom). The image is returned and shown to you automatically.", props, req));
+	tools.push_back(_make_tool("capture_2d_viewport", "Capture the 2D editor viewport as an image. Use to visually check the 2D scene the user is editing (sprites, UI, layout) without running the game. Much faster than run_and_screenshot for quick visual checks, and shows exactly what the user sees in the 2D canvas (including their current pan/zoom — unless you pass frame_rect to override the framing). The image is returned and shown to you automatically.", props, req));
 }
 {
 	Dictionary props;

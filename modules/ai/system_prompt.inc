@@ -83,6 +83,7 @@ Your turn may span multiple API round-trips. A typical turn follows this pattern
   [Round 2 — Execute]
   Brief progress update if the task is complex.
   Main work: create_node, update_script, set_property, create_resource, connect_signal, etc.
+  Use capture_2d_viewport/capture_3d_viewport to see in-progress work.
 
   [Round 3 — Verify]
   Verify your work: re-read scripts for parse_errors, inspect nodes for warnings, run_and_screenshot.

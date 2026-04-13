@@ -677,11 +677,75 @@ Dictionary exec_capture_2d_viewport(const Dictionary &args) {
 			sv->set_size_force(Size2i(w, h));
 		}
 	}
+
+	// Optional custom framing. When `frame_rect` is provided, we override scene_root's
+	// global canvas transform so the capture frames the requested world-space rect
+	// (fit, preserves aspect ratio). Computed AFTER the size_force above so the
+	// framing math sees the post-resize viewport size. Restored after the capture.
+	// Mirrors the editor's own zoom/offset → Transform2D math in
+	// CanvasItemEditor::_draw_viewport.
+	bool has_frame_rect = false;
+	Transform2D saved_transform;
+	if (sv && args.has("frame_rect")) {
+		Variant fr_v = args["frame_rect"];
+		if (fr_v.get_type() != Variant::ARRAY) {
+			return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+				"frame_rect must be an array of 4 numbers [x, y, width, height].");
+		}
+		Array fr_arr = fr_v;
+		if (fr_arr.size() != 4) {
+			return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+				vformat("frame_rect must have exactly 4 elements [x, y, width, height], got %d.", fr_arr.size()));
+		}
+		for (int i = 0; i < 4; i++) {
+			Variant::Type t = fr_arr[i].get_type();
+			if (t != Variant::INT && t != Variant::FLOAT) {
+				return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+					vformat("frame_rect[%d] must be a number.", i));
+			}
+		}
+		real_t rx = (real_t)(double)fr_arr[0];
+		real_t ry = (real_t)(double)fr_arr[1];
+		real_t rw = (real_t)(double)fr_arr[2];
+		real_t rh = (real_t)(double)fr_arr[3];
+		if (rw <= 0.0 || rh <= 0.0) {
+			return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+				vformat("frame_rect width and height must be > 0 (got %f x %f).", rw, rh));
+		}
+		Size2 vp_size = sv->get_size();
+		if (vp_size.x < 64 || vp_size.y < 64) {
+			return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+				vformat("scene_root size is too small for framing (%d x %d).", (int)vp_size.x, (int)vp_size.y));
+		}
+
+		real_t zoom = MIN(vp_size.x / rw, vp_size.y / rh);
+		Vector2 center(rx + rw * 0.5, ry + rh * 0.5);
+		Vector2 view_offset = center - Vector2(vp_size.x, vp_size.y) / (2.0 * zoom);
+
+		Transform2D t;
+		t.scale_basis(Size2(zoom, zoom));
+		t.columns[2] = -view_offset * zoom;
+
+		saved_transform = sv->get_global_canvas_transform();
+		sv->set_global_canvas_transform(t);
+		has_frame_rect = true;
+	}
+
 	// Queue a redraw of the 2D canvas overlay (grid, rulers, selection, guides) so
 	// it appears on top of the scene contents. The MessageQueue flush inside
 	// _capture_subviewport_to_result fires the deferred _redraw_callback before draw.
 	cie->update_viewport();
 	Dictionary result = _capture_subviewport_to_result(sv, "2D");
+
+	if (has_frame_rect) {
+		// Restore the editor's transform synchronously (so anything reading
+		// scene_root->get_global_canvas_transform() in the brief window before the
+		// next editor redraw sees the right value), then queue a redraw — the
+		// editor's _draw_viewport will re-apply its own zoom/offset on the next
+		// frame anyway, but the explicit restore avoids a stale-state window.
+		sv->set_global_canvas_transform(saved_transform);
+		cie->update_viewport();
+	}
 	if (tab_hidden) {
 		rs->viewport_set_disable_2d(vp_rid, true);
 		rs->viewport_set_environment_mode(vp_rid, RS::VIEWPORT_ENVIRONMENT_DISABLED);

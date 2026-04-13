@@ -172,6 +172,64 @@ Things to know if you're touching this code or chasing a related bug:
   sets it to `ENABLED` on `scene_root` while the 2D tab is hidden, we'd
   overwrite their state. Quiet assumption.
 
+### Custom Framing (`frame_rect`)
+
+`capture_2d_viewport` accepts an optional `frame_rect: [x, y, width, height]`
+argument (world-space units, matching node positions). When omitted, the
+capture uses the editor's current pan/zoom — same as before. When present, the
+capture frames the requested rect, fit-to-viewport with aspect ratio preserved
+(may produce empty bands if the rect's aspect ratio differs from the
+viewport's).
+
+This works by overriding `scene_root`'s **global canvas transform** for the
+duration of the capture. The 2D editor's own pan/zoom is implemented exactly
+the same way — see `CanvasItemEditor::_draw_viewport` in
+[canvas_item_editor_plugin.cpp:4046](../../../editor/plugins/canvas_item_editor_plugin.cpp#L4046),
+which builds `scale(zoom) * translate(-view_offset)` from `zoom` and
+`view_offset`. We use the same formula, derived from `frame_rect`:
+
+```
+zoom         = min(viewport_w / rect_w, viewport_h / rect_h)
+center       = rect.position + rect.size / 2
+view_offset  = center - viewport_size / (2 * zoom)
+transform    = scale(zoom) * translate(-view_offset)
+```
+
+The override is computed *after* the hidden-tab `set_size_force` so it sees the
+post-resize viewport size, then applied via `SubViewport::set_global_canvas_transform`.
+After the capture we restore the saved transform synchronously, then call
+`CanvasItemEditor::update_viewport()` so the editor's `_draw_viewport` re-syncs
+its own state on the next frame.
+
+#### Why no off-screen SubViewport
+
+The cleaner alternative — stand up a sibling SubViewport sharing the
+`World2D` and capture from it — would avoid mutating editor state. It's
+unnecessary because the editor overlays (rulers, gizmos, grid, selection,
+guides) are drawn on a sibling Control of the SubViewportContainer (the
+`viewport` Control inside `CanvasItemEditor`), not on `scene_root` itself.
+Capturing `scene_root` directly is already overlay-free, so the off-screen
+route's main selling point disappears, and we avoid lifecycle code (creating,
+parenting, sizing, destroying a temporary SubViewport per call).
+
+The cost is a one-frame visual flicker if the user happens to be on the 2D
+tab while the AI captures. For a tool call (already a heavyweight async
+operation from the user's perspective) this is acceptable.
+
+#### Caveats
+
+- **No "fill" mode.** Only fit (preserves aspect ratio, may letterbox). If a
+  user wants pixel-perfect framing, they have to match aspect ratios.
+- **Restore is best-effort.** Between our `set_global_canvas_transform(saved)`
+  and the editor's next `_draw_viewport` (deferred via `queue_redraw`),
+  `scene_root`'s transform is the saved value — not necessarily the editor's
+  *current* zoom/offset, if the user dragged something between save and
+  restore. The editor will re-overwrite on its next redraw, so the window of
+  divergence is one frame.
+- **Validation is strict.** `frame_rect` must be a 4-element array of numbers
+  with positive width and height. Anything else returns an `INVALID_ARGS`
+  error and skips the capture entirely.
+
 ### Key Files
 
 - `modules/ai/actions/project_actions.cpp` — `exec_capture_2d_viewport`,
