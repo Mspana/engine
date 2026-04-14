@@ -571,8 +571,10 @@ Vector<AIProvider::ModelEntry> AIProvider::get_available_models() {
 	models.push_back({ "gemini-3.1-flash-lite-preview", "Gemini 3.1 Flash Lite", "gemini" });
 	models.push_back({ "gemini-3.1-pro-preview", "Gemini 3.1 Pro", "gemini" });
 	models.push_back({ "gpt-4o-mini", "GPT-4o Mini", "openai" });
+	models.push_back({ "gpt-5.4-nano", "GPT-5.4 Nano", "openai" });
 	models.push_back({ "grok-4", "Grok 4", "xai" });
 	models.push_back({ "grok-4-fast", "Grok 4 Fast", "xai" });
+	models.push_back({ "moonshotai/Kimi-K2.5", "Kimi K2.5", "deepinfra" });
 	return models;
 }
 
@@ -590,6 +592,9 @@ int AIProvider::get_context_window_tokens(const String &p_model) {
 	// OpenAI
 	if (p_model == "gpt-4o" || p_model == "gpt-4o-mini" || p_model == "gpt-4-turbo") {
 		return 128000;
+	}
+	if (p_model == "gpt-5.4-nano") {
+		return 400000;
 	}
 	if (p_model == "gpt-4") {
 		return 8192;
@@ -609,6 +614,11 @@ int AIProvider::get_context_window_tokens(const String &p_model) {
 		return 32768;
 	}
 
+	// DeepInfra-hosted open-source models
+	if (p_model == "moonshotai/Kimi-K2.5") {
+		return 262144; // 256k
+	}
+
 	// Anthropic Claude
 	if (p_model.begins_with("claude-opus-4") || p_model.begins_with("claude-sonnet-4")) {
 		return 200000; // 200k
@@ -624,7 +634,8 @@ int AIProvider::get_context_window_tokens(const String &p_model) {
 bool AIProvider::model_supports_vision(const String &p_model) {
 	// OpenAI
 	if (p_model == "gpt-4o" || p_model == "gpt-4o-mini" ||
-		p_model == "gpt-4-turbo" || p_model == "gpt-4-vision-preview") {
+		p_model == "gpt-4-turbo" || p_model == "gpt-4-vision-preview" ||
+		p_model == "gpt-5.4-nano") {
 		return true;
 	}
 	// Gemini (1.5+ is multimodal; gemini-pro is text-only)
@@ -644,6 +655,10 @@ bool AIProvider::model_supports_vision(const String &p_model) {
 	if (p_model.begins_with("claude-opus-4") || p_model.begins_with("claude-sonnet-4") ||
 		p_model.begins_with("claude-3-5") || p_model.begins_with("claude-3-opus") ||
 		p_model.begins_with("claude-3-sonnet") || p_model.begins_with("claude-3-haiku")) {
+		return true;
+	}
+	// DeepInfra-hosted open-source models with vision
+	if (p_model == "moonshotai/Kimi-K2.5") {
 		return true;
 	}
 	return false;
@@ -743,7 +758,15 @@ PackedStringArray OpenAIProvider::get_request_headers() const {
 }
 
 String OpenAIProvider::get_request_url() const {
-	return base_url + "/v1/chat/completions";
+	return "https://" + get_request_host() + get_request_path();
+}
+
+String OpenAIProvider::get_request_host() const {
+	return "api.openai.com";
+}
+
+String OpenAIProvider::get_request_path() const {
+	return "/v1/chat/completions";
 }
 
 void OpenAIProvider::send_request(const String &user_prompt, const String &context_block) {
@@ -763,10 +786,10 @@ void OpenAIProvider::send_request(const String &user_prompt, const String &conte
 
 void OpenAIProvider::_perform_request(const String &user_prompt, const String &context_block) {
 	HTTPClient *http_client = HTTPClient::create();
-	
-	// Parse URL to extract host and path
-	String url = get_request_url();
-	String host = "api.openai.com";
+
+	// Transport host/path are virtual so subclasses (e.g. DeepInfra) can redirect.
+	String host = get_request_host();
+	String request_path = get_request_path();
 	int port = 443;
 	
 	// Connect to host
@@ -805,7 +828,7 @@ void OpenAIProvider::_perform_request(const String &user_prompt, const String &c
 	
 	// Send request
 	CharString body_data = json_body.utf8();
-	err = http_client->request(HTTPClient::METHOD_POST, "/v1/chat/completions", headers_vector, (const uint8_t *)body_data.get_data(), body_data.length());
+	err = http_client->request(HTTPClient::METHOD_POST, request_path, headers_vector, (const uint8_t *)body_data.get_data(), body_data.length());
 	if (err != OK) {
 		ERR_PRINT(vformat("OpenAIProvider: Failed to send request: %d", err));
 		call_deferred("emit_signal", "request_completed", false, "", vformat("Failed to send request: %d", err));
@@ -1004,10 +1027,10 @@ void OpenAIProvider::send_request_with_messages(const Array &p_messages, const S
 
 void OpenAIProvider::_perform_request_with_messages(const Array &p_messages, const String &context_block) {
 	HTTPClient *http_client = HTTPClient::create();
-	
-	// Parse URL to extract host and path
-	String url = get_request_url();
-	String host = "api.openai.com";
+
+	// Transport host/path are virtual so subclasses (e.g. DeepInfra) can redirect.
+	String host = get_request_host();
+	String request_path = get_request_path();
 	int port = 443;
 	
 	// Connect to host
@@ -1046,7 +1069,7 @@ void OpenAIProvider::_perform_request_with_messages(const Array &p_messages, con
 	
 	// Send request
 	CharString body_data = json_body.utf8();
-	err = http_client->request(HTTPClient::METHOD_POST, "/v1/chat/completions", headers_vector, (const uint8_t *)body_data.get_data(), body_data.length());
+	err = http_client->request(HTTPClient::METHOD_POST, request_path, headers_vector, (const uint8_t *)body_data.get_data(), body_data.length());
 	if (err != OK) {
 		ERR_PRINT(vformat("OpenAIProvider: Failed to send request: %d", err));
 		call_deferred("emit_signal", "request_completed", false, "", vformat("Failed to send request: %d", err));
@@ -2861,6 +2884,48 @@ void AnthropicProvider::_perform_request_with_messages(const Array &p_messages, 
 	call_deferred("emit_signal", "request_completed", true, translated_response, "");
 
 	memdelete(http_client);
+}
+
+// ============================================================================
+// DeepInfraProvider Implementation
+// ============================================================================
+//
+// DeepInfra hosts open-source models (Kimi, Qwen, DeepSeek, Llama, etc.) behind
+// an OpenAI-compatible endpoint at https://api.deepinfra.com/v1/openai/chat/completions.
+// The request body, response shape, headers, tools array, and vision encoding all
+// match OpenAI exactly — only the host and path differ. This subclass overrides
+// the transport hooks and inherits everything else from OpenAIProvider.
+
+DeepInfraProvider::DeepInfraProvider() : OpenAIProvider() {
+	model = get_default_model();
+	base_url = get_default_base_url();
+
+	String env_key = load_api_key_from_env("DEEPINFRA_API_KEY");
+	if (!env_key.is_empty()) {
+		api_key = env_key;
+	}
+}
+
+DeepInfraProvider::~DeepInfraProvider() {
+}
+
+void DeepInfraProvider::_bind_methods() {
+}
+
+String DeepInfraProvider::get_default_base_url() const {
+	return "https://api.deepinfra.com";
+}
+
+String DeepInfraProvider::get_default_model() const {
+	return "moonshotai/Kimi-K2.5";
+}
+
+String DeepInfraProvider::get_request_host() const {
+	return "api.deepinfra.com";
+}
+
+String DeepInfraProvider::get_request_path() const {
+	return "/v1/openai/chat/completions";
 }
 
 // ============================================================================

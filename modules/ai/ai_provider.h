@@ -58,6 +58,14 @@ public:
 	// Build OpenAI-compatible tools array for native tool-calling
 	static Array build_tools_array();
 
+	// Model catalog entry for the dropdown
+	struct ModelEntry {
+		String model_id;
+		String display_name;
+		String provider; // "xai", "openai", "anthropic", "gemini"
+	};
+	static Vector<ModelEntry> get_available_models();
+
 	// Vision capability check — returns true if the named model accepts image input
 	static bool model_supports_vision(const String &p_model);
 	bool supports_vision() const { return model_supports_vision(model); }
@@ -108,6 +116,11 @@ public:
 	virtual void send_request(const String &user_prompt, const String &context_block = "") override;
 	virtual void send_request_with_messages(const Array &p_messages, const String &context_block = "") override;
 	virtual String get_provider_name() const override { return "openai"; }
+
+	// Transport hooks — subclasses (e.g. DeepInfra) override these to redirect the HTTP call
+	// while reusing the OpenAI request/response format.
+	virtual String get_request_host() const;
+	virtual String get_request_path() const;
 
 	OpenAIProvider();
 	~OpenAIProvider();
@@ -189,6 +202,24 @@ public:
 
 	AnthropicProvider();
 	~AnthropicProvider();
+};
+
+// DeepInfra Provider — OpenAI-compatible host for open-source models (Kimi, Qwen, DeepSeek, etc.)
+class DeepInfraProvider : public OpenAIProvider {
+	GDCLASS(DeepInfraProvider, OpenAIProvider);
+
+protected:
+	static void _bind_methods();
+
+public:
+	virtual String get_default_base_url() const override;
+	virtual String get_default_model() const override;
+	virtual String get_request_host() const override;
+	virtual String get_request_path() const override;
+	virtual String get_provider_name() const override { return "deepinfra"; }
+
+	DeepInfraProvider();
+	~DeepInfraProvider();
 };
 
 // Dummy Provider (for testing/simulation)

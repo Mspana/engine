@@ -13,6 +13,8 @@ Set system environment variables:
 $env:OPENAI_API_KEY="sk-..."
 $env:GEMINI_API_KEY="..."
 $env:XAI_API_KEY="..."
+$env:ANTHROPIC_API_KEY="sk-ant-..."
+$env:DEEPINFRA_API_KEY="..."
 ```
 
 **Linux/Mac:**
@@ -20,6 +22,8 @@ $env:XAI_API_KEY="..."
 export OPENAI_API_KEY="sk-..."
 export GEMINI_API_KEY="..."
 export XAI_API_KEY="..."
+export ANTHROPIC_API_KEY="sk-ant-..."
+export DEEPINFRA_API_KEY="..."
 ```
 
 ### Option 2: .env File (Recommended for Development)
@@ -34,6 +38,8 @@ export XAI_API_KEY="..."
    OPENAI_API_KEY=sk-proj-xxxxxxxxxxxxx
    GEMINI_API_KEY=AIzaSyxxxxxxxxxxxxxx
    XAI_API_KEY=xai-xxxxxxxxxxxxx
+   ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxxx
+   DEEPINFRA_API_KEY=xxxxxxxxxxxxx
    ```
 
 3. **Important:** Add `.env` to your project's `.gitignore` to avoid committing secrets:
@@ -71,6 +77,8 @@ The `.env` file is parsed simply:
 - **OpenAI**: `OPENAI_API_KEY`
 - **Gemini**: `GEMINI_API_KEY`
 - **x.ai (Grok)**: `XAI_API_KEY`
+- **Anthropic (Claude)**: `ANTHROPIC_API_KEY`
+- **DeepInfra** (Kimi, Qwen, DeepSeek, and other open-source models): `DEEPINFRA_API_KEY`
 
 ## Security Best Practices
 
@@ -85,6 +93,8 @@ The `.env` file is parsed simply:
 - **OpenAI**: https://platform.openai.com/api-keys
 - **Google Gemini**: https://makersuite.google.com/app/apikey
 - **x.ai (Grok)**: https://console.x.ai/
+- **Anthropic (Claude)**: https://console.anthropic.com/settings/keys
+- **DeepInfra**: https://deepinfra.com/dash/api_keys
 
 ## Example Usage
 
