@@ -47,6 +47,7 @@
 #include "scene/gui/option_button.h"
 #include "scene/gui/dialogs.h"
 #include "scene/gui/popup.h"
+#include "scene/gui/popup_menu.h"
 #include "scene/main/http_request.h"
 #include "scene/main/timer.h"
 #include "core/input/input_event.h"
@@ -386,6 +387,12 @@ private:
 	void _update_context_usage(int p_used_chars, int p_max_chars);
 	void _reset_context_usage();
 	void _refresh_context_usage(); // Recompute from chat store (use after run complete / rewind)
+
+	// Right-click context menu for message bubbles (shared across all bubbles)
+	PopupMenu *bubble_context_menu = nullptr;
+	String _bubble_menu_text;
+	void _on_message_bubble_gui_input(const Ref<InputEvent> &p_event, Control *p_bubble);
+	void _on_bubble_menu_id_pressed(int p_id);
 
 	// UI building methods
 	void _rebuild_message_list();

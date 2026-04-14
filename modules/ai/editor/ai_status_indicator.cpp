@@ -1653,12 +1653,18 @@ Control *AIStatusPanel::_create_message_bubble(const HistoryItem &p_item) {
 	// Create inner VBox to hold header (for user messages) and content
 	VBoxContainer *inner_vbox = memnew(VBoxContainer);
 	inner_vbox->add_theme_constant_override("separation", AIColors::PADDING_XS * EDSCALE);
+	// PASS so right-clicks on the vbox's whitespace (between header and label,
+	// or margins around the label) propagate up to the bubble's gui_input.
+	inner_vbox->set_mouse_filter(Control::MOUSE_FILTER_PASS);
 	bubble->add_child(inner_vbox);
 
 	// For user messages, add a header row with edit and rewind buttons
 	if (is_user && p_item.ts != 0) {
 		HBoxContainer *header_row = memnew(HBoxContainer);
 		header_row->set_h_size_flags(SIZE_EXPAND_FILL);
+		// PASS so right-clicks in the header whitespace (next to the buttons)
+		// propagate up to the bubble's gui_input.
+		header_row->set_mouse_filter(Control::MOUSE_FILTER_PASS);
 		inner_vbox->add_child(header_row);
 
 		// Rewind button (↶ unicode character) — left side
@@ -1687,9 +1693,11 @@ Control *AIStatusPanel::_create_message_bubble(const HistoryItem &p_item) {
 		edit_btn->connect(SceneStringNames::get_singleton()->pressed, callable_mp(this, &AIStatusPanel::_on_edit_clicked).bind(p_item.ts));
 		header_row->add_child(edit_btn);
 
-		// Flexible spacer to fill remaining space on the right
+		// Flexible spacer to fill remaining space on the right. PASS so a
+		// right-click on the empty header area still reaches the bubble.
 		Control *header_spacer = memnew(Control);
 		header_spacer->set_h_size_flags(SIZE_EXPAND_FILL);
+		header_spacer->set_mouse_filter(Control::MOUSE_FILTER_PASS);
 		header_row->add_child(header_spacer);
 	}
 
@@ -1712,6 +1720,15 @@ Control *AIStatusPanel::_create_message_bubble(const HistoryItem &p_item) {
 	_append_message_content(label, display_content);
 
 	inner_vbox->add_child(label);
+
+	// Right-click → show "Copy text" context menu. Stash the plain text on the
+	// bubble and listen on both the bubble (for margin clicks) and the label
+	// (which consumes events inside its own rect). The label's STOP filter
+	// would otherwise swallow the right-click before it reaches the bubble.
+	bubble->set_meta("_bubble_plain_text", display_content);
+	bubble->set_mouse_filter(Control::MOUSE_FILTER_STOP);
+	bubble->connect("gui_input", callable_mp(this, &AIStatusPanel::_on_message_bubble_gui_input).bind(bubble));
+	label->connect("gui_input", callable_mp(this, &AIStatusPanel::_on_message_bubble_gui_input).bind(bubble));
 
 	// Image thumbnails for user messages (if any)
 	if (is_user && p_item.data.has("images")) {
@@ -3604,6 +3621,38 @@ void AIStatusPanel::_remove_pending_message() {
 }
 
 // ============================================================================
+// Message Bubble Context Menu (right-click → Copy text)
+// ============================================================================
+
+void AIStatusPanel::_on_message_bubble_gui_input(const Ref<InputEvent> &p_event, Control *p_bubble) {
+	Ref<InputEventMouseButton> mb = p_event;
+	if (!mb.is_valid() || mb->get_button_index() != MouseButton::RIGHT || !mb->is_pressed()) {
+		return;
+	}
+	if (!p_bubble || !bubble_context_menu) {
+		return;
+	}
+	_bubble_menu_text = p_bubble->get_meta("_bubble_plain_text", "");
+	if (_bubble_menu_text.is_empty()) {
+		return;
+	}
+	Vector2i screen_pos = p_bubble->get_screen_position() + Vector2i(mb->get_position());
+	bubble_context_menu->set_position(screen_pos);
+	bubble_context_menu->reset_size();
+	bubble_context_menu->popup();
+}
+
+void AIStatusPanel::_on_bubble_menu_id_pressed(int p_id) {
+	if (p_id != 0 || _bubble_menu_text.is_empty()) {
+		return;
+	}
+	DisplayServer *ds = DisplayServer::get_singleton();
+	if (ds) {
+		ds->clipboard_set(_bubble_menu_text);
+	}
+}
+
+// ============================================================================
 // Rewind Functionality
 // ============================================================================
 
@@ -4359,6 +4408,12 @@ AIStatusPanel::AIStatusPanel() {
 	debug_pill_update_timer->connect("timeout", callable_mp(this, &AIStatusPanel::_on_debug_pill_update_tick));
 	add_child(debug_pill_update_timer);
 	// start() is deferred to NOTIFICATION_READY so the timer is in the scene tree
+
+	// Shared right-click context menu for message bubbles
+	bubble_context_menu = memnew(PopupMenu);
+	bubble_context_menu->add_item(TTR("Copy text"), 0);
+	bubble_context_menu->connect("id_pressed", callable_mp(this, &AIStatusPanel::_on_bubble_menu_id_pressed));
+	add_child(bubble_context_menu);
 
 	// Image preview strip (hidden when empty)
 	// ========================================
