@@ -1414,7 +1414,13 @@ Dictionary GeminiProvider::build_request_body_with_messages(const Array &p_messa
 		if (role == "assistant" && msg.has("tool_calls")) {
 			// Assistant message with tool calls → model message with functionCall parts
 			gemini_content["role"] = "model";
-			String text_content = msg.get("content", "");
+			// Gemini's OpenAI-compat endpoint returns content:null on tool-call turns.
+			// Casting a NIL Variant to String yields the literal "<null>", which would
+			// then poison subsequent turns. Only accept a real non-empty string.
+			String text_content;
+			if (msg.has("content") && msg["content"].get_type() == Variant::STRING) {
+				text_content = msg["content"];
+			}
 			if (!text_content.is_empty()) {
 				Dictionary text_part;
 				text_part["text"] = text_content;
@@ -1475,13 +1481,22 @@ Dictionary GeminiProvider::build_request_body_with_messages(const Array &p_messa
 			}
 		} else if (role == "assistant") {
 			gemini_content["role"] = "model";
+			// Guard against NIL content → "<null>" casting; see tool_calls branch above.
+			String text_content;
+			if (msg.has("content") && msg["content"].get_type() == Variant::STRING) {
+				text_content = msg["content"];
+			}
 			Dictionary text_part;
-			text_part["text"] = msg.get("content", "");
+			text_part["text"] = text_content;
 			parts.push_back(text_part);
 		} else if (role == "user") {
 			gemini_content["role"] = "user";
+			String text_content;
+			if (msg.has("content") && msg["content"].get_type() == Variant::STRING) {
+				text_content = msg["content"];
+			}
 			Dictionary text_part;
-			text_part["text"] = msg.get("content", "");
+			text_part["text"] = text_content;
 			parts.push_back(text_part);
 
 			// Add inline image parts for user messages (Gemini multimodal)
