@@ -68,6 +68,8 @@ user message           ← user hits Send
 
 The critical rule: **the assistant message is written before its tools execute.** This means if the editor crashes mid-tool-execution, the file still contains a valid assistant→tool pairing (with the results that completed). On reload, missing results indicate an unclean shutdown — but the file is never structurally malformed.
 
+The editor mirrors this ordering in the transcript: the moment `assistant_item_ready` fires, one `ToolCollapsibleEntry` card is spawned per `tool_call` block in a **pending** state (muted border, animated braille spinner, args-only body). A shared `Timer` in `AIStatusPanel` ticks every 100 ms and advances the spinner glyph on every card currently in `pending_tool_entries`. When the matching `tool_result_ready` fires, the card is looked up by `tool_call_id`, upgraded in place via `update_from_tool_result()` (✓/✗ glyph, status-coloured border, full result body), and removed from the map. When the map empties, the timer stops. Pending state is never persisted — only completed tool items are written to the JSONL file.
+
 On cancellation, any tool calls that weren't dispatched get synthetic `status: "cancelled"` results written before the run exits. This maintains the pairing invariant.
 
 ### Read protocol

@@ -32,6 +32,7 @@
 #define AI_STATUS_INDICATOR_H
 
 #include "ai_chat_store.h"
+#include "core/templates/hash_map.h"
 #include "editor/plugins/editor_plugin.h"
 #include "scene/gui/box_container.h"
 #include "scene/gui/button.h"
@@ -80,6 +81,7 @@ class ToolCollapsibleEntry : public VBoxContainer {
 
 private:
 	bool is_collapsed = true;
+	bool is_pending = false; // true between pre-creation and tool_result arrival
 
 	// Header row (always visible)
 	HBoxContainer *header_container = nullptr;
@@ -111,6 +113,11 @@ public:
 
 	// Convenience: update from tool result dictionary
 	void update_from_tool_result(const Dictionary &p_tool_result);
+
+	// Pending state — card is shown immediately when the assistant item arrives,
+	// animated by the owning AIStatusPanel until the tool result replaces it.
+	bool get_is_pending() const { return is_pending; }
+	void set_pending_glyph(const String &p_glyph);
 
 	void set_token_label_visible(bool p_visible);
 
@@ -268,6 +275,14 @@ private:
 	Label *pending_label = nullptr;
 	Timer *thinking_dot_timer = nullptr;
 	int thinking_dot_state = 0;
+
+	// Pairing map for tool cards: set when an assistant item with tool_call blocks
+	// arrives, cleared as each tool_result fires. Member-scoped so the live-run
+	// pairing survives across signals (reload uses a local at rebuild time).
+	HashMap<String, ToolCollapsibleEntry *> pending_tool_entries;
+	Timer *pending_tool_timer = nullptr;
+	int pending_tool_spinner_frame = 0;
+	void _on_pending_tool_spinner_tick();
 
 	// Input area
 	TextEdit *prompt_edit = nullptr;

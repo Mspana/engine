@@ -289,12 +289,44 @@ void ToolCollapsibleEntry::set_token_label_visible(bool p_visible) {
 	}
 }
 
+void ToolCollapsibleEntry::set_pending_glyph(const String &p_glyph) {
+	if (!is_pending || !status_label) {
+		return;
+	}
+	status_label->set_text(p_glyph);
+	status_label->set_visible(true);
+}
+
 void ToolCollapsibleEntry::update_from_tool_result(const Dictionary &p_tool_result) {
 	String action_type = p_tool_result.get("type", "unknown");
 	String status = p_tool_result.get("status", "unknown");
 
 	// Build header text
 	String header_text = vformat("[Tool] %s", action_type);
+
+	// Pending render: show only the tool name + args, muted border, no status glyph.
+	// AIStatusPanel drives an animated spinner into the status label via set_pending_glyph.
+	if (status == "pending") {
+		is_pending = true;
+		set_header(header_text, String::utf8("⠋"));
+		if (status_label) {
+			status_label->add_theme_color_override("font_color", AIColors::TEXT_MUTED);
+		}
+		if (panel_style.is_valid()) {
+			panel_style->set_border_color(AIColors::ACCENT_BLUE_MUTED);
+		}
+		String body_content;
+		if (p_tool_result.has("args") && p_tool_result["args"].get_type() == Variant::DICTIONARY) {
+			Dictionary args = p_tool_result["args"];
+			if (!args.is_empty()) {
+				body_content = vformat("Args: %s", JSON::stringify(args, "  ", false));
+			}
+		}
+		set_body(body_content);
+		return;
+	}
+
+	is_pending = false;
 
 	// Build status indicator
 	String status_text;
@@ -1176,11 +1208,14 @@ void AIStatusPanel::_rebuild_message_list() {
 		memdelete(child);
 	}
 	pending_message = nullptr;
+	// Any pointers in the map are dangling now — wipe before we repopulate.
+	pending_tool_entries.clear();
+	if (pending_tool_timer) {
+		pending_tool_timer->stop();
+	}
 
 	if (chat_store.is_valid()) {
 		const Vector<HistoryItem> &items = chat_store->get_items();
-		// Pairing map: tool_call_id → ToolCollapsibleEntry* (to update when tool result arrives)
-		HashMap<String, ToolCollapsibleEntry *> pending_tool_entries;
 
 		// Track API round boundaries for separators and token totals.
 		// A new round starts when we see an assistant item after tool results.
@@ -1393,6 +1428,12 @@ void AIStatusPanel::_rebuild_message_list() {
 			_insert_token_total_label_into(message_list, round_token_total);
 		}
 	}
+
+	// Orphaned pending cards from unclean shutdowns (assistant tool_calls with no
+	// matching tool result in the log) render as static, un-animated cards. We
+	// clear the map so a subsequent live run doesn't try to pair against them or
+	// kick the spinner timer.
+	pending_tool_entries.clear();
 
 	// Reset auto-scroll so the rebuild always lands at the bottom
 	should_auto_scroll = true;
@@ -1807,6 +1848,27 @@ Control *AIStatusPanel::_create_tool_result_ui(const Dictionary &p_tool_result) 
 
 void AIStatusPanel::_append_tool_result_ui(const Dictionary &p_tool_result) {
 	if (!message_list) {
+		return;
+	}
+
+	// If the assistant item already pre-created a pending card for this tool_call,
+	// upgrade it in place instead of appending a duplicate.
+	String call_id = p_tool_result.get("action_id", "");
+	if (!call_id.is_empty() && pending_tool_entries.has(call_id)) {
+		ToolCollapsibleEntry *entry = pending_tool_entries[call_id];
+		if (entry) {
+			entry->update_from_tool_result(p_tool_result);
+			entry->set_token_label_visible(_show_token_counts);
+			// Re-wire screenshot click, now that a screenshot may exist
+			if (entry->get_screenshot_widget() && entry->get_screenshot_widget()->get_texture().is_valid()) {
+				entry->get_screenshot_widget()->connect("gui_input",
+						callable_mp(this, &AIStatusPanel::_on_thumbnail_gui_input).bind(entry->get_screenshot_b64()));
+			}
+		}
+		pending_tool_entries.erase(call_id);
+		if (pending_tool_entries.is_empty() && pending_tool_timer) {
+			pending_tool_timer->stop();
+		}
 		return;
 	}
 
@@ -3369,6 +3431,51 @@ void AIStatusPanel::_on_orchestrator_assistant_item(const Dictionary &p_item) {
 			break; // one text bubble per assistant item
 		}
 	}
+
+	// Spawn a pending tool card per tool_call block so the user sees the tool is
+	// running immediately, not just when it completes. The reload path in
+	// _rebuild_message_list uses the same pattern against the persisted assistant
+	// item; this is the live-run counterpart. Cards are paired to results by
+	// call_id in _append_tool_result_ui.
+	for (int i = 0; i < content.size(); i++) {
+		Dictionary block = content[i];
+		if (String(block.get("type", "")) != "tool_call") {
+			continue;
+		}
+		String call_id = block.get("id", "");
+		String tool_name = block.get("name", "");
+		// update_todos is filtered from the transcript in _on_orchestrator_tool_result;
+		// don't create a pending card for it either or it will linger forever.
+		if (tool_name == "update_todos") {
+			continue;
+		}
+		if (call_id.is_empty() || pending_tool_entries.has(call_id)) {
+			continue;
+		}
+		Dictionary placeholder;
+		placeholder["type"] = tool_name;
+		placeholder["tool_name"] = tool_name;
+		placeholder["args"] = block.get("args", Dictionary());
+		placeholder["action_id"] = call_id;
+		placeholder["status"] = "pending";
+		placeholder["tokens"] = 0;
+
+		ToolCollapsibleEntry *entry = Object::cast_to<ToolCollapsibleEntry>(_create_tool_result_ui(placeholder));
+		if (entry) {
+			if (pending_message) {
+				int idx = pending_message->get_index();
+				message_list->add_child(entry);
+				message_list->move_child(entry, idx);
+			} else {
+				message_list->add_child(entry);
+			}
+			pending_tool_entries[call_id] = entry;
+			should_auto_scroll = true;
+		}
+	}
+	if (!pending_tool_entries.is_empty() && pending_tool_timer && pending_tool_timer->is_stopped()) {
+		pending_tool_timer->start();
+	}
 }
 
 Control *AIStatusPanel::_create_narration_bubble(const String &p_text) {
@@ -3582,6 +3689,27 @@ void AIStatusPanel::_on_orchestrator_complete(bool p_success, const String &p_fi
 	is_waiting_for_response = false;
 	_set_run_state(STATE_IDLE);
 
+	// Flush any dangling pending tool cards — can happen if a run was cancelled
+	// or errored before every tool_call produced a result.
+	if (!pending_tool_entries.is_empty()) {
+		for (KeyValue<String, ToolCollapsibleEntry *> &kv : pending_tool_entries) {
+			if (!kv.value) {
+				continue;
+			}
+			Dictionary cancelled;
+			cancelled["type"] = "unknown";
+			cancelled["status"] = "error";
+			Dictionary err;
+			err["message"] = p_success ? String("Tool did not produce a result.") : String("Run ended before this tool completed.");
+			cancelled["error"] = err;
+			kv.value->update_from_tool_result(cancelled);
+		}
+		pending_tool_entries.clear();
+	}
+	if (pending_tool_timer) {
+		pending_tool_timer->stop();
+	}
+
 	// Check if context was truncated — if so, mark as exhausted and show a notice
 	if (context_was_truncated && !context_exhausted) {
 		context_exhausted = true;
@@ -3617,6 +3745,24 @@ void AIStatusPanel::_on_thinking_dot_tick() {
 	thinking_dot_state = (thinking_dot_state + 1) % 4;
 	if (pending_label) {
 		pending_label->set_text(states[thinking_dot_state]);
+	}
+}
+
+void AIStatusPanel::_on_pending_tool_spinner_tick() {
+	if (pending_tool_entries.is_empty()) {
+		if (pending_tool_timer) {
+			pending_tool_timer->stop();
+		}
+		return;
+	}
+	static const char *FRAMES[] = { "\xE2\xA0\x8B", "\xE2\xA0\x99", "\xE2\xA0\xB9", "\xE2\xA0\xB8",
+			"\xE2\xA0\xBC", "\xE2\xA0\xB4", "\xE2\xA0\xA6", "\xE2\xA0\xA7", "\xE2\xA0\x87", "\xE2\xA0\x8F" };
+	pending_tool_spinner_frame = (pending_tool_spinner_frame + 1) % 10;
+	String glyph = String::utf8(FRAMES[pending_tool_spinner_frame]);
+	for (KeyValue<String, ToolCollapsibleEntry *> &kv : pending_tool_entries) {
+		if (kv.value) {
+			kv.value->set_pending_glyph(glyph);
+		}
 	}
 }
 
@@ -4757,6 +4903,13 @@ AIStatusPanel::AIStatusPanel() {
 	thinking_dot_timer->set_one_shot(false);
 	thinking_dot_timer->connect("timeout", callable_mp(this, &AIStatusPanel::_on_thinking_dot_tick));
 	add_child(thinking_dot_timer);
+
+	// Pending tool card spinner — shared across all in-flight tool cards.
+	pending_tool_timer = memnew(Timer);
+	pending_tool_timer->set_wait_time(0.1);
+	pending_tool_timer->set_one_shot(false);
+	pending_tool_timer->connect("timeout", callable_mp(this, &AIStatusPanel::_on_pending_tool_spinner_tick));
+	add_child(pending_tool_timer);
 }
 
 AIStatusPanel::~AIStatusPanel() {
