@@ -380,7 +380,12 @@ void AgenticOrchestrator::_process_native_tool_response(const Dictionary &p_api_
 		if (p_api_response.has("usage")) {
 			tokens = p_api_response["usage"];
 		}
-		AI::get_singleton()->log_raw_api("response", current_run.model_turns, p_api_response, 200, tokens);
+		int64_t latency_ms = 0;
+		Ref<AIProvider> prov = AI::get_singleton()->get_provider();
+		if (prov.is_valid()) {
+			latency_ms = prov->get_last_request_latency_ms();
+		}
+		AI::get_singleton()->log_raw_api("response", current_run.model_turns, p_api_response, 200, tokens, latency_ms);
 	}
 
 	String content = message.get("content", "");
@@ -421,6 +426,19 @@ void AgenticOrchestrator::_process_native_tool_response(const Dictionary &p_api_
 	Dictionary assistant_canonical;
 	assistant_canonical["role"] = "assistant";
 	assistant_canonical["content"] = content_blocks;
+	// End-to-end HTTP round trip for this API call — stamped by the provider
+	// before it emitted request_completed. Read once and thread it through so
+	// the transcript can display it alongside the bubble when Debug is on.
+	{
+		Ref<AIProvider> prov = AI::get_singleton()->get_provider();
+		if (prov.is_valid()) {
+			int64_t lat = prov->get_last_request_latency_ms();
+			if (lat > 0) {
+				assistant_canonical["latency_ms"] = lat;
+				assistant_canonical["provider"] = prov->get_provider_name();
+			}
+		}
+	}
 	// Emit canonical item for persistence (store handles it before tools run)
 	emit_signal("assistant_item_ready", assistant_canonical);
 

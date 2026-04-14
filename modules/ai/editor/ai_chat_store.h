@@ -160,6 +160,9 @@ public:
 	// context injection: todo state
 	static Dictionary make_todo_state_item(const Array &p_tasks);
 
+	// context injection: model info (which model/provider is handling this turn)
+	static Dictionary make_model_info_item(const String &p_model_id, const String &p_provider_name);
+
 	// ---- Checkpoints ---------------------------------------------------------
 	// anchor_ts: the ts of the user HistoryItem this checkpoint is anchored to
 	ChatCheckpoint create_checkpoint(int64_t p_anchor_ts, int p_undo_action_index, bool p_undo_available);

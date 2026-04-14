@@ -19,9 +19,15 @@ protected:
 	int max_tokens;
 	String base_url;
 
+	// End-to-end HTTP round-trip latency of the most recent request, in ms.
+	// Set by subclasses inside their `_perform_request*` functions after the
+	// response body has been fully received. Zero means "no sample yet."
+	int64_t _last_request_latency_ms = 0;
+
 	static void _bind_methods();
 
 public:
+	int64_t get_last_request_latency_ms() const { return _last_request_latency_ms; }
 	// Signal emitted when request completes
 	// Parameters: success (bool), response_json (String), error_message (String)
 	

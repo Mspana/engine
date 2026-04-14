@@ -314,6 +314,15 @@ Dictionary AIChatStore::make_todo_state_item(const Array &p_tasks) {
 	return d;
 }
 
+Dictionary AIChatStore::make_model_info_item(const String &p_model_id, const String &p_provider_name) {
+	Dictionary d;
+	d["type"] = "model_info";
+	d["model_id"] = p_model_id;
+	d["provider"] = p_provider_name;
+	d["timestamp"] = _now_ms();
+	return d;
+}
+
 // ---------------------------------------------------------------------------
 // Meta file (checkpoints)
 // ---------------------------------------------------------------------------

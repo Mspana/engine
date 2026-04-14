@@ -1401,7 +1401,7 @@ String AI::_get_journal_path(const String &p_filename) const {
 }
 
 void AI::log_raw_api(const String &p_direction, int p_turn, const Dictionary &p_payload,
-		int p_status_code, const Dictionary &p_tokens) {
+		int p_status_code, const Dictionary &p_tokens, int64_t p_latency_ms) {
 	if (!_journal_writer || _current_chat_id.is_empty()) {
 		return;
 	}
@@ -1423,6 +1423,9 @@ void AI::log_raw_api(const String &p_direction, int p_turn, const Dictionary &p_
 	}
 	if (!p_tokens.is_empty()) {
 		entry["tokens"] = p_tokens;
+	}
+	if (p_latency_ms > 0) {
+		entry["latency_ms"] = p_latency_ms;
 	}
 
 	_journal_writer->enqueue(path, entry);

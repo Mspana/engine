@@ -144,7 +144,8 @@ public:
 
 	// Raw API logging for dashboard
 	void log_raw_api(const String &p_direction, int p_turn, const Dictionary &p_payload,
-			int p_status_code = 0, const Dictionary &p_tokens = Dictionary());
+			int p_status_code = 0, const Dictionary &p_tokens = Dictionary(),
+			int64_t p_latency_ms = 0);
 
 	// Constructor and Destructor
 	AI();

@@ -49,6 +49,7 @@ Every line in the JSONL file is a single JSON object:
 | User message | `role: "user"` | The human's typed text. May include `images` array of base64 PNGs. |
 | Assistant message | `role: "assistant"` | Model output. `content` is an array of typed blocks — `text` and `tool_call`. |
 | Tool result | `role: "tool"` | Execution result for one tool call. Keyed to its assistant's `tool_call` block by `tool_call_id`. |
+| Model info | `type: "model_info"` | Written before each run with `model_id` and `provider` fields. Identifies which model handled the turn. |
 | Context injection | `type: "engine_state"` etc. | Structured engine/project state. Written to JSONL for the record but currently injected at runtime by the orchestrator, not read back from the file. |
 
 ### Write protocol
@@ -93,6 +94,24 @@ The `.meta.json` file stores checkpoint records:
 ```
 
 `anchor_ts` references the user message that triggered the run. On rewind, the JSONL is rewritten (not appended) to contain only items up to the checkpoint's `item_count`. This is the only operation that rewrites the file.
+
+### Raw API log
+
+Alongside each `chat_<id>.jsonl`, a companion `chat_<id>.raw.jsonl` records the raw request and response payloads for every API call the orchestrator makes. This is the file the watchtower dashboard reads to chart per-provider behavior. Each line is a JSON object with:
+
+| Field | Description |
+|---|---|
+| `ts` | Unix-ms when the entry was written. |
+| `chat_id` | Originating chat. |
+| `provider`, `model` | Which backend handled the turn (e.g. `gemini` / `gemini-2.5-pro`). |
+| `turn` | Monotonic turn number within the run. |
+| `direction` | `"request"` or `"response"`. |
+| `payload` | The JSON body sent or received. |
+| `status_code` | HTTP status (response entries only, omitted on non-errors written without one). |
+| `tokens` | Usage dict (response entries only, when the provider reports it). |
+| `latency_ms` | End-to-end HTTP round trip — captured from just before `http_client->request()` to just after the full response body arrives. Response entries only, omitted when zero. Also stamped onto the assistant item (`latency_ms` + `provider`) so the editor renders a muted footer (`openai · 1.4s`) under each response bubble. The footer is toggled by the **Debug** button in the chat toolbar (same toggle that shows per-tool token counts). Watchtower reads the journal field to chart per-provider latency. |
+
+`latency_ms` excludes the TCP/TLS connect phase (the persistent connection is already established when `http_client->request()` is called) but includes server-side generation — which is typically the dominant cost and the thing users notice when a provider is slow.
 
 ---
 

@@ -5,6 +5,7 @@
 #include "core/variant/variant.h"
 #include "core/io/file_access.h"
 #include "core/os/os.h"
+#include "core/os/time.h"
 #include "core/crypto/crypto.h"
 
 #include "system_prompt.inc"
@@ -828,6 +829,7 @@ void OpenAIProvider::_perform_request(const String &user_prompt, const String &c
 	
 	// Send request
 	CharString body_data = json_body.utf8();
+	const uint64_t _req_start_ms = Time::get_singleton()->get_ticks_msec();
 	err = http_client->request(HTTPClient::METHOD_POST, request_path, headers_vector, (const uint8_t *)body_data.get_data(), body_data.length());
 	if (err != OK) {
 		ERR_PRINT(vformat("OpenAIProvider: Failed to send request: %d", err));
@@ -835,13 +837,13 @@ void OpenAIProvider::_perform_request(const String &user_prompt, const String &c
 		memdelete(http_client);
 		return;
 	}
-	
+
 	// Wait for response
 	while (http_client->get_status() == HTTPClient::STATUS_REQUESTING) {
 		http_client->poll();
 		OS::get_singleton()->delay_usec(10000); // 10ms
 	}
-	
+
 	if (http_client->get_status() != HTTPClient::STATUS_BODY &&
 	    http_client->get_status() != HTTPClient::STATUS_CONNECTED) {
 		ERR_PRINT(vformat("OpenAIProvider: Request failed, status: %d", http_client->get_status()));
@@ -849,7 +851,7 @@ void OpenAIProvider::_perform_request(const String &user_prompt, const String &c
 		memdelete(http_client);
 		return;
 	}
-	
+
 	// Check response code
 	int response_code = http_client->get_response_code();
 	if (response_code != 200) {
@@ -858,7 +860,7 @@ void OpenAIProvider::_perform_request(const String &user_prompt, const String &c
 		memdelete(http_client);
 		return;
 	}
-	
+
 	// Read response body
 	PackedByteArray response_body;
 	while (http_client->get_status() == HTTPClient::STATUS_BODY) {
@@ -870,7 +872,9 @@ void OpenAIProvider::_perform_request(const String &user_prompt, const String &c
 			OS::get_singleton()->delay_usec(10000); // 10ms
 		}
 	}
-	
+
+	_last_request_latency_ms = (int64_t)(Time::get_singleton()->get_ticks_msec() - _req_start_ms);
+
 	String response_str = String::utf8((const char *)response_body.ptr(), response_body.size());
 	
 	// Parse JSON response
@@ -1069,6 +1073,7 @@ void OpenAIProvider::_perform_request_with_messages(const Array &p_messages, con
 	
 	// Send request
 	CharString body_data = json_body.utf8();
+	const uint64_t _req_start_ms = Time::get_singleton()->get_ticks_msec();
 	err = http_client->request(HTTPClient::METHOD_POST, request_path, headers_vector, (const uint8_t *)body_data.get_data(), body_data.length());
 	if (err != OK) {
 		ERR_PRINT(vformat("OpenAIProvider: Failed to send request: %d", err));
@@ -1076,13 +1081,13 @@ void OpenAIProvider::_perform_request_with_messages(const Array &p_messages, con
 		memdelete(http_client);
 		return;
 	}
-	
+
 	// Wait for response
 	while (http_client->get_status() == HTTPClient::STATUS_REQUESTING) {
 		http_client->poll();
 		OS::get_singleton()->delay_usec(10000); // 10ms
 	}
-	
+
 	if (http_client->get_status() != HTTPClient::STATUS_BODY &&
 	    http_client->get_status() != HTTPClient::STATUS_CONNECTED) {
 		ERR_PRINT(vformat("OpenAIProvider: Request failed, status: %d", http_client->get_status()));
@@ -1090,7 +1095,7 @@ void OpenAIProvider::_perform_request_with_messages(const Array &p_messages, con
 		memdelete(http_client);
 		return;
 	}
-	
+
 	// Read response body (needed for both success and error)
 	int response_code = http_client->get_response_code();
 
@@ -1104,6 +1109,8 @@ void OpenAIProvider::_perform_request_with_messages(const Array &p_messages, con
 			OS::get_singleton()->delay_usec(10000); // 10ms
 		}
 	}
+
+	_last_request_latency_ms = (int64_t)(Time::get_singleton()->get_ticks_msec() - _req_start_ms);
 
 	String response_str = String::utf8((const char *)response_body.ptr(), response_body.size());
 
@@ -1308,6 +1315,7 @@ void GeminiProvider::_perform_request(const String &user_prompt, const String &c
 	
 	// Send request
 	CharString body_data = json_body.utf8();
+	const uint64_t _req_start_ms = Time::get_singleton()->get_ticks_msec();
 	err = http_client->request(HTTPClient::METHOD_POST, path, headers_vector, (const uint8_t *)body_data.get_data(), body_data.length());
 	if (err != OK) {
 		ERR_PRINT(vformat("GeminiProvider: Failed to send request: %d", err));
@@ -1315,13 +1323,13 @@ void GeminiProvider::_perform_request(const String &user_prompt, const String &c
 		memdelete(http_client);
 		return;
 	}
-	
+
 	// Wait for response
 	while (http_client->get_status() == HTTPClient::STATUS_REQUESTING) {
 		http_client->poll();
 		OS::get_singleton()->delay_usec(10000); // 10ms
 	}
-	
+
 	if (http_client->get_status() != HTTPClient::STATUS_BODY &&
 	    http_client->get_status() != HTTPClient::STATUS_CONNECTED) {
 		ERR_PRINT(vformat("GeminiProvider: Request failed, status: %d", http_client->get_status()));
@@ -1329,7 +1337,7 @@ void GeminiProvider::_perform_request(const String &user_prompt, const String &c
 		memdelete(http_client);
 		return;
 	}
-	
+
 	// Check response code
 	int response_code = http_client->get_response_code();
 	if (response_code != 200) {
@@ -1338,7 +1346,7 @@ void GeminiProvider::_perform_request(const String &user_prompt, const String &c
 		memdelete(http_client);
 		return;
 	}
-	
+
 	// Read response body
 	PackedByteArray response_body;
 	while (http_client->get_status() == HTTPClient::STATUS_BODY) {
@@ -1350,9 +1358,11 @@ void GeminiProvider::_perform_request(const String &user_prompt, const String &c
 			OS::get_singleton()->delay_usec(10000); // 10ms
 		}
 	}
-	
+
+	_last_request_latency_ms = (int64_t)(Time::get_singleton()->get_ticks_msec() - _req_start_ms);
+
 	String response_str = String::utf8((const char *)response_body.ptr(), response_body.size());
-	
+
 	// Parse JSON response
 	JSON json_parser;
 	err = json_parser.parse(response_str);
@@ -1628,6 +1638,7 @@ void GeminiProvider::_perform_request_with_messages(const Array &p_messages, con
 	
 	// Send request
 	CharString body_data = json_body.utf8();
+	const uint64_t _req_start_ms = Time::get_singleton()->get_ticks_msec();
 	err = http_client->request(HTTPClient::METHOD_POST, path, headers_vector, (const uint8_t *)body_data.get_data(), body_data.length());
 	if (err != OK) {
 		ERR_PRINT(vformat("GeminiProvider: Failed to send request: %d", err));
@@ -1635,13 +1646,13 @@ void GeminiProvider::_perform_request_with_messages(const Array &p_messages, con
 		memdelete(http_client);
 		return;
 	}
-	
+
 	// Wait for response
 	while (http_client->get_status() == HTTPClient::STATUS_REQUESTING) {
 		http_client->poll();
 		OS::get_singleton()->delay_usec(10000); // 10ms
 	}
-	
+
 	if (http_client->get_status() != HTTPClient::STATUS_BODY &&
 	    http_client->get_status() != HTTPClient::STATUS_CONNECTED) {
 		ERR_PRINT(vformat("GeminiProvider: Request failed, status: %d", http_client->get_status()));
@@ -1649,7 +1660,7 @@ void GeminiProvider::_perform_request_with_messages(const Array &p_messages, con
 		memdelete(http_client);
 		return;
 	}
-	
+
 	// Read response body (needed for both success and error)
 	int response_code = http_client->get_response_code();
 
@@ -1663,6 +1674,8 @@ void GeminiProvider::_perform_request_with_messages(const Array &p_messages, con
 			OS::get_singleton()->delay_usec(10000); // 10ms
 		}
 	}
+
+	_last_request_latency_ms = (int64_t)(Time::get_singleton()->get_ticks_msec() - _req_start_ms);
 
 	String response_str = String::utf8((const char *)response_body.ptr(), response_body.size());
 
@@ -1929,6 +1942,7 @@ void XAIProvider::_perform_request(const String &user_prompt, const String &cont
 	
 	// Send request
 	CharString body_data = json_body.utf8();
+	const uint64_t _req_start_ms = Time::get_singleton()->get_ticks_msec();
 	err = http_client->request(HTTPClient::METHOD_POST, "/v1/chat/completions", headers_vector, (const uint8_t *)body_data.get_data(), body_data.length());
 	if (err != OK) {
 		ERR_PRINT(vformat("XAIProvider: Failed to send request: %d", err));
@@ -1936,13 +1950,13 @@ void XAIProvider::_perform_request(const String &user_prompt, const String &cont
 		memdelete(http_client);
 		return;
 	}
-	
+
 	// Wait for response
 	while (http_client->get_status() == HTTPClient::STATUS_REQUESTING) {
 		http_client->poll();
 		OS::get_singleton()->delay_usec(10000); // 10ms
 	}
-	
+
 	if (http_client->get_status() != HTTPClient::STATUS_BODY &&
 	    http_client->get_status() != HTTPClient::STATUS_CONNECTED) {
 		ERR_PRINT(vformat("XAIProvider: Request failed, status: %d", http_client->get_status()));
@@ -1950,7 +1964,7 @@ void XAIProvider::_perform_request(const String &user_prompt, const String &cont
 		memdelete(http_client);
 		return;
 	}
-	
+
 	// Check response code
 	int response_code = http_client->get_response_code();
 	if (response_code != 200) {
@@ -1959,7 +1973,7 @@ void XAIProvider::_perform_request(const String &user_prompt, const String &cont
 		memdelete(http_client);
 		return;
 	}
-	
+
 	// Read response body
 	PackedByteArray response_body;
 	while (http_client->get_status() == HTTPClient::STATUS_BODY) {
@@ -1971,9 +1985,11 @@ void XAIProvider::_perform_request(const String &user_prompt, const String &cont
 			OS::get_singleton()->delay_usec(10000); // 10ms
 		}
 	}
-	
+
+	_last_request_latency_ms = (int64_t)(Time::get_singleton()->get_ticks_msec() - _req_start_ms);
+
 	String response_str = String::utf8((const char *)response_body.ptr(), response_body.size());
-	
+
 	// Parse JSON response
 	JSON json_parser;
 	err = json_parser.parse(response_str);
@@ -2181,6 +2197,7 @@ void XAIProvider::_perform_request_with_messages(const Array &p_messages, const 
 	
 	// Send request
 	CharString body_data = json_body.utf8();
+	const uint64_t _req_start_ms = Time::get_singleton()->get_ticks_msec();
 	err = http_client->request(HTTPClient::METHOD_POST, "/v1/chat/completions", headers_vector, (const uint8_t *)body_data.get_data(), body_data.length());
 	if (err != OK) {
 		ERR_PRINT(vformat("XAIProvider: Failed to send request: %d", err));
@@ -2188,13 +2205,13 @@ void XAIProvider::_perform_request_with_messages(const Array &p_messages, const 
 		memdelete(http_client);
 		return;
 	}
-	
+
 	// Wait for response
 	while (http_client->get_status() == HTTPClient::STATUS_REQUESTING) {
 		http_client->poll();
 		OS::get_singleton()->delay_usec(10000); // 10ms
 	}
-	
+
 	if (http_client->get_status() != HTTPClient::STATUS_BODY &&
 	    http_client->get_status() != HTTPClient::STATUS_CONNECTED) {
 		ERR_PRINT(vformat("XAIProvider: Request failed, status: %d", http_client->get_status()));
@@ -2202,7 +2219,7 @@ void XAIProvider::_perform_request_with_messages(const Array &p_messages, const 
 		memdelete(http_client);
 		return;
 	}
-	
+
 	// Read response body (needed for both success and error)
 	int response_code = http_client->get_response_code();
 
@@ -2216,6 +2233,8 @@ void XAIProvider::_perform_request_with_messages(const Array &p_messages, const 
 			OS::get_singleton()->delay_usec(10000); // 10ms
 		}
 	}
+
+	_last_request_latency_ms = (int64_t)(Time::get_singleton()->get_ticks_msec() - _req_start_ms);
 
 	String response_str = String::utf8((const char *)response_body.ptr(), response_body.size());
 
@@ -2382,6 +2401,7 @@ void AnthropicProvider::_perform_request(const String &user_prompt, const String
 	}
 
 	CharString body_data = json_body.utf8();
+	const uint64_t _req_start_ms = Time::get_singleton()->get_ticks_msec();
 	err = http_client->request(HTTPClient::METHOD_POST, "/v1/messages", headers_vector, (const uint8_t *)body_data.get_data(), body_data.length());
 	if (err != OK) {
 		ERR_PRINT(vformat("AnthropicProvider: Failed to send request: %d", err));
@@ -2416,6 +2436,7 @@ void AnthropicProvider::_perform_request(const String &user_prompt, const String
 				OS::get_singleton()->delay_usec(10000);
 			}
 		}
+		_last_request_latency_ms = (int64_t)(Time::get_singleton()->get_ticks_msec() - _req_start_ms);
 		String err_str = String::utf8((const char *)err_body.ptr(), err_body.size());
 		String error_detail;
 		JSON err_json;
@@ -2445,6 +2466,8 @@ void AnthropicProvider::_perform_request(const String &user_prompt, const String
 			OS::get_singleton()->delay_usec(10000);
 		}
 	}
+
+	_last_request_latency_ms = (int64_t)(Time::get_singleton()->get_ticks_msec() - _req_start_ms);
 
 	String response_str = String::utf8((const char *)response_body.ptr(), response_body.size());
 
@@ -2732,6 +2755,7 @@ void AnthropicProvider::_perform_request_with_messages(const Array &p_messages, 
 	}
 
 	CharString body_data = json_body.utf8();
+	const uint64_t _req_start_ms = Time::get_singleton()->get_ticks_msec();
 	err = http_client->request(HTTPClient::METHOD_POST, "/v1/messages", headers_vector, (const uint8_t *)body_data.get_data(), body_data.length());
 	if (err != OK) {
 		ERR_PRINT(vformat("AnthropicProvider: Failed to send request: %d", err));
@@ -2766,6 +2790,7 @@ void AnthropicProvider::_perform_request_with_messages(const Array &p_messages, 
 				OS::get_singleton()->delay_usec(10000);
 			}
 		}
+		_last_request_latency_ms = (int64_t)(Time::get_singleton()->get_ticks_msec() - _req_start_ms);
 		String err_str = String::utf8((const char *)err_body.ptr(), err_body.size());
 		// Try to extract error message from response body
 		String error_detail;
@@ -2796,6 +2821,8 @@ void AnthropicProvider::_perform_request_with_messages(const Array &p_messages, 
 			OS::get_singleton()->delay_usec(10000);
 		}
 	}
+
+	_last_request_latency_ms = (int64_t)(Time::get_singleton()->get_ticks_msec() - _req_start_ms);
 
 	String response_str = String::utf8((const char *)response_body.ptr(), response_body.size());
 

@@ -1721,6 +1721,31 @@ Control *AIStatusPanel::_create_message_bubble(const HistoryItem &p_item) {
 
 	inner_vbox->add_child(label);
 
+	// Assistant bubbles: append a muted latency footer ("openai · 1.4s").
+	// Visibility mirrors the Debug toggle (_show_token_counts).
+	if (!is_user && p_item.data.has("latency_ms")) {
+		int64_t lat_ms = p_item.data.get("latency_ms", 0);
+		if (lat_ms > 0) {
+			String prov = p_item.data.get("provider", "");
+			String formatted;
+			if (lat_ms < 1000) {
+				formatted = itos(lat_ms) + "ms";
+			} else {
+				double secs = (double)lat_ms / 1000.0;
+				formatted = String::num(secs, 1) + "s";
+			}
+			String footer_text = prov.is_empty() ? formatted : prov + " · " + formatted;
+			Label *latency_lbl = memnew(Label);
+			latency_lbl->set_text(footer_text);
+			latency_lbl->add_theme_color_override("font_color", AIColors::TEXT_MUTED);
+			latency_lbl->add_theme_font_size_override("font_size", 10 * EDSCALE);
+			latency_lbl->set_mouse_filter(Control::MOUSE_FILTER_PASS);
+			latency_lbl->set_meta("_ai_latency_label", true);
+			latency_lbl->set_visible(_show_token_counts);
+			inner_vbox->add_child(latency_lbl);
+		}
+	}
+
 	// Right-click → show "Copy text" context menu. Stash the plain text on the
 	// bubble and listen on both the bubble (for margin clicks) and the label
 	// (which consumes events inside its own rect). The label's STOP filter
@@ -2600,13 +2625,27 @@ void AIStatusPanel::_insert_token_total_label() {
 	_insert_token_total_label_into(message_list, total, pending_message);
 }
 
+static void _toggle_latency_labels_recursive(Node *p_node, bool p_visible) {
+	Label *lbl = Object::cast_to<Label>(p_node);
+	if (lbl && lbl->has_meta("_ai_latency_label")) {
+		lbl->set_visible(p_visible);
+	}
+	for (int i = 0; i < p_node->get_child_count(); i++) {
+		_toggle_latency_labels_recursive(p_node->get_child(i), p_visible);
+	}
+}
+
 void AIStatusPanel::_on_token_toggle_pressed() {
 	_show_token_counts = !_show_token_counts;
-	// Walk message_list children and toggle token labels on all ToolCollapsibleEntry nodes.
+	// Walk message_list children and toggle token labels on all ToolCollapsibleEntry nodes,
+	// plus latency footers on assistant bubbles.
 	for (int i = 0; i < message_list->get_child_count(); i++) {
-		ToolCollapsibleEntry *entry = Object::cast_to<ToolCollapsibleEntry>(message_list->get_child(i));
+		Node *child = message_list->get_child(i);
+		ToolCollapsibleEntry *entry = Object::cast_to<ToolCollapsibleEntry>(child);
 		if (entry) {
 			entry->set_token_label_visible(_show_token_counts);
+		} else {
+			_toggle_latency_labels_recursive(child, _show_token_counts);
 		}
 	}
 }
@@ -4286,10 +4325,10 @@ AIStatusPanel::AIStatusPanel() {
 
 	// Token count toggle button
 	token_toggle_button = memnew(Button);
-	token_toggle_button->set_text(TTR("Tokens"));
+	token_toggle_button->set_text(TTR("Debug"));
 	token_toggle_button->set_flat(true);
 	token_toggle_button->set_toggle_mode(true);
-	token_toggle_button->set_tooltip_text(TTR("Toggle token counts on tool results"));
+	token_toggle_button->set_tooltip_text(TTR("Toggle debug info: token counts on tool results, latency on responses"));
 	token_toggle_button->set_default_cursor_shape(Control::CURSOR_POINTING_HAND);
 	token_toggle_button->add_theme_color_override("font_color", AIColors::TEXT_SECONDARY);
 	token_toggle_button->connect(SceneStringNames::get_singleton()->pressed, callable_mp(this, &AIStatusPanel::_on_token_toggle_pressed));
