@@ -56,7 +56,7 @@ public:
 	// Guardrail constants
 	static constexpr int MAX_MODEL_TURNS_PER_RUN = 20;
 	static constexpr int MAX_ACTIONS_PER_RESPONSE = 12;
-	static constexpr int MAX_ACTIONS_PER_RUN = 50;
+	static constexpr int MAX_ACTIONS_PER_RUN = 100;
 	// MAX_REPAIR_CYCLES removed — native tool-calling handles validation via the API
 
 	// Per-item in the AI's self-managed task list
@@ -162,6 +162,7 @@ private:
 	String _async_rns_tool_call_id; // tool_call_id for native format
 	Dictionary _async_rns_action_args;
 	uint64_t _async_rns_phase_start_ms = 0;
+	uint64_t _async_rns_action_start_ms = 0; // Set once at action entry; never reset on phase transitions.
 	uint32_t _rns_tick_gen = 0;
 
 	void _schedule_rns_tick(float p_delay = 0.05f);

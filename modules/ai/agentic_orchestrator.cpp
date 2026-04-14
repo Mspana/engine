@@ -516,6 +516,7 @@ void AgenticOrchestrator::_process_native_tool_response(const Dictionary &p_api_
 			_async_rns_wait_seconds = (float)args.get("wait_seconds", 2.0f);
 			_async_rns_phase = ASYNC_RNS_POLL_START;
 			_async_rns_phase_start_ms = Time::get_singleton()->get_ticks_msec();
+			_async_rns_action_start_ms = _async_rns_phase_start_ms;
 
 			// Build action dict for execute_single_action
 			Dictionary action;
@@ -880,6 +881,11 @@ void AgenticOrchestrator::_on_async_rns_capture_received(const String &p_b64) {
 }
 
 void AgenticOrchestrator::_on_async_rns_complete(const Dictionary &p_exec_result) {
+	// Wall-clock time from tool invocation to terminal state (capture or timeout).
+	// Lets the AI distinguish an immediate crash (elapsed ~= 8000 = POLL_START timeout)
+	// from a normal run (elapsed ~= wait_seconds*1000) from a capture hang.
+	uint64_t elapsed_to_screenshot_ms = Time::get_singleton()->get_ticks_msec() - _async_rns_action_start_ms;
+
 	// Capture errors and game output (errors clear on next launch, not on stop).
 	Array game_errors;
 	String game_output;
@@ -919,6 +925,7 @@ void AgenticOrchestrator::_on_async_rns_complete(const Dictionary &p_exec_result
 		if (!game_output.is_empty()) {
 			rd["game_output"] = game_output;
 		}
+		rd["elapsed_to_screenshot_ms"] = (int64_t)elapsed_to_screenshot_ms;
 		enriched["result"] = rd;
 	} else {
 		// Even on tool error (timeout), include game errors — they explain why it timed out.
@@ -929,6 +936,7 @@ void AgenticOrchestrator::_on_async_rns_complete(const Dictionary &p_exec_result
 		if (!game_output.is_empty()) {
 			ed["game_output"] = game_output;
 		}
+		ed["elapsed_to_screenshot_ms"] = (int64_t)elapsed_to_screenshot_ms;
 		enriched["error"] = ed;
 	}
 

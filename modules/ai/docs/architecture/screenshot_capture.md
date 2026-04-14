@@ -40,6 +40,17 @@ the actual window content even when occluded, unfocused, or partially offscreen.
 Non-Windows platforms skip step 1 (base class returns empty) and use the screen-based
 fallbacks.
 
+### Result Fields
+
+On both success and error paths, the tool result includes `elapsed_to_screenshot_ms` —
+wall-clock milliseconds from tool invocation to the terminal state (capture delivered or
+phase timeout). The AI uses this to distinguish an immediate crash (elapsed ≈ 8000 ms =
+POLL_START timeout, game never reported running) from a normal run (elapsed ≈
+`wait_seconds` × 1000 + capture overhead) from a capture hang (elapsed ≈ `wait_seconds` ×
+1000 + 10 000 = AWAIT_CAPTURE timeout). The underlying timestamp is captured once at action
+entry into `_async_rns_action_start_ms` and never reset on phase transitions (unlike
+`_async_rns_phase_start_ms`, which tracks per-phase elapsed).
+
 ### Key Files
 
 - `platform/windows/display_server_windows.cpp` — `window_get_image_from_pid()` implementation
