@@ -306,8 +306,34 @@
 }
 {
 	Dictionary props;
+	Dictionary shot_pos_prop;
+	shot_pos_prop["type"] = "array";
+	shot_pos_prop["description"] = "Optional world-space position [x, y, z] the shot is taken FROM (units match node global_position). If provided, shot_target must also be provided. This is an input to this capture only — it is NOT a Camera3D node in the scene, and changing any Camera3D node in the scene does not change this shot. To reframe, vary shot_position/shot_target directly; repeating the same values gives the same picture.";
+	Dictionary shot_pos_items;
+	shot_pos_items["type"] = "number";
+	shot_pos_prop["items"] = shot_pos_items;
+	props["shot_position"] = shot_pos_prop;
+
+	Dictionary shot_tgt_prop;
+	shot_tgt_prop["type"] = "array";
+	shot_tgt_prop["description"] = "Optional world-space point [x, y, z] the shot looks AT (up vector fixed to Y+). Must be paired with shot_position. Distance between shot_position and shot_target controls apparent zoom: pull shot_position further from shot_target for a wider/farther view, closer for a tighter view. Example: shot_position: [5, 5, 5], shot_target: [0, 0, 0] shoots the origin from an upper-right angle. Avoid placing target directly above/below position (Y-axis gimbal); use a small X/Z offset.";
+	Dictionary shot_tgt_items;
+	shot_tgt_items["type"] = "number";
+	shot_tgt_prop["items"] = shot_tgt_items;
+	props["shot_target"] = shot_tgt_prop;
+
+	props["shot_fov"] = _make_prop("number", "Optional vertical field of view in degrees for the shot (default 70, range 0-180 exclusive). Only used when shot_position/shot_target are provided.");
+
+	Dictionary size_prop;
+	size_prop["type"] = "array";
+	size_prop["description"] = "Optional output image size [width, height] in pixels (default [1280, 720], minimum 64 per axis). Only used when shot_position/shot_target are provided — the default (editor-viewport) path returns the editor viewport's native size.";
+	Dictionary size_items;
+	size_items["type"] = "number";
+	size_prop["items"] = size_items;
+	props["size"] = size_prop;
+
 	Array req;
-	tools.push_back(_make_tool("capture_3d_viewport", "Capture the currently active 3D editor viewport as an image. Use to visually check the 3D scene the user is editing (meshes, camera angle, lighting) without running the game. If the editor has multiple 3D viewports open, this captures the one the user most recently interacted with. The image is returned and shown to you automatically.", props, req));
+	tools.push_back(_make_tool("capture_3d_viewport", "Capture the 3D editor viewport as an image. Use to visually check the 3D scene the user is editing (meshes, angle, lighting) without running the game. By default captures the 3D viewport the user most recently interacted with (with their current orbit view). Pass shot_position + shot_target to shoot the scene from an arbitrary viewpoint instead — useful for 'top-down view', 'look at this node from behind', or framing a region without asking the user to rotate the viewport. The shot_* parameters are pure inputs to this capture; they have nothing to do with any Camera3D node in the scene. If a previous shot came back unusable (blank, too close, wrong angle), vary shot_position/shot_target/shot_fov before retrying — repeating the same values produces the same picture. The image is returned and shown to you automatically.", props, req));
 }
 {
 	Dictionary props;

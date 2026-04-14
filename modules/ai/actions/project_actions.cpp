@@ -23,6 +23,7 @@
 #include "core/core_bind.h"
 #include "core/io/image.h"
 #include "core/object/message_queue.h"
+#include "scene/3d/camera_3d.h"
 #include "scene/main/viewport.h"
 #include "servers/rendering_server.h"
 
@@ -760,8 +761,160 @@ Dictionary exec_capture_2d_viewport(const Dictionary &args) {
 #endif
 }
 
+#ifdef TOOLS_ENABLED
+// Parse a [x, y, z] array Variant into a Vector3. Returns true on success.
+// On failure, writes an INVALID_ARGS error result into r_error and returns false.
+static bool _parse_vec3_arg(const Variant &v, const char *name, Vector3 &r_out, Dictionary &r_error) {
+	if (v.get_type() != Variant::ARRAY) {
+		r_error = ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			vformat("%s must be an array of 3 numbers [x, y, z].", name));
+		return false;
+	}
+	Array arr = v;
+	if (arr.size() != 3) {
+		r_error = ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			vformat("%s must have exactly 3 elements [x, y, z], got %d.", name, arr.size()));
+		return false;
+	}
+	for (int i = 0; i < 3; i++) {
+		Variant::Type t = arr[i].get_type();
+		if (t != Variant::INT && t != Variant::FLOAT) {
+			r_error = ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+				vformat("%s[%d] must be a number.", name, i));
+			return false;
+		}
+	}
+	r_out = Vector3((real_t)(double)arr[0], (real_t)(double)arr[1], (real_t)(double)arr[2]);
+	return true;
+}
+#endif
+
 Dictionary exec_capture_3d_viewport(const Dictionary &args) {
 #ifdef TOOLS_ENABLED
+	// Phase 3b: custom shot framing. When the caller provides shot_position +
+	// shot_target we stand up a temporary SubViewport that shares the edited
+	// scene's World3D, render one frame from a temp Camera3D posed at the requested
+	// pose, and tear down. No perturbation of the editor's 4 viewports, and no
+	// relationship to any Camera3D node in the edited scene — the shot parameters
+	// are inputs to this capture only.
+	const bool has_pos = args.has("shot_position");
+	const bool has_tgt = args.has("shot_target");
+	if (has_pos != has_tgt) {
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			"shot_position and shot_target must both be provided together.");
+	}
+
+	if (has_pos) {
+		// --- Custom-shot path ---
+		Vector3 cam_pos, cam_tgt;
+		Dictionary err;
+		if (!_parse_vec3_arg(args["shot_position"], "shot_position", cam_pos, err)) {
+			return err;
+		}
+		if (!_parse_vec3_arg(args["shot_target"], "shot_target", cam_tgt, err)) {
+			return err;
+		}
+		if (cam_pos.is_equal_approx(cam_tgt)) {
+			return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+				"shot_position and shot_target must not be equal.");
+		}
+
+		real_t fov = 70.0;
+		if (args.has("shot_fov")) {
+			Variant::Type t = args["shot_fov"].get_type();
+			if (t != Variant::INT && t != Variant::FLOAT) {
+				return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+					"shot_fov must be a number (degrees).");
+			}
+			fov = (real_t)(double)args["shot_fov"];
+			if (fov <= 0.0 || fov >= 180.0) {
+				return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+					vformat("shot_fov must be between 0 and 180 exclusive (got %f).", fov));
+			}
+		}
+
+		int out_w = 1280;
+		int out_h = 720;
+		if (args.has("size")) {
+			if (args["size"].get_type() != Variant::ARRAY) {
+				return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+					"size must be an array [width, height].");
+			}
+			Array sz = args["size"];
+			if (sz.size() != 2) {
+				return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+					vformat("size must have exactly 2 elements [width, height], got %d.", sz.size()));
+			}
+			for (int i = 0; i < 2; i++) {
+				Variant::Type t = sz[i].get_type();
+				if (t != Variant::INT && t != Variant::FLOAT) {
+					return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+						vformat("size[%d] must be a number.", i));
+				}
+			}
+			out_w = (int)(double)sz[0];
+			out_h = (int)(double)sz[1];
+			if (out_w < 64 || out_h < 64) {
+				return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+					vformat("size must be at least 64x64 (got %dx%d).", out_w, out_h));
+			}
+		}
+
+		EditorNode *en = EditorNode::get_singleton();
+		if (!en) {
+			return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+				"EditorNode singleton is not available.");
+		}
+		SceneTree *st = en->get_tree();
+		Ref<World3D> shared_world = (st && st->get_root()) ? st->get_root()->get_world_3d() : Ref<World3D>();
+		if (shared_world.is_null()) {
+			return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+				"Root World3D is not available.");
+		}
+
+		// Temp SubViewport parented under EditorNode so it gets proper ENTER_TREE
+		// lifecycle (which drives RS viewport activation). Shares the root's
+		// World3D — renders the exact same lights/environment/meshes as the editor
+		// viewports. No scene cloning.
+		SubViewport *tv = memnew(SubViewport);
+		tv->set_size(Size2i(out_w, out_h));
+		tv->set_disable_input(true);
+		tv->set_update_mode(SubViewport::UPDATE_DISABLED); // _force_render flips to UPDATE_ONCE for us
+		tv->set_world_3d(shared_world);
+		en->add_child(tv);
+
+		// Temp camera. cull_mask = (1<<20)-1 excludes editor layers (grid, gizmos,
+		// selection boxes, misc tools) which live on layers 24-30 with RS-level
+		// layer_mask filtering. See node_3d_editor_plugin.cpp around the camera
+		// construction at line 5581 for the mask that *includes* those layers.
+		Camera3D *cam = memnew(Camera3D);
+		cam->set_cull_mask((1 << 20) - 1);
+		Transform3D xf;
+		xf.origin = cam_pos;
+		xf = xf.looking_at(cam_tgt, Vector3(0, 1, 0));
+		cam->set_transform(xf);
+		cam->set_perspective(fov, 0.05, 4000.0); // near/far match Node3DEditorViewport defaults
+		tv->add_child(cam);
+		cam->make_current();
+
+		// CRITICAL: Node3D dirties its transform on ENTER_TREE and queues a deferred
+		// NOTIFICATION_TRANSFORM_CHANGED via SceneTree::xform_change_list. Until that
+		// list is flushed, the RS-side camera stays at identity — so the capture would
+		// render from the origin looking down -Z instead of our pose, producing only
+		// the world environment (sky/ground, no geometry). MessageQueue::flush (inside
+		// _force_render_subviewport) does NOT flush this list; force it synchronously.
+		if (st) {
+			st->flush_transform_notifications();
+		}
+
+		Dictionary result = _capture_subviewport_to_result(tv, "3D");
+
+		en->remove_child(tv);
+		memdelete(tv); // Camera is a child and is freed with the viewport.
+		return result;
+	}
+
+	// --- Existing path: capture the last-used editor 3D viewport ---
 	Node3DEditor *n3d = Node3DEditor::get_singleton();
 	if (!n3d) {
 		return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,

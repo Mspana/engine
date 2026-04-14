@@ -172,7 +172,7 @@ Things to know if you're touching this code or chasing a related bug:
   sets it to `ENABLED` on `scene_root` while the 2D tab is hidden, we'd
   overwrite their state. Quiet assumption.
 
-### Custom Framing (`frame_rect`)
+### Custom 2D Framing (`frame_rect`)
 
 `capture_2d_viewport` accepts an optional `frame_rect: [x, y, width, height]`
 argument (world-space units, matching node positions). When omitted, the
@@ -229,6 +229,111 @@ operation from the user's perspective) this is acceptable.
 - **Validation is strict.** `frame_rect` must be a 4-element array of numbers
   with positive width and height. Anything else returns an `INVALID_ARGS`
   error and skips the capture entirely.
+
+### Custom 3D Framing (`shot_position` / `shot_target`)
+
+`capture_3d_viewport` accepts optional shot parameters that let the AI shoot
+the edited scene from an arbitrary viewpoint instead of the editor's current
+orbit camera. When omitted, the tool behaves exactly as before (captures the
+last-used `Node3DEditorViewport`). When present, it stands up a temporary
+off-screen SubViewport that shares the edited scene's `World3D`, adds a
+temporary `Camera3D` posed from the caller's arguments, renders one frame, and
+tears down — without perturbing the editor's 4 viewports.
+
+The parameters are named `shot_*` (not `camera_*`) to keep the tool's
+inputs verbally distinct from `Camera3D` nodes in the scene. Models testing
+this feature got confused when the tool was first shipped — they'd interpret
+"move the camera" as editing a scene `Camera3D` instead of varying the tool
+arguments, or reuse the same `camera_position` across retries. The `shot_*`
+naming and the tool-description guidance ("these are inputs to this capture,
+not tied to any Camera3D") are intended to head that off.
+
+Parameters (all optional; `shot_position` and `shot_target` are
+all-or-nothing):
+
+- `shot_position: [x, y, z]` — world-space position the shot is taken from.
+- `shot_target: [x, y, z]` — world-space point the shot looks at. Up vector
+  is hardcoded `Vector3(0, 1, 0)`.
+- `shot_fov: number` — vertical FOV in degrees (default `70`, open
+  interval 0–180).
+- `size: [w, h]` — output size (default `[1280, 720]`, min 64 per axis).
+  Only applied on the custom-shot path; the default path returns the editor
+  viewport's native size.
+
+#### Shared-World3D approach
+
+The 4 editor viewports never call `SubViewport::set_world_3d`, so
+`Viewport::find_world_3d()` walks up to `SceneTree::get_root()->get_world_3d()`.
+We explicitly give our temp SubViewport that same `World3D`:
+
+```cpp
+tv->set_world_3d(en->get_tree()->get_root()->get_world_3d());
+// NOT set_use_own_world_3d(true) — we want to share, not clone.
+```
+
+The temp viewport renders the exact same lights, environment, and
+`VisualInstance3D`s — no scene duplication, no state copy. The temp
+Camera3D's `make_current()` is viewport-local (sets current camera on `tv`,
+not on any editor viewport), so the user's editor view is untouched, and
+any `Camera3D` the user has in the scene is likewise unaffected.
+
+#### Gizmo exclusion via `cull_mask`
+
+Editor gizmos (grid, origin axes, selection boxes, per-viewport move/rotate
+gizmos, misc tools) are RenderingServer instances parented to the root
+scenario and layer-filtered via `instance_set_layer_mask` on layers 24–30.
+The editor's own cameras *opt in* to those layers via their `cull_mask`
+(see [node_3d_editor_plugin.cpp:5581](../../../editor/plugins/node_3d_editor_plugin.cpp#L5581)).
+Our temp camera uses `cull_mask = (1 << 20) - 1` (layers 0–19 only), which
+naturally excludes every editor-layer category. The resulting image shows
+scene geometry + lighting only.
+
+This works *provided* no user scene geometry lives on layers 20+. Godot's
+conventional 20 `VisualInstance3D` layers stay in 0–19, but user scripts
+*can* place things higher — in that case those instances will not appear in
+the capture. Acceptable default.
+
+#### Render pipeline reuse
+
+The temp SubViewport is parented under `EditorNode` for the duration of the
+capture so it gets `NOTIFICATION_ENTER_TREE` and proper RS activation.
+`_force_render_subviewport` (already used by 2D and by the default 3D path)
+handles the single-frame render: MessageQueue flush → `UPDATE_ONCE` →
+`RS::draw(false)` → `RS::sync()`. After the capture we `remove_child` then
+`memdelete` — the camera is a child and is freed with the viewport.
+
+One subtlety: `Node3D` dirties its transform on `ENTER_TREE` and queues a
+**deferred** `NOTIFICATION_TRANSFORM_CHANGED` via
+`SceneTree::xform_change_list`. Until that list is flushed,
+`Camera3D::_update_camera` never runs, so the RS camera stays at identity —
+the render would come back showing only the world environment (sky/ground,
+no geometry), as if the camera were at the origin looking down -Z.
+`MessageQueue::flush()` does *not* drain the transform list. The capture
+calls `SceneTree::flush_transform_notifications()` right after
+`make_current()` to force the pose into RS before draw. The default
+editor-viewport path doesn't need this because its camera has been in the
+tree for many frames and its RS transform is already current.
+
+Result encoding (PNG + base64 in `screenshot_b64`) goes through the same
+`_capture_subviewport_to_result` helper used everywhere else. The
+orchestrator can't tell the difference between a custom-camera shot and a
+regular one; it all flows through the same image pipeline.
+
+#### Caveats
+
+- **Editor-layer geometry is invisible.** See the gizmo discussion above —
+  scene objects with a layer mask entirely above bit 19 will not render.
+- **Gimbal at Y-parallel look directions.** `looking_at` with up=Y+ falls
+  back to a secondary axis when the look direction is parallel to Y. A
+  top-down shot should offset target slightly on X or Z
+  (e.g. `shot_target: [0, 0, 0.01]`) to keep a stable orientation.
+- **Near/far planes are fixed at 0.05 / 4000.** Matches the editor viewport
+  defaults. Scenes spanning tens of thousands of units may see far-plane
+  clipping; not exposed as a parameter (add if it ever matters).
+- **Orthographic is not exposed.** Only perspective. Easy to add later.
+- **Validation is strict.** Missing/mismatched pose, non-numeric arrays,
+  equal `shot_position`/`shot_target`, FOV out of range, size below 64
+  → `INVALID_ARGS` with no capture performed.
 
 ### Key Files
 
