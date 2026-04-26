@@ -75,6 +75,11 @@ returns false, `ParasailProvider` inherits true).
 - Persistence writes one file per tool call (`<call_id>.png`). Multi-image tool
   calls reuse the call id and would collide -- currently only `preview_asset`
   produces multi-image results and it's not persisted as individual pills.
+- `save_screenshot()` strips Windows-reserved chars (`<>:"/\\|?*`) from the
+  call id before using it as a filename. Required because open-source models
+  (Kimi, Qwen, etc.) emit ids like `functions.capture_2d_viewport:128`; the
+  colon would otherwise make safe-save's rename loop fail and surface as
+  "Unable to write to file ..., file in use, locked or lacking permissions."
 
 ## Key Files
 

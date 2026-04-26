@@ -530,7 +530,17 @@ String AIChatStore::save_screenshot(const String &p_tool_call_id, const String &
 	PackedByteArray png_bytes = CoreBind::Marshalls::get_singleton()->base64_to_raw(p_b64_png);
 	ERR_FAIL_COND_V_MSG(png_bytes.is_empty(), String(), "AIChatStore: Failed to decode base64 screenshot.");
 
-	String filename = p_tool_call_id + ".png";
+	// Open-source models (Kimi, Qwen, etc.) emit tool_call_ids like
+	// "functions.capture_2d_viewport:128" — the colon is illegal in Windows
+	// filenames and makes safe-save's rename loop spin then fire
+	// "file in use, locked or lacking permissions". Replace any character
+	// that's reserved on Windows or path-confusing on POSIX with '_'.
+	String safe_id = p_tool_call_id;
+	const char *bad = "<>:\"/\\|?*";
+	for (const char *c = bad; *c; c++) {
+		safe_id = safe_id.replace_char(*c, '_');
+	}
+	String filename = safe_id + ".png";
 	String full_path = dir.path_join(filename);
 
 	Ref<FileAccess> f = FileAccess::open(full_path, FileAccess::WRITE);
