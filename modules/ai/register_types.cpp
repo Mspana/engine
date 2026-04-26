@@ -28,6 +28,7 @@ void initialize_ai_module(ModuleInitializationLevel p_level) {
 		ClassDB::register_class<XAIProvider>();
 		ClassDB::register_class<AnthropicProvider>();
 		ClassDB::register_class<DeepInfraProvider>();
+		ClassDB::register_class<ParasailProvider>();
 		
 		// Register retrieval class
 		ClassDB::register_class<RetrievalIndex>();

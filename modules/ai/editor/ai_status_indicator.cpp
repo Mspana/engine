@@ -4232,6 +4232,10 @@ void AIStatusPanel::_on_provider_changed(int p_index) {
 		Ref<DeepInfraProvider> p;
 		p.instantiate();
 		new_provider = p;
+	} else if (provider_name == "parasail") {
+		Ref<ParasailProvider> p;
+		p.instantiate();
+		new_provider = p;
 	}
 
 	if (new_provider.is_valid()) {

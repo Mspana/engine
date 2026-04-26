@@ -93,6 +93,10 @@ public:
 	// Provider name for logging/dashboard
 	virtual String get_provider_name() const { return "unknown"; }
 
+	// Whether the host accepts image_url parts in `tool` role messages. OpenAI does;
+	// DeepInfra does not (its schema only allows text parts in tool content; HTTP 422).
+	virtual bool supports_image_in_tool_content() const { return true; }
+
 	// Helper to load API key from environment or .env file
 	static String load_api_key_from_env(const String &env_var_name);
 	static String load_from_env_file(const String &key_name, const String &env_file_path = ".env");
@@ -223,9 +227,29 @@ public:
 	virtual String get_request_host() const override;
 	virtual String get_request_path() const override;
 	virtual String get_provider_name() const override { return "deepinfra"; }
+	virtual bool supports_image_in_tool_content() const override { return false; }
 
 	DeepInfraProvider();
 	~DeepInfraProvider();
+};
+
+// Parasail Provider — OpenAI-compatible host for open-source models. Used for
+// Kimi K2.6 because DeepInfra hasn't enabled multimodal dispatch for that model.
+class ParasailProvider : public OpenAIProvider {
+	GDCLASS(ParasailProvider, OpenAIProvider);
+
+protected:
+	static void _bind_methods();
+
+public:
+	virtual String get_default_base_url() const override;
+	virtual String get_default_model() const override;
+	virtual String get_request_host() const override;
+	virtual String get_request_path() const override;
+	virtual String get_provider_name() const override { return "parasail"; }
+
+	ParasailProvider();
+	~ParasailProvider();
 };
 
 // Dummy Provider (for testing/simulation)

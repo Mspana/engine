@@ -576,6 +576,7 @@ Vector<AIProvider::ModelEntry> AIProvider::get_available_models() {
 	models.push_back({ "grok-4", "Grok 4", "xai" });
 	models.push_back({ "grok-4-fast", "Grok 4 Fast", "xai" });
 	models.push_back({ "moonshotai/Kimi-K2.5", "Kimi K2.5", "deepinfra" });
+	models.push_back({ "moonshotai/Kimi-K2.6", "Kimi K2.6", "parasail" });
 	return models;
 }
 
@@ -616,7 +617,7 @@ int AIProvider::get_context_window_tokens(const String &p_model) {
 	}
 
 	// DeepInfra-hosted open-source models
-	if (p_model == "moonshotai/Kimi-K2.5") {
+	if (p_model == "moonshotai/Kimi-K2.5" || p_model == "moonshotai/Kimi-K2.6") {
 		return 262144; // 256k
 	}
 
@@ -658,8 +659,10 @@ bool AIProvider::model_supports_vision(const String &p_model) {
 		p_model.begins_with("claude-3-sonnet") || p_model.begins_with("claude-3-haiku")) {
 		return true;
 	}
-	// DeepInfra-hosted open-source models with vision
-	if (p_model == "moonshotai/Kimi-K2.5") {
+	// Open-source models with vision
+	// K2.5 is hosted on DeepInfra; K2.6 on Parasail (DeepInfra returns 405 for K2.6
+	// multimodal as of 2026-04 despite the model card claiming support).
+	if (p_model == "moonshotai/Kimi-K2.5" || p_model == "moonshotai/Kimi-K2.6") {
 		return true;
 	}
 	return false;
@@ -961,7 +964,9 @@ Dictionary OpenAIProvider::build_request_body_with_messages(const Array &p_messa
 			out_msg["role"] = "tool";
 			out_msg["tool_call_id"] = in_msg.get("tool_call_id", "");
 
-			if (has_images && supports_vision()) {
+			if (has_images && supports_vision() && supports_image_in_tool_content()) {
+				// Host accepts image_url parts directly inside the tool message
+				// (OpenAI, xAI). Standard OpenAI vision-tool-result shape.
 				Array content_parts;
 				Dictionary text_part;
 				text_part["type"] = "text";
@@ -979,13 +984,45 @@ Dictionary OpenAIProvider::build_request_body_with_messages(const Array &p_messa
 					content_parts.push_back(img_part);
 				}
 				out_msg["content"] = content_parts;
+				messages.push_back(out_msg);
+			} else if (has_images && supports_vision()) {
+				// Host (e.g. DeepInfra) rejects image_url parts in tool messages
+				// — its schema only allows text in tool content. Send the tool
+				// result as a string-content message, then append a synthetic
+				// user message with the image_url blocks. The model still sees
+				// the images, the tool_call ↔ tool_result pairing stays intact.
+				Array imgs = in_msg["_images"];
+				out_msg["content"] = String(in_msg.get("content", "")) +
+						"\n[Tool returned " + itos(imgs.size()) +
+						" image(s); attached in the next user message.]";
+				messages.push_back(out_msg);
+
+				Dictionary follow;
+				follow["role"] = "user";
+				Array follow_parts;
+				Dictionary follow_text;
+				follow_text["type"] = "text";
+				follow_text["text"] = vformat("Image(s) returned by tool call %s:",
+						String(in_msg.get("tool_call_id", "")));
+				follow_parts.push_back(follow_text);
+				for (int j = 0; j < imgs.size(); j++) {
+					Dictionary img_url;
+					img_url["url"] = "data:image/png;base64," + String(imgs[j]);
+					img_url["detail"] = "low";
+					Dictionary img_part;
+					img_part["type"] = "image_url";
+					img_part["image_url"] = img_url;
+					follow_parts.push_back(img_part);
+				}
+				follow["content"] = follow_parts;
+				messages.push_back(follow);
 			} else {
 				if (has_images) {
 					WARN_PRINT(vformat("OpenAIProvider: Model '%s' does not support vision. Dropping %d image(s) from tool result.", model, in_msg["_images"].operator Array().size()));
 				}
 				out_msg["content"] = in_msg.get("content", "");
+				messages.push_back(out_msg);
 			}
-			messages.push_back(out_msg);
 		} else if (role == "assistant" && in_msg.has("tool_calls")) {
 			// Assistant message with tool calls — preserve tool_calls structure
 			Dictionary out_msg;
@@ -2953,6 +2990,49 @@ String DeepInfraProvider::get_request_host() const {
 
 String DeepInfraProvider::get_request_path() const {
 	return "/v1/openai/chat/completions";
+}
+
+// ============================================================================
+// ParasailProvider Implementation
+// ============================================================================
+//
+// Parasail (api.parasail.io) is another OpenAI-compatible host for open-source
+// models. We use it for Kimi K2.6 specifically because DeepInfra's chat
+// completions endpoint returns HTTP 405 "Multimodal is not supported" for K2.6
+// despite the model card claiming multimodal support. Parasail's K2.6 endpoint
+// accepts both text and image input (verified live: vision works in user
+// messages and in tool result messages alike).
+
+ParasailProvider::ParasailProvider() : OpenAIProvider() {
+	model = get_default_model();
+	base_url = get_default_base_url();
+
+	String env_key = load_api_key_from_env("PARASAIL_API_KEY");
+	if (!env_key.is_empty()) {
+		api_key = env_key;
+	}
+}
+
+ParasailProvider::~ParasailProvider() {
+}
+
+void ParasailProvider::_bind_methods() {
+}
+
+String ParasailProvider::get_default_base_url() const {
+	return "https://api.parasail.io";
+}
+
+String ParasailProvider::get_default_model() const {
+	return "moonshotai/Kimi-K2.6";
+}
+
+String ParasailProvider::get_request_host() const {
+	return "api.parasail.io";
+}
+
+String ParasailProvider::get_request_path() const {
+	return "/v1/chat/completions";
 }
 
 // ============================================================================

@@ -44,12 +44,16 @@ though it's on the message.
 
 | Provider | Role | Shape |
 |---|---|---|
-| OpenAI / xAI | `tool` | `content` is an array: `[{type:"text", text:...}, {type:"image_url", image_url:{url:"data:image/png;base64,..."}}]` |
+| OpenAI / xAI / Parasail | `tool` | `content` is an array: `[{type:"text", text:...}, {type:"image_url", image_url:{url:"data:image/png;base64,..."}}]` |
+| DeepInfra | `tool` (string) + synthetic `user` follow-up | Tool message keeps text-only string content; the images go in a follow-up user message: `[{type:"text", text:"Image(s) returned by tool call <id>:"}, {type:"image_url", image_url:{...}}]`. Required because DeepInfra's schema rejects `image_url` parts inside `tool` messages with HTTP 422 (`"content","str"` validation error). The `tool_call_id` pairing stays intact on the original tool message. |
 | Anthropic | `user` with `tool_result` block | Block's `content` is an array: `[{type:"text"}, {type:"image", source:{type:"base64", media_type:"image/png", data:"..."}}]` |
 | Gemini | `user` with `functionResponse` part | Add sibling `inlineData` parts in the same user content: `{inlineData:{mimeType:"image/png", data:"..."}}` |
 
 Each branch checks `supports_vision()` before emitting image parts -- text-only
-models get just the text portion.
+models get just the text portion. The OpenAI adapter additionally checks
+`supports_image_in_tool_content()` to decide between the inline-array shape and
+the DeepInfra split-message shape; subclasses override it (`DeepInfraProvider`
+returns false, `ParasailProvider` inherits true).
 
 ## Adding a New Image-Returning Tool
 
