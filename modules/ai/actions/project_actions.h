@@ -40,6 +40,14 @@ Dictionary exec_import_asset(const Dictionary &args);
 // Returns: Dictionary with status="success"|"error", result/error fields
 Dictionary exec_delete_asset(const Dictionary &args);
 
+// Duplicates any project file (script, image, scene, resource) within the project.
+// Routes through EditorFileSystem::copy_file so .import sidecars are copied and
+// UIDs regenerated correctly.
+// Required args: source_path (String, res://...), dest_path (String, res://...)
+// Optional args: overwrite (bool, default false)
+// Returns: Dictionary with status="success"|"error", result/error fields
+Dictionary exec_copy_file(const Dictionary &args);
+
 // Runs/plays the project.
 // Optional args: mode (String, default "play"), scene_path (String)
 // Returns: Dictionary with status="success"|"error", result/error fields

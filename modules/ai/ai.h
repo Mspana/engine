@@ -92,6 +92,8 @@ private:
 	void _delete_script_file(const String &abs_path);
 	void _rename_script_file(const String &old_abs_path, const String &new_abs_path);
 	void _write_binary_file(const String &abs_path, const PackedByteArray &bytes);
+	void _copy_file_via_efs(const String &from_abs, const String &to_abs);
+	void _delete_file_with_sidecar(const String &abs_path);
 
 public:
 	// The core method to interact with the AI backend (single message, legacy).

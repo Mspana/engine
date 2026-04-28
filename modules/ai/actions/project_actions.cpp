@@ -421,6 +421,120 @@ Dictionary exec_import_asset(const Dictionary &args) {
 #endif
 }
 
+Dictionary exec_copy_file(const Dictionary &args) {
+#ifdef TOOLS_ENABLED
+	EditorUndoRedoManager *undo_redo = ai_get_undo_redo();
+	if (!undo_redo) {
+		return ai_create_error_result(AIErrorCodes::NO_UNDO_REDO,
+			"EditorUndoRedoManager singleton not found");
+	}
+
+	ProjectSettings *ps = ProjectSettings::get_singleton();
+	if (!ps) {
+		return ai_create_error_result(AIErrorCodes::INTERNAL_ERROR,
+			"ProjectSettings singleton not available");
+	}
+
+	AI *ai_singleton = AI::get_singleton();
+	if (!ai_singleton) {
+		return ai_create_error_result(AIErrorCodes::INTERNAL_ERROR,
+			"AI singleton not found");
+	}
+
+	if (!args.has("source_path") || args["source_path"].get_type() != Variant::STRING) {
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			"'source_path' must be a string");
+	}
+	if (!args.has("dest_path") || args["dest_path"].get_type() != Variant::STRING) {
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			"'dest_path' must be a string");
+	}
+
+	String source_path = args["source_path"];
+	String dest_path = args["dest_path"];
+	bool overwrite = args.get("overwrite", false);
+
+	if (source_path.is_empty() || dest_path.is_empty()) {
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			"'source_path' and 'dest_path' must be non-empty");
+	}
+	if (source_path == dest_path) {
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			"'source_path' and 'dest_path' must differ");
+	}
+
+	String source_abs = ps->globalize_path(source_path);
+	String dest_abs = ps->globalize_path(dest_path);
+
+	if (!FileAccess::exists(source_abs)) {
+		return ai_create_error_result(AIErrorCodes::FILE_NOT_FOUND,
+			vformat("Source file does not exist at '%s'", source_path));
+	}
+
+	bool dest_exists = FileAccess::exists(dest_abs);
+	if (dest_exists && !overwrite) {
+		return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+			vformat("Destination file already exists at '%s'. Pass overwrite=true to replace it.", dest_path));
+	}
+
+	// Ensure destination directory exists. EditorFileSystem::copy_file expects
+	// its parent dir to be in the filesystem cache, so we create+rescan if missing.
+	String dest_dir_abs = dest_abs.get_base_dir();
+	if (!DirAccess::exists(dest_dir_abs)) {
+		Error dir_err = DirAccess::make_dir_recursive_absolute(dest_dir_abs);
+		if (dir_err != OK) {
+			return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+				vformat("Failed to create destination directory '%s'. Error: %d", dest_dir_abs, dir_err));
+		}
+	}
+
+	// Snapshot pre-existing dest state so undo can restore it.
+	PackedByteArray old_main_bytes;
+	PackedByteArray old_sidecar_bytes;
+	bool had_old_sidecar = false;
+	if (dest_exists) {
+		old_main_bytes = FileAccess::get_file_as_bytes(dest_abs);
+		String sidecar_abs = dest_abs + ".import";
+		if (FileAccess::exists(sidecar_abs)) {
+			old_sidecar_bytes = FileAccess::get_file_as_bytes(sidecar_abs);
+			had_old_sidecar = true;
+		}
+	}
+
+	ai_log_verbose(vformat("Copying file '%s' -> '%s' (overwrite=%s)", source_path, dest_path, overwrite ? "true" : "false"));
+
+	undo_redo->create_action("AI Copy File");
+	undo_redo->add_do_method(ai_singleton, "_copy_file_via_efs", source_abs, dest_abs);
+	// Undo: wipe whatever the copy produced, then restore any pre-existing dest.
+	undo_redo->add_undo_method(ai_singleton, "_delete_file_with_sidecar", dest_abs);
+	if (dest_exists) {
+		undo_redo->add_undo_method(ai_singleton, "_write_binary_file", dest_abs, old_main_bytes);
+		if (had_old_sidecar) {
+			undo_redo->add_undo_method(ai_singleton, "_write_binary_file", dest_abs + ".import", old_sidecar_bytes);
+		}
+	}
+	undo_redo->commit_action();
+
+	int copied_size = 0;
+	if (FileAccess::exists(dest_abs)) {
+		copied_size = FileAccess::get_file_as_bytes(dest_abs).size();
+	}
+
+	Dictionary result_data;
+	result_data["source_path"] = source_path;
+	result_data["dest_path"] = dest_path;
+	result_data["overwrite"] = overwrite;
+	result_data["overwrote_existing"] = dest_exists;
+	result_data["size"] = copied_size;
+
+	print_line(vformat("AI: Executed copy_file. Source: %s, Dest: %s", source_path, dest_path));
+	return ai_create_success_result(result_data);
+#else
+	return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+		"Editor API not available in non-editor builds");
+#endif
+}
+
 Dictionary exec_delete_asset(const Dictionary &args) {
 #ifdef TOOLS_ENABLED
 	EditorUndoRedoManager *undo_redo = ai_get_undo_redo();

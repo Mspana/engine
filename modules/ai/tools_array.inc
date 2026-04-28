@@ -275,6 +275,20 @@
 	req.push_back("asset_path");
 	tools.push_back(_make_tool("delete_asset", "Delete an asset file from the project", props, req));
 }
+{
+	Dictionary props;
+	props["source_path"] = _make_prop("string", "Source file path (res://...). Must exist.");
+	props["dest_path"]   = _make_prop("string", "Destination file path (res://...). Parent dir is created if missing.");
+	props["overwrite"]   = _make_prop("boolean", "Overwrite if destination exists (default false)");
+	Array req;
+	req.push_back("source_path");
+	req.push_back("dest_path");
+	tools.push_back(_make_tool("copy_file",
+		"Duplicate any file in the project (scripts, images, scenes, resources). "
+		"Handles .import sidecars and regenerates UIDs so the copy is editor-correct. "
+		"Source and destination are both res:// paths.",
+		props, req));
+}
 
 // ==========================================================================
 // Run / test actions

@@ -51,7 +51,7 @@ static const Vector<String> ALLOWED_ACTIONS = {
     "create_script","update_script","attach_script","detach_script","rename_script","delete_script",
     "connect_signal","disconnect_signal","run_project","play_test",
     "rename_node","reparent_node","create_scene","open_scene","save_scene","close_scene","set_main_scene",
-    "get_node_info","find_nodes_by_type","list_nodes","list_files","read_script","preview_asset","set_project_setting","get_project_settings","create_autoload_singleton","remove_autoload_singleton","import_asset","delete_asset",
+    "get_node_info","find_nodes_by_type","list_nodes","list_files","read_script","preview_asset","set_project_setting","get_project_settings","create_autoload_singleton","remove_autoload_singleton","import_asset","delete_asset","copy_file",
     "write_dev_note",
     "update_todos",
     "run_and_screenshot",
@@ -322,6 +322,19 @@ bool AI::_validate_command_dictionary(const Dictionary &cmd, String &error_msg) 
             error_msg = "'delete_asset' requires string 'asset_path'.";
             return false;
         }
+    } else if (action == "copy_file") {
+        if (!args.has("source_path") || args["source_path"].get_type() != Variant::STRING) {
+            error_msg = "'copy_file' requires string 'source_path'.";
+            return false;
+        }
+        if (!args.has("dest_path") || args["dest_path"].get_type() != Variant::STRING) {
+            error_msg = "'copy_file' requires string 'dest_path'.";
+            return false;
+        }
+        if (args.has("overwrite") && args["overwrite"].get_type() != Variant::BOOL) {
+            error_msg = "'copy_file' optional 'overwrite' must be a bool.";
+            return false;
+        }
     } else if (action == "run_and_screenshot") {
         if (args.has("wait_seconds")) {
             Variant::Type t = args["wait_seconds"].get_type();
@@ -544,6 +557,8 @@ Dictionary AI::execute_single_action(const Dictionary &p_action) {
         action_result = AIProjectActions::exec_import_asset(action_args);
     } else if (action_name == "delete_asset") {
         action_result = AIProjectActions::exec_delete_asset(action_args);
+    } else if (action_name == "copy_file") {
+        action_result = AIProjectActions::exec_copy_file(action_args);
     } else if (action_name == "run_project" || action_name == "play_test") {
         action_result = AIProjectActions::exec_run_project(action_args);
     } else if (action_name == "run_and_screenshot") {
@@ -897,6 +912,8 @@ void AI::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("_delete_script_file", "abs_path"), &AI::_delete_script_file);
 	ClassDB::bind_method(D_METHOD("_rename_script_file", "old_abs_path", "new_abs_path"), &AI::_rename_script_file);
 	ClassDB::bind_method(D_METHOD("_write_binary_file", "abs_path", "bytes"), &AI::_write_binary_file);
+	ClassDB::bind_method(D_METHOD("_copy_file_via_efs", "from_abs", "to_abs"), &AI::_copy_file_via_efs);
+	ClassDB::bind_method(D_METHOD("_delete_file_with_sidecar", "abs_path"), &AI::_delete_file_with_sidecar);
     
     // Add properties
     ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "provider", PROPERTY_HINT_RESOURCE_TYPE, "AIProvider"), "set_provider", "get_provider");
@@ -1263,6 +1280,44 @@ void AI::_write_binary_file(const String &abs_path, const PackedByteArray &bytes
 	file.unref();
 	print_verbose(vformat("AI: Wrote binary file at '%s' (%d bytes)", abs_path, bytes.size()));
 	// Notify EditorFileSystem about the change
+	EditorFileSystem *efs = EditorFileSystem::get_singleton();
+	if (efs) {
+		efs->scan_changes();
+	}
+}
+
+void AI::_copy_file_via_efs(const String &from_abs, const String &to_abs) {
+	EditorFileSystem *efs = EditorFileSystem::get_singleton();
+	if (!efs) {
+		ERR_PRINT("AI: EditorFileSystem singleton not available; cannot copy file.");
+		return;
+	}
+	// EditorFileSystem::copy_file expects res:// paths (it looks up parent dirs in
+	// the filesystem cache via get_filesystem_path). Convert from absolute.
+	String from_res = ProjectSettings::get_singleton()->localize_path(from_abs);
+	String to_res = ProjectSettings::get_singleton()->localize_path(to_abs);
+	Error err = efs->copy_file(from_res, to_res);
+	if (err != OK) {
+		ERR_PRINT(vformat("AI: EditorFileSystem::copy_file failed from '%s' to '%s'. Error: %d", from_res, to_res, err));
+		return;
+	}
+	print_verbose(vformat("AI: Copied file '%s' -> '%s'", from_res, to_res));
+}
+
+void AI::_delete_file_with_sidecar(const String &abs_path) {
+	if (FileAccess::exists(abs_path)) {
+		Error err = DirAccess::remove_absolute(abs_path);
+		if (err != OK) {
+			ERR_PRINT(vformat("AI: Failed to delete file at '%s'. Error: %d", abs_path, err));
+		}
+	}
+	String sidecar_path = abs_path + ".import";
+	if (FileAccess::exists(sidecar_path)) {
+		Error err = DirAccess::remove_absolute(sidecar_path);
+		if (err != OK) {
+			ERR_PRINT(vformat("AI: Failed to delete sidecar at '%s'. Error: %d", sidecar_path, err));
+		}
+	}
 	EditorFileSystem *efs = EditorFileSystem::get_singleton();
 	if (efs) {
 		efs->scan_changes();
