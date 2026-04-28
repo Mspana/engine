@@ -576,7 +576,8 @@ Vector<AIProvider::ModelEntry> AIProvider::get_available_models() {
 	models.push_back({ "grok-4", "Grok 4", "xai" });
 	models.push_back({ "grok-4-fast", "Grok 4 Fast", "xai" });
 	models.push_back({ "moonshotai/Kimi-K2.5", "Kimi K2.5", "deepinfra" });
-	models.push_back({ "moonshotai/Kimi-K2.6", "Kimi K2.6", "parasail" });
+	models.push_back({ "moonshotai/Kimi-K2.6", "Kimi K2.6 (Parasail)", "parasail" });
+	models.push_back({ "clarifai/Kimi-K2.6", "Kimi K2.6 (Clarifai)", "clarifai" });
 	return models;
 }
 
@@ -617,7 +618,8 @@ int AIProvider::get_context_window_tokens(const String &p_model) {
 	}
 
 	// DeepInfra-hosted open-source models
-	if (p_model == "moonshotai/Kimi-K2.5" || p_model == "moonshotai/Kimi-K2.6") {
+	if (p_model == "moonshotai/Kimi-K2.5" || p_model == "moonshotai/Kimi-K2.6" ||
+		p_model == "clarifai/Kimi-K2.6") {
 		return 262144; // 256k
 	}
 
@@ -662,7 +664,9 @@ bool AIProvider::model_supports_vision(const String &p_model) {
 	// Open-source models with vision
 	// K2.5 is hosted on DeepInfra; K2.6 on Parasail (DeepInfra returns 405 for K2.6
 	// multimodal as of 2026-04 despite the model card claiming support).
-	if (p_model == "moonshotai/Kimi-K2.5" || p_model == "moonshotai/Kimi-K2.6") {
+	// "clarifai/Kimi-K2.6" is the same K2.6 model served via Clarifai for speed.
+	if (p_model == "moonshotai/Kimi-K2.5" || p_model == "moonshotai/Kimi-K2.6" ||
+		p_model == "clarifai/Kimi-K2.6") {
 		return true;
 	}
 	return false;
@@ -746,12 +750,22 @@ String OpenAIProvider::parse_response(const Dictionary &response_data) const {
 	}
 
 	Dictionary message = first_choice["message"];
-	if (!message.has("content")) {
-		ERR_PRINT("OpenAI response message missing 'content' field");
-		return "";
-	}
 
-	return message["content"];
+	// Prefer "content"; fall back to "reasoning_content" for thinking-mode models
+	// (e.g. Clarifai-hosted Kimi K2.6) that leave content null and put the answer
+	// in the reasoning channel.
+	String content;
+	if (message.has("content") && message["content"].get_type() == Variant::STRING) {
+		content = message["content"];
+	}
+	if (content.is_empty() && message.has("reasoning_content") &&
+			message["reasoning_content"].get_type() == Variant::STRING) {
+		content = message["reasoning_content"];
+	}
+	if (content.is_empty() && !message.has("content") && !message.has("reasoning_content")) {
+		ERR_PRINT("OpenAI response message missing 'content' and 'reasoning_content' fields");
+	}
+	return content;
 }
 
 PackedStringArray OpenAIProvider::get_request_headers() const {
@@ -1160,6 +1174,16 @@ void OpenAIProvider::_perform_request_with_messages(const Array &p_messages, con
 			if (err_data.has("error")) {
 				Dictionary err_obj = err_data["error"];
 				error_detail = err_obj.get("message", "");
+			}
+			// Clarifai shape: {code, description, details, http_status_code}
+			if (error_detail.is_empty() && err_data.has("description")) {
+				error_detail = err_data["description"];
+				if (err_data.has("details")) {
+					String details = err_data["details"];
+					if (!details.is_empty() && details != error_detail) {
+						error_detail += " — " + details;
+					}
+				}
 			}
 		}
 		String error_msg = error_detail.is_empty()
@@ -1726,6 +1750,16 @@ void GeminiProvider::_perform_request_with_messages(const Array &p_messages, con
 				Dictionary err_obj = err_data["error"];
 				error_detail = err_obj.get("message", "");
 			}
+			// Clarifai shape: {code, description, details, http_status_code}
+			if (error_detail.is_empty() && err_data.has("description")) {
+				error_detail = err_data["description"];
+				if (err_data.has("details")) {
+					String details = err_data["details"];
+					if (!details.is_empty() && details != error_detail) {
+						error_detail += " — " + details;
+					}
+				}
+			}
 		}
 		String error_msg = error_detail.is_empty()
 			? vformat("HTTP error: %d", response_code)
@@ -2284,6 +2318,16 @@ void XAIProvider::_perform_request_with_messages(const Array &p_messages, const 
 			if (err_data.has("error")) {
 				Dictionary err_obj = err_data["error"];
 				error_detail = err_obj.get("message", "");
+			}
+			// Clarifai shape: {code, description, details, http_status_code}
+			if (error_detail.is_empty() && err_data.has("description")) {
+				error_detail = err_data["description"];
+				if (err_data.has("details")) {
+					String details = err_data["details"];
+					if (!details.is_empty() && details != error_detail) {
+						error_detail += " — " + details;
+					}
+				}
 			}
 		}
 		String error_msg = error_detail.is_empty()
@@ -3033,6 +3077,69 @@ String ParasailProvider::get_request_host() const {
 
 String ParasailProvider::get_request_path() const {
 	return "/v1/chat/completions";
+}
+
+// ============================================================================
+// ClarifaiProvider Implementation
+// ============================================================================
+//
+// Clarifai (api.clarifai.com) hosts Kimi K2.6 behind an OpenAI-compatible
+// endpoint at /v2/ext/openai/v1/chat/completions. Faster than Parasail's K2.6
+// at slightly higher cost — registered alongside Parasail's entry so the user
+// can pick per-message based on speed vs. cost.
+//
+// Two response-shape quirks (handled in OpenAIProvider's base parsers so all
+// subclasses benefit): K2.6 returns the answer in `message.reasoning_content`
+// when thinking mode is on, and Clarifai's error shape is
+// {code, description, details} rather than {error: {message}}.
+//
+// The model identifier on the wire is a full Clarifai URL with a pinned
+// version SHA. The build_request_body* overrides inject it into body["model"]
+// regardless of what set_model() stored (typically the short pseudo-id
+// "clarifai/Kimi-K2.6" coming from the dropdown registry).
+
+ClarifaiProvider::ClarifaiProvider() : OpenAIProvider() {
+	model = get_default_model();
+	base_url = get_default_base_url();
+
+	String env_key = load_api_key_from_env("CLARIFAI_API_KEY");
+	if (!env_key.is_empty()) {
+		api_key = env_key;
+	}
+}
+
+ClarifaiProvider::~ClarifaiProvider() {
+}
+
+void ClarifaiProvider::_bind_methods() {
+}
+
+String ClarifaiProvider::get_default_base_url() const {
+	return "https://api.clarifai.com";
+}
+
+String ClarifaiProvider::get_default_model() const {
+	return "https://clarifai.com/moonshotai/chat-completion/models/Kimi-K2_6/versions/8012c288f1854540b50bb336872d62e7";
+}
+
+String ClarifaiProvider::get_request_host() const {
+	return "api.clarifai.com";
+}
+
+String ClarifaiProvider::get_request_path() const {
+	return "/v2/ext/openai/v1/chat/completions";
+}
+
+Dictionary ClarifaiProvider::build_request_body(const String &user_prompt, const String &context_block) const {
+	Dictionary body = OpenAIProvider::build_request_body(user_prompt, context_block);
+	body["model"] = get_default_model();
+	return body;
+}
+
+Dictionary ClarifaiProvider::build_request_body_with_messages(const Array &p_messages, const String &context_block) const {
+	Dictionary body = OpenAIProvider::build_request_body_with_messages(p_messages, context_block);
+	body["model"] = get_default_model();
+	return body;
 }
 
 // ============================================================================

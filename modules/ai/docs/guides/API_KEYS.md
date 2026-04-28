@@ -15,6 +15,8 @@ $env:GEMINI_API_KEY="..."
 $env:XAI_API_KEY="..."
 $env:ANTHROPIC_API_KEY="sk-ant-..."
 $env:DEEPINFRA_API_KEY="..."
+$env:PARASAIL_API_KEY="..."
+$env:CLARIFAI_API_KEY="..."
 ```
 
 **Linux/Mac:**
@@ -24,6 +26,8 @@ export GEMINI_API_KEY="..."
 export XAI_API_KEY="..."
 export ANTHROPIC_API_KEY="sk-ant-..."
 export DEEPINFRA_API_KEY="..."
+export PARASAIL_API_KEY="..."
+export CLARIFAI_API_KEY="..."
 ```
 
 ### Option 2: .env File (Recommended for Development)
@@ -40,6 +44,8 @@ export DEEPINFRA_API_KEY="..."
    XAI_API_KEY=xai-xxxxxxxxxxxxx
    ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxxx
    DEEPINFRA_API_KEY=xxxxxxxxxxxxx
+   PARASAIL_API_KEY=xxxxxxxxxxxxx
+   CLARIFAI_API_KEY=xxxxxxxxxxxxx
    ```
 
 3. **Important:** Add `.env` to your project's `.gitignore` to avoid committing secrets:
@@ -78,7 +84,9 @@ The `.env` file is parsed simply:
 - **Gemini**: `GEMINI_API_KEY`
 - **x.ai (Grok)**: `XAI_API_KEY`
 - **Anthropic (Claude)**: `ANTHROPIC_API_KEY`
-- **DeepInfra** (Kimi, Qwen, DeepSeek, and other open-source models): `DEEPINFRA_API_KEY`
+- **DeepInfra** (Kimi K2.5 and other open-source models): `DEEPINFRA_API_KEY`
+- **Parasail** (Kimi K2.6, multimodal): `PARASAIL_API_KEY`
+- **Clarifai** (Kimi K2.6, faster alternate host): `CLARIFAI_API_KEY`
 
 ## Security Best Practices
 
@@ -95,6 +103,8 @@ The `.env` file is parsed simply:
 - **x.ai (Grok)**: https://console.x.ai/
 - **Anthropic (Claude)**: https://console.anthropic.com/settings/keys
 - **DeepInfra**: https://deepinfra.com/dash/api_keys
+- **Parasail**: https://parasail.io/
+- **Clarifai**: https://clarifai.com/settings/security
 
 ## Example Usage
 

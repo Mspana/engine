@@ -252,6 +252,31 @@ public:
 	~ParasailProvider();
 };
 
+// Clarifai Provider — OpenAI-compatible host for K2.6. Faster than Parasail
+// at slightly higher cost. Vision is supported on the multimodal endpoint.
+// The model identifier on the wire is a full URL with a pinned version SHA;
+// build_request_body* overrides swap whatever set_model() stored (the short
+// registry pseudo-id) for the real URL before the request goes out.
+class ClarifaiProvider : public OpenAIProvider {
+	GDCLASS(ClarifaiProvider, OpenAIProvider);
+
+protected:
+	static void _bind_methods();
+
+public:
+	virtual String get_default_base_url() const override;
+	virtual String get_default_model() const override;
+	virtual String get_request_host() const override;
+	virtual String get_request_path() const override;
+	virtual String get_provider_name() const override { return "clarifai"; }
+
+	virtual Dictionary build_request_body(const String &user_prompt, const String &context_block = "") const override;
+	virtual Dictionary build_request_body_with_messages(const Array &p_messages, const String &context_block = "") const override;
+
+	ClarifaiProvider();
+	~ClarifaiProvider();
+};
+
 // Dummy Provider (for testing/simulation)
 class DummyProvider : public AIProvider {
 	GDCLASS(DummyProvider, AIProvider);
