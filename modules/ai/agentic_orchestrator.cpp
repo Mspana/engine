@@ -531,10 +531,49 @@ void AgenticOrchestrator::_process_native_tool_response(const Dictionary &p_api_
 		if (tool_name == "run_and_screenshot") {
 			_async_rns_tool_call_id = call_id;
 			_async_rns_action_args = args;
-			_async_rns_wait_seconds = (float)args.get("wait_seconds", 2.0f);
+
+			// Build capture-time list: prefer `screenshot_times_seconds` (array),
+			// fall back to single `wait_seconds`, default to one capture at 2.0s.
+			_async_rns_capture_times.clear();
+			if (args.has("screenshot_times_seconds")) {
+				Array raw = args["screenshot_times_seconds"];
+				for (int t = 0; t < raw.size(); t++) {
+					Variant v = raw[t];
+					float seconds = 0.0f;
+					if (v.get_type() == Variant::INT) {
+						seconds = (float)(int64_t)v;
+					} else if (v.get_type() == Variant::FLOAT) {
+						seconds = (float)v;
+					} else {
+						continue;
+					}
+					if (seconds <= 0.0f) {
+						continue; // Drop non-positive times — capture must come after game starts.
+					}
+					_async_rns_capture_times.push_back(seconds);
+				}
+				_async_rns_capture_times.sort();
+				// Dedupe while preserving order (sorted, so duplicates are adjacent).
+				for (int t = _async_rns_capture_times.size() - 1; t > 0; t--) {
+					if (Math::is_equal_approx(_async_rns_capture_times[t], _async_rns_capture_times[t - 1])) {
+						_async_rns_capture_times.remove_at(t);
+					}
+				}
+			}
+			if (_async_rns_capture_times.is_empty()) {
+				float legacy = (float)args.get("wait_seconds", 2.0f);
+				if (legacy <= 0.0f) {
+					legacy = 2.0f;
+				}
+				_async_rns_capture_times.push_back(legacy);
+			}
+			_async_rns_next_capture_index = 0;
+			_async_rns_captured_b64s = Array();
+
 			_async_rns_phase = ASYNC_RNS_POLL_START;
 			_async_rns_phase_start_ms = Time::get_singleton()->get_ticks_msec();
 			_async_rns_action_start_ms = _async_rns_phase_start_ms;
+			_async_rns_game_running_ms = 0;
 
 			// Build action dict for execute_single_action
 			Dictionary action;
@@ -828,6 +867,7 @@ void AgenticOrchestrator::_run_and_screenshot_tick() {
 		if (game_running) {
 			_async_rns_phase = ASYNC_RNS_WAIT_VISUAL;
 			_async_rns_phase_start_ms = now_ms;
+			_async_rns_game_running_ms = now_ms;
 			_schedule_rns_tick(0.1f);
 		} else if (now_ms - _async_rns_phase_start_ms > 8000) {
 			_async_rns_phase = ASYNC_RNS_INACTIVE;
@@ -841,16 +881,24 @@ void AgenticOrchestrator::_run_and_screenshot_tick() {
 		}
 
 	} else if (_async_rns_phase == ASYNC_RNS_WAIT_VISUAL) {
-		float elapsed = (now_ms - _async_rns_phase_start_ms) / 1000.0f;
-		print_line(vformat("AI_RNS: WAIT_VISUAL elapsed=%.2fs / %.2fs", elapsed, _async_rns_wait_seconds));
-		if (elapsed >= _async_rns_wait_seconds) {
+		// Time to next capture is measured from when the game was first observed
+		// running, so a slow capture doesn't push the next deadline back.
+		float elapsed = (now_ms - _async_rns_game_running_ms) / 1000.0f;
+		float next_deadline = (_async_rns_next_capture_index < _async_rns_capture_times.size())
+				? _async_rns_capture_times[_async_rns_next_capture_index]
+				: 0.0f;
+		print_line(vformat("AI_RNS: WAIT_VISUAL elapsed=%.2fs / %.2fs (capture %d of %d)",
+				elapsed, next_deadline,
+				_async_rns_next_capture_index + 1, _async_rns_capture_times.size()));
+		if (elapsed >= next_deadline) {
 			// Time to capture. Connect one-shot listener then trigger.
 			_async_rns_phase = ASYNC_RNS_AWAIT_CAPTURE;
 			_async_rns_phase_start_ms = now_ms;
 
 			Callable cb = callable_mp(this, &AgenticOrchestrator::_on_async_rns_capture_received);
 			ai->connect("game_screenshot_ready", cb, CONNECT_ONE_SHOT);
-			print_line("AI_RNS: triggering game screenshot");
+			print_line(vformat("AI_RNS: triggering game screenshot %d of %d at t=%.2fs",
+					_async_rns_next_capture_index + 1, _async_rns_capture_times.size(), elapsed));
 			ai->trigger_game_screenshot();
 
 			// Schedule a timeout tick (10s).
@@ -876,25 +924,69 @@ void AgenticOrchestrator::_run_and_screenshot_tick() {
 }
 
 void AgenticOrchestrator::_on_async_rns_capture_received(const String &p_b64) {
-	print_line(vformat("AI_RNS: capture received, b64 len=%d", p_b64.length()));
-	_async_rns_phase = ASYNC_RNS_INACTIVE;
+	const int idx = _async_rns_next_capture_index;
+	const float at_seconds = (idx < _async_rns_capture_times.size())
+			? _async_rns_capture_times[idx]
+			: 0.0f;
+	print_line(vformat("AI_RNS: capture %d of %d received, b64 len=%d, at=%.2fs",
+			idx + 1, _async_rns_capture_times.size(), p_b64.length(), at_seconds));
 
-	// Stop the game.
 	AI *ai = AI::get_singleton();
+
+	// Empty payload aborts the whole sequence — partial results aren't useful when
+	// the model expects all requested timestamps.
+	if (p_b64.is_empty()) {
+		_async_rns_phase = ASYNC_RNS_INACTIVE;
+		if (ai) {
+			ai->call("stop_game");
+		}
+		Dictionary exec_result;
+		exec_result["status"] = "error";
+		Dictionary ed; ed["code"] = "operation_failed";
+		ed["message"] = vformat("Screenshot capture %d of %d failed: empty image.", idx + 1, _async_rns_capture_times.size());
+		ed["details"] = Dictionary();
+		exec_result["error"] = ed;
+		_on_async_rns_complete(exec_result);
+		return;
+	}
+
+	// Record this capture and decide whether to continue or finalize.
+	Dictionary entry;
+	entry["at_seconds"] = at_seconds;
+	entry["screenshot_b64"] = p_b64;
+	_async_rns_captured_b64s.push_back(entry);
+	_async_rns_next_capture_index++;
+
+	if (_async_rns_next_capture_index < _async_rns_capture_times.size()) {
+		// More captures pending — keep the game running and return to WAIT_VISUAL.
+		_async_rns_phase = ASYNC_RNS_WAIT_VISUAL;
+		_async_rns_phase_start_ms = Time::get_singleton()->get_ticks_msec();
+		_schedule_rns_tick(0.05f);
+		return;
+	}
+
+	// All captures complete — stop the game and finalize.
+	_async_rns_phase = ASYNC_RNS_INACTIVE;
 	if (ai) {
 		ai->call("stop_game");
 	}
 
 	Dictionary exec_result;
-	if (p_b64.is_empty()) {
-		exec_result["status"] = "error";
-		Dictionary ed; ed["code"] = "operation_failed"; ed["message"] = "Screenshot capture failed: empty image."; ed["details"] = Dictionary();
-		exec_result["error"] = ed;
+	exec_result["status"] = "success";
+	Dictionary rd;
+	rd["format"] = "png";
+	if (_async_rns_captured_b64s.size() == 1) {
+		// Single-capture (legacy) shape: keep `screenshot_b64` at top level so the
+		// existing chat UI screenshot widget continues to find it.
+		Dictionary first = _async_rns_captured_b64s[0];
+		rd["screenshot_b64"] = first.get("screenshot_b64", String());
+		rd["at_seconds"] = first.get("at_seconds", 0.0f);
 	} else {
-		exec_result["status"] = "success";
-		Dictionary rd; rd["screenshot_b64"] = p_b64; rd["format"] = "png";
-		exec_result["result"] = rd;
+		// Multi-capture shape: array of {at_seconds, screenshot_b64}.
+		rd["screenshots"] = _async_rns_captured_b64s;
+		rd["screenshot_count"] = _async_rns_captured_b64s.size();
 	}
+	exec_result["result"] = rd;
 	_on_async_rns_complete(exec_result);
 }
 
@@ -973,16 +1065,38 @@ void AgenticOrchestrator::_on_async_rns_complete(const Dictionary &p_exec_result
 	}
 
 	// Build native tool result message.
-	// Strip screenshot_b64 from the JSON content (it inflates the token count as text)
-	// and attach it as _images instead so providers can send it as a real image.
+	// Strip every base64 from the JSON content (it inflates the token count as text)
+	// and attach the images as _images instead so providers can send them as real
+	// image parts. Handles both single-shot (`screenshot_b64`) and multi-shot
+	// (`screenshots:[{at_seconds, screenshot_b64}, ...]`) result shapes.
 	Dictionary content_for_wire = enriched;
+	Array attached_images;
 	if (status == "success") {
 		Dictionary result = enriched.get("result", Dictionary());
-		if (result.has("screenshot_b64")) {
+		bool needs_strip = result.has("screenshot_b64") || result.has("screenshots");
+		if (needs_strip) {
 			content_for_wire = enriched.duplicate();
 			Dictionary r = result.duplicate();
-			r.erase("screenshot_b64");
-			r["screenshot"] = "<see attached image>";
+			if (r.has("screenshot_b64")) {
+				attached_images.push_back(r["screenshot_b64"]);
+				r.erase("screenshot_b64");
+				r["screenshot"] = "<see attached image>";
+			}
+			if (r.has("screenshots")) {
+				Array shots = r["screenshots"];
+				Array shots_for_wire;
+				for (int i = 0; i < shots.size(); i++) {
+					Dictionary entry = shots[i];
+					Dictionary stripped = entry.duplicate();
+					if (stripped.has("screenshot_b64")) {
+						attached_images.push_back(stripped["screenshot_b64"]);
+						stripped.erase("screenshot_b64");
+					}
+					stripped["screenshot"] = vformat("<see attached image %d>", i + 1);
+					shots_for_wire.push_back(stripped);
+				}
+				r["screenshots"] = shots_for_wire;
+			}
 			content_for_wire["result"] = r;
 		}
 	}
@@ -993,14 +1107,8 @@ void AgenticOrchestrator::_on_async_rns_complete(const Dictionary &p_exec_result
 	message["content"] = JSON::stringify(content_for_wire);
 	message["_tool_result_data"] = tool_result_data;
 
-	// Attach screenshot as _images for vision-capable models
-	if (status == "success") {
-		Dictionary result = enriched.get("result", Dictionary());
-		if (result.has("screenshot_b64")) {
-			Array imgs;
-			imgs.push_back(result["screenshot_b64"]);
-			message["_images"] = imgs;
-		}
+	if (!attached_images.is_empty()) {
+		message["_images"] = attached_images;
 	}
 
 	current_run.conversation_history.push_back(message);

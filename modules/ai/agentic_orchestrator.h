@@ -158,12 +158,22 @@ private:
 	// Async run_and_screenshot state (timer-based, never blocks main thread)
 	enum AsyncRnsPhase { ASYNC_RNS_INACTIVE, ASYNC_RNS_POLL_START, ASYNC_RNS_WAIT_VISUAL, ASYNC_RNS_AWAIT_CAPTURE };
 	AsyncRnsPhase _async_rns_phase = ASYNC_RNS_INACTIVE;
-	float _async_rns_wait_seconds = 2.0f;
 	String _async_rns_tool_call_id; // tool_call_id for native format
 	Dictionary _async_rns_action_args;
 	uint64_t _async_rns_phase_start_ms = 0;
 	uint64_t _async_rns_action_start_ms = 0; // Set once at action entry; never reset on phase transitions.
 	uint32_t _rns_tick_gen = 0;
+
+	// Multi-screenshot support. `_async_rns_capture_times` is sorted ascending and
+	// holds every requested capture time (seconds, relative to the moment the game
+	// is first observed running). `_async_rns_next_capture_index` walks through it.
+	// `_async_rns_captured_b64s` accumulates `{at_seconds, b64}` dicts as each
+	// capture lands. When `next_capture_index == capture_times.size()` the game
+	// is stopped and the orchestrator finalises with all collected screenshots.
+	Vector<float> _async_rns_capture_times;
+	int _async_rns_next_capture_index = 0;
+	Array _async_rns_captured_b64s;
+	uint64_t _async_rns_game_running_ms = 0; // Set when game first reports running (POLL_START → WAIT_VISUAL).
 
 	void _schedule_rns_tick(float p_delay = 0.05f);
 	void _run_and_screenshot_tick_gen(uint32_t p_gen);

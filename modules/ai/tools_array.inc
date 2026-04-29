@@ -302,9 +302,16 @@
 }
 {
 	Dictionary props;
-	props["wait_seconds"] = _make_prop("number", "Seconds to let game run before capturing (default 2.0, range 0.5-10.0)");
+	props["wait_seconds"] = _make_prop("number", "Seconds to let the game run before capturing a single screenshot (default 2.0). Ignored when screenshot_times_seconds is provided.");
+	Dictionary times_prop;
+	times_prop["type"] = "array";
+	Dictionary times_items;
+	times_items["type"] = "number";
+	times_prop["items"] = times_items;
+	times_prop["description"] = "Optional list of capture times in seconds, measured from the moment the game starts running, e.g. [1.0, 3.0, 5.0]. Times are sorted and deduped. Total wait is bounded by the largest entry. When set, multiple screenshots are returned as result.screenshots = [{at_seconds, screenshot_b64}, ...] instead of the single-shot result.screenshot_b64.";
+	props["screenshot_times_seconds"] = times_prop;
 	Array req;
-	tools.push_back(_make_tool("run_and_screenshot", "Run the game briefly, capture a screenshot, then stop. The screenshot is returned as an image you can see — use it to visually verify layout, colors, and positioning. Inform the user if there is an issue with viewing the image. Prefer capture_2d_viewport / capture_3d_viewport for static visual checks. Note that those work best when the majority of the rendering is not dependent on runtime scripts.", props, req));
+	tools.push_back(_make_tool("run_and_screenshot", "Run the game briefly, capture one or more screenshots at specific times, then stop. The screenshots are returned as images you can see — use them to visually verify layout, colors, animation progression, and positioning over time. Inform the user if there is an issue with viewing the images. Prefer capture_2d_viewport / capture_3d_viewport for static visual checks. Note that those work best when the majority of the rendering is not dependent on runtime scripts.", props, req));
 }
 {
 	Dictionary props;

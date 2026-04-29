@@ -361,6 +361,25 @@ void ToolCollapsibleEntry::update_from_tool_result(const Dictionary &p_tool_resu
 					display_result.erase("screenshot_b64");
 					display_result["screenshot"] = "<image>";
 					body_content += vformat("\nResult:\n%s", JSON::stringify(display_result, "  ", false));
+				} else if (result.has("screenshots") && result["screenshots"].get_type() == Variant::ARRAY) {
+					// Multi-screenshot case: pull the first b64 for the preview thumbnail
+					// (body_screenshot is single-image), and strip every base64 from the
+					// JSON so the body text stays readable.
+					Array shots = result["screenshots"];
+					Dictionary display_result = result.duplicate();
+					Array display_shots;
+					for (int si = 0; si < shots.size(); si++) {
+						Dictionary s = shots[si];
+						if (b64.is_empty() && s.has("screenshot_b64")) {
+							b64 = s["screenshot_b64"];
+						}
+						Dictionary stripped = s.duplicate();
+						stripped.erase("screenshot_b64");
+						stripped["screenshot"] = vformat("<image %d>", si + 1);
+						display_shots.push_back(stripped);
+					}
+					display_result["screenshots"] = display_shots;
+					body_content += vformat("\nResult:\n%s", JSON::stringify(display_result, "  ", false));
 				} else {
 					body_content += vformat("\nResult:\n%s", JSON::stringify(result, "  ", false));
 				}
