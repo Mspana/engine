@@ -2995,6 +2995,50 @@ void AIStatusPanel::_on_prompt_text_changed() {
 	_update_send_button_state();
 }
 
+bool AIStatusPanel::_can_drop_data_fw(const Point2 &p_point, const Variant &p_data, Control *p_from) const {
+	if (p_data.get_type() != Variant::DICTIONARY) {
+		return false;
+	}
+	const Dictionary drag_data = p_data;
+	if (!drag_data.has("type") || !drag_data.has("files")) {
+		return false;
+	}
+	const String drag_type = drag_data["type"];
+	if (drag_type != "files" && drag_type != "files_and_dirs") {
+		return false;
+	}
+	const Vector<String> file_paths = drag_data["files"];
+	return !file_paths.is_empty();
+}
+
+void AIStatusPanel::_drop_data_fw(const Point2 &p_point, const Variant &p_data, Control *p_from) {
+	if (!prompt_edit || p_data.get_type() != Variant::DICTIONARY) {
+		return;
+	}
+	const Dictionary drag_data = p_data;
+	if (!drag_data.has("files")) {
+		return;
+	}
+	const Vector<String> file_paths = drag_data["files"];
+	if (file_paths.is_empty()) {
+		return;
+	}
+
+	// Build the snippet: paths joined by spaces, with a trailing space so the
+	// user can keep typing immediately after the drop without having to add one.
+	String snippet;
+	for (int i = 0; i < file_paths.size(); i++) {
+		if (i > 0) {
+			snippet += " ";
+		}
+		snippet += file_paths[i];
+	}
+	snippet += " ";
+
+	prompt_edit->grab_focus();
+	prompt_edit->insert_text_at_caret(snippet);
+}
+
 void AIStatusPanel::_on_prompt_gui_input(const Ref<InputEvent> &p_event) {
 	Ref<InputEventKey> key_event = p_event;
 	if (key_event.is_valid() && key_event->is_pressed()) {
@@ -4643,6 +4687,10 @@ AIStatusPanel::AIStatusPanel() {
 	prompt_edit->set_line_wrapping_mode(TextEdit::LINE_WRAPPING_BOUNDARY);
 	prompt_edit->connect("text_changed", callable_mp(this, &AIStatusPanel::_on_prompt_text_changed));
 	prompt_edit->connect("gui_input", callable_mp(this, &AIStatusPanel::_on_prompt_gui_input));
+	// Forward drag-and-drop from the FileSystem dock onto the input — drops the
+	// dragged file paths in at the caret. The TextEdit itself doesn't accept drops
+	// by default; we inherit its handling via the panel.
+	SET_DRAG_FORWARDING_CDU(prompt_edit, AIStatusPanel);
 
 	// Dark input field styling - normal state
 	Ref<StyleBoxFlat> prompt_normal;

@@ -293,6 +293,12 @@ private:
 	float _drag_start_height = 0;
 	void _on_drag_handle_gui_input(const Ref<InputEvent> &p_event);
 
+	// Drag-and-drop from the FileSystem dock onto `prompt_edit`. Accepts the
+	// FileSystemDock's "files" / "files_and_dirs" payloads and inserts each
+	// dropped path at the caret. Wired via SET_DRAG_FORWARDING_CDU.
+	bool _can_drop_data_fw(const Point2 &p_point, const Variant &p_data, Control *p_from) const;
+	void _drop_data_fw(const Point2 &p_point, const Variant &p_data, Control *p_from);
+
 	// Chat toolbar (top of panel)
 	HBoxContainer *chat_toolbar = nullptr;
 	Button *new_chat_button = nullptr;
