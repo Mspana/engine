@@ -136,9 +136,13 @@ namespace AIReadActions {
 
 Dictionary exec_list_nodes(const Dictionary &args) {
 #ifdef TOOLS_ENABLED
-	// Resolve root node.
-	Node *edited_scene_root = ai_get_edited_scene_root();
-	if (!edited_scene_root) {
+	// Resolve which scene to inspect — defaults to currently edited scene if scene_path absent.
+	String scene_path = args.get("scene_path", String());
+	Node *scene_root = ai_resolve_scene_root_from_args(args);
+	if (!scene_root) {
+		if (!scene_path.is_empty()) {
+			return ai_scene_not_open_error(scene_path);
+		}
 		return ai_create_error_result(AIErrorCodes::NO_ACTIVE_SCENE,
 			"No edited scene root");
 	}
@@ -147,9 +151,9 @@ Dictionary exec_list_nodes(const Dictionary &args) {
 
 	Node *root_node = nullptr;
 	if (root_path.is_empty()) {
-		root_node = edited_scene_root;
+		root_node = scene_root;
 	} else {
-		root_node = ai_get_node_by_path(root_path);
+		root_node = ai_get_node_by_path_in_root(scene_root, root_path);
 	}
 
 	if (!root_node) {
@@ -166,7 +170,10 @@ Dictionary exec_list_nodes(const Dictionary &args) {
 	Dictionary result_data;
 	result_data["nodes"] = nodes_info;
 	result_data["count"] = nodes_info.size();
-	result_data["root_path"] = root_path.is_empty() ? String(edited_scene_root->get_name()) : root_path;
+	result_data["root_path"] = root_path.is_empty() ? String(scene_root->get_name()) : root_path;
+	if (!scene_path.is_empty()) {
+		result_data["scene_path"] = scene_path;
+	}
 
 	return ai_create_success_result(result_data);
 #else
@@ -182,9 +189,19 @@ Dictionary exec_get_node_info(const Dictionary &args) {
 			"'node_path' must be a string");
 	}
 
+	String scene_path = args.get("scene_path", String());
+	Node *scene_root = ai_resolve_scene_root_from_args(args);
+	if (!scene_root) {
+		if (!scene_path.is_empty()) {
+			return ai_scene_not_open_error(scene_path);
+		}
+		return ai_create_error_result(AIErrorCodes::NO_ACTIVE_SCENE,
+			"No edited scene root");
+	}
+
 	String node_path = args["node_path"];
 
-	Node *node = ai_get_node_by_path(node_path);
+	Node *node = ai_get_node_by_path_in_root(scene_root, node_path);
 	if (!node) {
 		return ai_node_not_found_error(node_path);
 	}
@@ -255,8 +272,12 @@ Dictionary exec_find_nodes_by_type(const Dictionary &args) {
 			"'type_name' must be a string");
 	}
 
-	Node *edited_scene_root = ai_get_edited_scene_root();
-	if (!edited_scene_root) {
+	String scene_path = args.get("scene_path", String());
+	Node *scene_root = ai_resolve_scene_root_from_args(args);
+	if (!scene_root) {
+		if (!scene_path.is_empty()) {
+			return ai_scene_not_open_error(scene_path);
+		}
 		return ai_create_error_result(AIErrorCodes::NO_ACTIVE_SCENE,
 			"No edited scene root");
 	}
@@ -265,7 +286,7 @@ Dictionary exec_find_nodes_by_type(const Dictionary &args) {
 	StringName type_name = StringName(type_name_str);
 
 	Array found_nodes;
-	ai_find_nodes_by_type_dfs(edited_scene_root, edited_scene_root, type_name, found_nodes);
+	ai_find_nodes_by_type_dfs(scene_root, scene_root, type_name, found_nodes);
 
 	int count = found_nodes.size();
 	print_line(vformat("AI: Found %d node(s) of type '%s':", count, type_name_str));
@@ -280,6 +301,9 @@ Dictionary exec_find_nodes_by_type(const Dictionary &args) {
 	result_data["nodes"] = found_nodes;
 	result_data["count"] = count;
 	result_data["type_name"] = type_name_str;
+	if (!scene_path.is_empty()) {
+		result_data["scene_path"] = scene_path;
+	}
 
 	return ai_create_success_result(result_data);
 #else

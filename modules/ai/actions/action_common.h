@@ -8,6 +8,7 @@
 #include "core/string/ustring.h"
 #include "core/variant/array.h"
 #include "core/variant/dictionary.h"
+#include "core/variant/typed_array.h"
 #include "editor/editor_interface.h"
 #include "editor/editor_undo_redo_manager.h"
 #include "scene/main/node.h"
@@ -26,12 +27,43 @@ static inline Node *ai_get_edited_scene_root() {
 	return ei->get_edited_scene_root();
 }
 
-// Resolves a node path relative to the edited scene root.
-// Returns nullptr if the scene root or node is not found.
-// Forgiveness: if the path begins with the scene root's own name (e.g. "Main/Player"
-// when root is "Main"), strips that prefix and retries with "Player".
-static inline Node *ai_get_node_by_path(const String &node_path) {
-	Node *root = ai_get_edited_scene_root();
+// Looks up an *already-open* scene by its file path (e.g. "res://main.tscn") among
+// the editor's currently open scene tabs and returns its root node. Returns nullptr
+// if no open tab matches. Does NOT load scenes from disk — the caller must open the
+// scene first if they want to inspect it. This avoids the side-effects (autoloads,
+// resource refcount, dirty markers) of an implicit on-demand scene load.
+static inline Node *ai_get_open_scene_root_by_path(const String &p_scene_path) {
+	EditorInterface *ei = EditorInterface::get_singleton();
+	if (!ei || p_scene_path.is_empty()) {
+		return nullptr;
+	}
+	PackedStringArray paths = ei->get_open_scenes();
+	TypedArray<Node> roots = ei->get_open_scene_roots();
+	const int n = MIN(paths.size(), roots.size());
+	for (int i = 0; i < n; i++) {
+		if (paths[i] == p_scene_path) {
+			Object *obj = roots[i];
+			return Object::cast_to<Node>(obj);
+		}
+	}
+	return nullptr;
+}
+
+// Reads `args["scene_path"]` (optional). If empty/absent, returns the currently edited
+// scene root. If non-empty, looks up the matching open scene tab. Returns nullptr if
+// the requested scene isn't open — caller should emit an error pointing the user at
+// the available open scenes.
+static inline Node *ai_resolve_scene_root_from_args(const Dictionary &args) {
+	String scene_path = args.get("scene_path", String());
+	if (scene_path.is_empty()) {
+		return ai_get_edited_scene_root();
+	}
+	return ai_get_open_scene_root_by_path(scene_path);
+}
+
+// Resolves a node path relative to a given root, applying the same forgiveness rules
+// as ai_get_node_by_path. Returns nullptr if root is null or no descendant matches.
+static inline Node *ai_get_node_by_path_in_root(Node *root, const String &node_path) {
 	if (!root) {
 		return nullptr;
 	}
@@ -60,7 +92,6 @@ static inline Node *ai_get_node_by_path(const String &node_path) {
 	}
 
 	// Forgiveness: path may include root name as prefix, e.g. "Main/Player" when root is "Main".
-	// Strip it and retry.
 	if (relative_path.begins_with(root_name + "/")) {
 		String stripped = relative_path.substr(root_name.length() + 1);
 		result = root->get_node_or_null(NodePath(stripped));
@@ -70,6 +101,14 @@ static inline Node *ai_get_node_by_path(const String &node_path) {
 	}
 
 	return nullptr;
+}
+
+// Resolves a node path relative to the edited scene root.
+// Returns nullptr if the scene root or node is not found.
+// Forgiveness: if the path begins with the scene root's own name (e.g. "Main/Player"
+// when root is "Main"), strips that prefix and retries with "Player".
+static inline Node *ai_get_node_by_path(const String &node_path) {
+	return ai_get_node_by_path_in_root(ai_get_edited_scene_root(), node_path);
 }
 
 // Returns true if the given node is the edited scene root.
@@ -124,6 +163,20 @@ static inline Array ai_get_node_warnings(Node *p_node) {
 		result.push_back(warnings[i]);
 	}
 	return result;
+}
+
+// Builds the standard "scene not open" error result for tools that take an optional
+// scene_path. Lists currently open scenes so the model can self-correct.
+static inline Dictionary ai_scene_not_open_error(const String &p_requested_path) {
+	EditorInterface *ei = EditorInterface::get_singleton();
+	PackedStringArray open_paths = ei ? ei->get_open_scenes() : PackedStringArray();
+	Dictionary details;
+	details["requested_scene_path"] = p_requested_path;
+	details["open_scenes"] = open_paths;
+	details["hint"] = "scene_path must match the file path of a currently open scene tab. Open the scene first (open_scene tool) or omit scene_path to use the active scene.";
+	return ai_create_error_result("no_active_scene",
+		vformat("Scene '%s' is not open in the editor.", p_requested_path),
+		details);
 }
 
 // Create a node-not-found error with scene root context to help the model self-correct.

@@ -361,23 +361,26 @@
 {
 	Dictionary props;
 	props["root_path"] = _make_prop("string", "Root node path to list from (optional)");
+	props["scene_path"] = _make_prop("string", "Scene file to inspect, e.g. 'res://main.tscn' (optional). Must be a currently OPEN scene tab — does not load from disk. Defaults to the active scene.");
 	Array req;
-	tools.push_back(_make_tool("list_nodes", "List nodes in the current scene tree", props, req));
+	tools.push_back(_make_tool("list_nodes", "List nodes in a scene tree. Defaults to the active scene; pass scene_path to inspect any other open scene without switching tabs.", props, req));
 }
 {
 	Dictionary props;
 	props["node_path"] = _make_prop("string", "Path of the node to inspect");
 	props["resource_depth"] = _make_prop("integer", "Resource inspection depth (0=type only, 1=primitives, 2+=recurse, -1=unlimited; default 1)");
+	props["scene_path"] = _make_prop("string", "Scene file the node lives in, e.g. 'res://main.tscn' (optional). Must be a currently OPEN scene tab. Defaults to the active scene.");
 	Array req;
 	req.push_back("node_path");
-	tools.push_back(_make_tool("get_node_info", "Get detailed information about a single node (properties, sub_resources, warnings)", props, req));
+	tools.push_back(_make_tool("get_node_info", "Get detailed information about a single node (properties, sub_resources, warnings). Defaults to the active scene; pass scene_path to inspect a node in any other open scene.", props, req));
 }
 {
 	Dictionary props;
 	props["type_name"] = _make_prop("string", "Node type to search for (e.g. CharacterBody2D)");
+	props["scene_path"] = _make_prop("string", "Scene file to search, e.g. 'res://main.tscn' (optional). Must be a currently OPEN scene tab. Defaults to the active scene.");
 	Array req;
 	req.push_back("type_name");
-	tools.push_back(_make_tool("find_nodes_by_type", "Find all nodes of a specific type in the scene tree", props, req));
+	tools.push_back(_make_tool("find_nodes_by_type", "Find all nodes of a specific type in a scene tree. Defaults to the active scene; pass scene_path to search any other open scene without switching tabs.", props, req));
 }
 {
 	Dictionary props;
