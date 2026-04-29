@@ -394,6 +394,12 @@ void EditorNode::shortcut_input(const Ref<InputEvent> &p_event) {
 			_open_command_palette();
 		} else if (ED_IS_SHORTCUT("editor/toggle_last_opened_bottom_panel", p_event)) {
 			bottom_panel->toggle_last_opened_bottom_panel();
+		} else if (ED_IS_SHORTCUT("editor/zoom_in", p_event)) {
+			_apply_runtime_editor_zoom(0.1f, false);
+		} else if (ED_IS_SHORTCUT("editor/zoom_out", p_event)) {
+			_apply_runtime_editor_zoom(-0.1f, false);
+		} else if (ED_IS_SHORTCUT("editor/zoom_reset", p_event)) {
+			_apply_runtime_editor_zoom(1.0f, true);
 		} else {
 			is_handled = false;
 		}
@@ -407,6 +413,44 @@ void EditorNode::shortcut_input(const Ref<InputEvent> &p_event) {
 void EditorNode::_update_vsync_mode() {
 	const DisplayServer::VSyncMode window_vsync_mode = DisplayServer::VSyncMode(int(EDITOR_GET("interface/editor/vsync_mode")));
 	DisplayServer::get_singleton()->window_set_vsync_mode(window_vsync_mode);
+}
+
+void EditorNode::_apply_runtime_editor_zoom(float p_delta_or_target, bool p_is_reset) {
+	// `interface/editor/runtime_zoom_factor` is a render-time multiplier on top of
+	// the chosen `display_scale`/`custom_display_scale`. It is plumbed through
+	// Window::content_scale_factor so changing it does not invalidate the editor
+	// theme — no restart needed, unlike the existing display_scale settings.
+	float current = float(EDITOR_GET("interface/editor/runtime_zoom_factor"));
+	if (current <= 0.0f) {
+		current = 1.0f;
+	}
+	float target = p_is_reset ? p_delta_or_target : (current + p_delta_or_target);
+	target = CLAMP(target, 0.5f, 3.0f);
+	target = Math::snapped(target, 0.05f); // Avoid float drift across many key presses.
+
+	if (Math::is_equal_approx(target, current)) {
+		return;
+	}
+
+	EditorSettings::get_singleton()->set("interface/editor/runtime_zoom_factor", target);
+
+	Window *root_window = get_tree() ? get_tree()->get_root() : nullptr;
+	if (root_window) {
+		root_window->set_content_scale_factor(target);
+	}
+	print_line(vformat("EditorNode: runtime editor zoom set to %.2fx", target));
+}
+
+void EditorNode::_refresh_runtime_editor_zoom_from_settings() {
+	float factor = float(EDITOR_GET("interface/editor/runtime_zoom_factor"));
+	if (factor <= 0.0f) {
+		factor = 1.0f;
+	}
+	factor = CLAMP(factor, 0.5f, 3.0f);
+	Window *root_window = get_tree() ? get_tree()->get_root() : nullptr;
+	if (root_window) {
+		root_window->set_content_scale_factor(factor);
+	}
 }
 
 void EditorNode::_update_from_settings() {
@@ -805,6 +849,9 @@ void EditorNode::_notification(int p_what) {
 			RenderingServer::get_singleton()->viewport_set_disable_2d(get_scene_root()->get_viewport_rid(), true);
 			RenderingServer::get_singleton()->viewport_set_environment_mode(get_viewport()->get_viewport_rid(), RenderingServer::VIEWPORT_ENVIRONMENT_DISABLED);
 			DisplayServer::get_singleton()->screen_set_keep_on(EDITOR_GET("interface/editor/keep_screen_on"));
+
+			// Re-apply the user's saved Ctrl+= zoom across editor restarts.
+			_refresh_runtime_editor_zoom_from_settings();
 
 			feature_profile_manager->notify_changed();
 
@@ -7647,6 +7694,14 @@ EditorNode::EditorNode() {
 	ED_SHORTCUT("editor/next_tab", TTRC("Next Scene Tab"), KeyModifierMask::CTRL + Key::TAB);
 	ED_SHORTCUT("editor/prev_tab", TTRC("Previous Scene Tab"), KeyModifierMask::CTRL + KeyModifierMask::SHIFT + Key::TAB);
 	ED_SHORTCUT("editor/filter_files", TTRC("Focus FileSystem Filter"), KeyModifierMask::CMD_OR_CTRL + KeyModifierMask::ALT + Key::P);
+
+	// Runtime editor zoom (Cursor-IDE style). Two bindings each for zoom_in/out so
+	// both the Equal-key and the dedicated Plus key (numeric keypad) work.
+	ED_SHORTCUT_ARRAY("editor/zoom_in", TTRC("Zoom Editor In"),
+		{ int32_t(KeyModifierMask::CMD_OR_CTRL + Key::EQUAL), int32_t(KeyModifierMask::CMD_OR_CTRL + Key::KP_ADD) });
+	ED_SHORTCUT_ARRAY("editor/zoom_out", TTRC("Zoom Editor Out"),
+		{ int32_t(KeyModifierMask::CMD_OR_CTRL + Key::MINUS), int32_t(KeyModifierMask::CMD_OR_CTRL + Key::KP_SUBTRACT) });
+	ED_SHORTCUT("editor/zoom_reset", TTRC("Reset Editor Zoom"), KeyModifierMask::CMD_OR_CTRL + Key::KEY_0);
 
 	command_palette = EditorCommandPalette::get_singleton();
 	command_palette->set_title(TTR("Command Palette"));

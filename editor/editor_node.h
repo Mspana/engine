@@ -600,6 +600,13 @@ private:
 
 	void _update_vsync_mode();
 	void _update_from_settings();
+
+	// Runtime editor zoom (Cursor-IDE style Ctrl+= / Ctrl+- / Ctrl+0).
+	// Applied via Window::content_scale_factor on the root window — purely a
+	// render-time multiplier on top of the chosen `interface/editor/display_scale`,
+	// so it does not require a theme rebuild or restart.
+	void _apply_runtime_editor_zoom(float p_delta_or_target, bool p_is_reset);
+	void _refresh_runtime_editor_zoom_from_settings();
 	void _gdextensions_reloaded();
 
 	void _renderer_selected(int);
