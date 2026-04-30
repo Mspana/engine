@@ -3119,7 +3119,13 @@ String ClarifaiProvider::get_default_base_url() const {
 }
 
 String ClarifaiProvider::get_default_model() const {
-	return "https://clarifai.com/moonshotai/chat-completion/models/Kimi-K2_6/versions/8012c288f1854540b50bb336872d62e7";
+	// Pinned to the version Clarifai currently routes to community (shared) nodepools.
+	// Older SHA 8012c288f1854540b50bb336872d62e7 was reclassified as local-dev only
+	// and started returning HTTP 400 ("Shared Nodepools are not allowed for local-dev
+	// models"). If this happens again, check the dashboard at
+	// https://clarifai.com/moonshotai/chat-completion/models/Kimi-K2_6 for the
+	// current published version.
+	return "https://clarifai.com/moonshotai/chat-completion/models/Kimi-K2_6/versions/2280341feaf14301a1d7b3a52f0e3f29";
 }
 
 String ClarifaiProvider::get_request_host() const {
