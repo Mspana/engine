@@ -277,6 +277,34 @@ public:
 	~ClarifaiProvider();
 };
 
+// Moonshot (Kimi) Provider — first-party host for Kimi models at api.moonshot.ai.
+// Unlike the DeepInfra/Parasail/Clarifai rehosts (which reach Kimi through
+// third-party infrastructure), this talks to Moonshot AI directly via their
+// OpenAI-compatible chat completions endpoint, using native model IDs
+// (e.g. "kimi-k2.6") and a MOONSHOT_API_KEY. Only the transport hooks differ
+// from OpenAIProvider; everything else is inherited.
+class MoonshotProvider : public OpenAIProvider {
+	GDCLASS(MoonshotProvider, OpenAIProvider);
+
+protected:
+	static void _bind_methods();
+
+public:
+	virtual String get_default_base_url() const override;
+	virtual String get_default_model() const override;
+	virtual String get_request_host() const override;
+	virtual String get_request_path() const override;
+	virtual String get_provider_name() const override { return "moonshot"; }
+
+	// Kimi K3 only accepts temperature == 1; these overrides force it for that
+	// model (the API 400s on any other value) while leaving K2.6 untouched.
+	virtual Dictionary build_request_body(const String &user_prompt, const String &context_block = "") const override;
+	virtual Dictionary build_request_body_with_messages(const Array &p_messages, const String &context_block = "") const override;
+
+	MoonshotProvider();
+	~MoonshotProvider();
+};
+
 // Dummy Provider (for testing/simulation)
 class DummyProvider : public AIProvider {
 	GDCLASS(DummyProvider, AIProvider);

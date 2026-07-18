@@ -578,6 +578,8 @@ Vector<AIProvider::ModelEntry> AIProvider::get_available_models() {
 	models.push_back({ "moonshotai/Kimi-K2.5", "Kimi K2.5", "deepinfra" });
 	models.push_back({ "moonshotai/Kimi-K2.6", "Kimi K2.6 (Parasail)", "parasail" });
 	models.push_back({ "clarifai/Kimi-K2.6", "Kimi K2.6 (Clarifai)", "clarifai" });
+	models.push_back({ "kimi-k2.6", "Kimi K2.6 (Moonshot)", "moonshot" });
+	models.push_back({ "kimi-k3", "Kimi K3 (Moonshot)", "moonshot" });
 	return models;
 }
 
@@ -621,6 +623,14 @@ int AIProvider::get_context_window_tokens(const String &p_model) {
 	if (p_model == "moonshotai/Kimi-K2.5" || p_model == "moonshotai/Kimi-K2.6" ||
 		p_model == "clarifai/Kimi-K2.6") {
 		return 262144; // 256k
+	}
+
+	// Moonshot (Kimi) first-party models
+	if (p_model == "kimi-k2.6" || p_model == "kimi-k2.5") {
+		return 262144; // 256k
+	}
+	if (p_model == "kimi-k3") {
+		return 1048576; // 1M
 	}
 
 	// Anthropic Claude
@@ -669,7 +679,33 @@ bool AIProvider::model_supports_vision(const String &p_model) {
 		p_model == "clarifai/Kimi-K2.6") {
 		return true;
 	}
+	// Moonshot (Kimi) first-party — K2.6 and K3 both accept image + text input,
+	// including images inside tool-role messages (verified live against
+	// api.moonshot.ai). The K3 docs page omits vision, but the API answers image
+	// questions correctly, so trust the wire behavior over the docs.
+	if (p_model == "kimi-k2.6" || p_model == "kimi-k3") {
+		return true;
+	}
 	return false;
+}
+
+// Coerce each tool_call's "index" field to an integer. Godot's JSON parser reads
+// every number as a double, so an echoed assistant tool_call carries
+// "index": 0.0. Permissive hosts (OpenAI, x.ai) ignore it, but strict ones —
+// notably Moonshot's Kimi K3 — reject a float for this int-typed field with
+// HTTP 400 ("the messages.tool_calls.index field ... is illegal"). Returns a new
+// array of shallow-copied dicts so the stored conversation history is not mutated.
+static Array _sanitize_tool_calls_index(const Array &p_tool_calls) {
+	Array out;
+	for (int i = 0; i < p_tool_calls.size(); i++) {
+		Dictionary tc = ((Dictionary)p_tool_calls[i]).duplicate();
+		if (tc.has("index")) {
+			int64_t idx = tc["index"];
+			tc["index"] = idx;
+		}
+		out.push_back(tc);
+	}
+	return out;
 }
 
 // ============================================================================
@@ -1047,7 +1083,7 @@ Dictionary OpenAIProvider::build_request_body_with_messages(const Array &p_messa
 			} else {
 				out_msg["content"] = Variant(); // null
 			}
-			out_msg["tool_calls"] = in_msg["tool_calls"];
+			out_msg["tool_calls"] = _sanitize_tool_calls_index(in_msg["tool_calls"]);
 			messages.push_back(out_msg);
 		} else {
 			if (has_images) {
@@ -2159,7 +2195,7 @@ Dictionary XAIProvider::build_request_body_with_messages(const Array &p_messages
 			} else {
 				out_msg["content"] = Variant(); // null
 			}
-			out_msg["tool_calls"] = in_msg["tool_calls"];
+			out_msg["tool_calls"] = _sanitize_tool_calls_index(in_msg["tool_calls"]);
 			messages.push_back(out_msg);
 		} else if (role == "user") {
 			// User message — handle images if present
@@ -3145,6 +3181,71 @@ Dictionary ClarifaiProvider::build_request_body(const String &user_prompt, const
 Dictionary ClarifaiProvider::build_request_body_with_messages(const Array &p_messages, const String &context_block) const {
 	Dictionary body = OpenAIProvider::build_request_body_with_messages(p_messages, context_block);
 	body["model"] = get_default_model();
+	return body;
+}
+
+// ============================================================================
+// MoonshotProvider Implementation
+// ============================================================================
+//
+// Moonshot AI (api.moonshot.ai) is the first-party host for Kimi models, behind
+// an OpenAI-compatible chat completions endpoint at /v1/chat/completions. Unlike
+// the DeepInfra/Parasail/Clarifai rehosts, model IDs here are Moonshot's native
+// names (e.g. "kimi-k2.6") and the key is MOONSHOT_API_KEY. The request body,
+// response shape, tools array, and vision encoding all match OpenAI, so this
+// subclass overrides only the transport hooks and inherits everything else.
+// (K2.6's reasoning_content quirk when thinking mode is on is already handled in
+// OpenAIProvider's base parsers, so it works here too.)
+
+MoonshotProvider::MoonshotProvider() : OpenAIProvider() {
+	model = get_default_model();
+	base_url = get_default_base_url();
+
+	String env_key = load_api_key_from_env("MOONSHOT_API_KEY");
+	if (!env_key.is_empty()) {
+		api_key = env_key;
+	}
+}
+
+MoonshotProvider::~MoonshotProvider() {
+}
+
+void MoonshotProvider::_bind_methods() {
+}
+
+String MoonshotProvider::get_default_base_url() const {
+	return "https://api.moonshot.ai";
+}
+
+String MoonshotProvider::get_default_model() const {
+	return "kimi-k3";
+}
+
+String MoonshotProvider::get_request_host() const {
+	return "api.moonshot.ai";
+}
+
+String MoonshotProvider::get_request_path() const {
+	return "/v1/chat/completions";
+}
+
+// Kimi K3 rejects any temperature other than 1 with HTTP 400
+// ("invalid temperature: only 1 is allowed for this model"). The app default is
+// 0.7, so force temperature to 1 for K3 here. Other Moonshot models (e.g. K2.6)
+// accept the normal range and are left as the base class built them.
+Dictionary MoonshotProvider::build_request_body(const String &user_prompt, const String &context_block) const {
+	Dictionary body = OpenAIProvider::build_request_body(user_prompt, context_block);
+	if (model.begins_with("kimi-k3")) {
+		body["temperature"] = 1;
+	}
+	return body;
+}
+
+Dictionary MoonshotProvider::build_request_body_with_messages(const Array &p_messages, const String &context_block) const {
+	Dictionary body = OpenAIProvider::build_request_body_with_messages(p_messages, context_block);
+	if (model.begins_with("kimi-k3")) {
+		body["temperature"] = 1;
+	}
 	return body;
 }
 

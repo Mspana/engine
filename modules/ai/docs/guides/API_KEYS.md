@@ -17,6 +17,7 @@ $env:ANTHROPIC_API_KEY="sk-ant-..."
 $env:DEEPINFRA_API_KEY="..."
 $env:PARASAIL_API_KEY="..."
 $env:CLARIFAI_API_KEY="..."
+$env:MOONSHOT_API_KEY="..."
 ```
 
 **Linux/Mac:**
@@ -28,6 +29,7 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 export DEEPINFRA_API_KEY="..."
 export PARASAIL_API_KEY="..."
 export CLARIFAI_API_KEY="..."
+export MOONSHOT_API_KEY="..."
 ```
 
 ### Option 2: .env File (Recommended for Development)
@@ -46,6 +48,7 @@ export CLARIFAI_API_KEY="..."
    DEEPINFRA_API_KEY=xxxxxxxxxxxxx
    PARASAIL_API_KEY=xxxxxxxxxxxxx
    CLARIFAI_API_KEY=xxxxxxxxxxxxx
+   MOONSHOT_API_KEY=xxxxxxxxxxxxx
    ```
 
 3. **Important:** Add `.env` to your project's `.gitignore` to avoid committing secrets:
@@ -87,6 +90,7 @@ The `.env` file is parsed simply:
 - **DeepInfra** (Kimi K2.5 and other open-source models): `DEEPINFRA_API_KEY`
 - **Parasail** (Kimi K2.6, multimodal): `PARASAIL_API_KEY`
 - **Clarifai** (Kimi K2.6, faster alternate host): `CLARIFAI_API_KEY`
+- **Moonshot** (Kimi K2.6, first-party): `MOONSHOT_API_KEY`
 
 ## Security Best Practices
 
@@ -105,6 +109,7 @@ The `.env` file is parsed simply:
 - **DeepInfra**: https://deepinfra.com/dash/api_keys
 - **Parasail**: https://parasail.io/
 - **Clarifai**: https://clarifai.com/settings/security
+- **Moonshot (Kimi)**: https://platform.moonshot.ai/console/api-keys
 
 ## Example Usage
 

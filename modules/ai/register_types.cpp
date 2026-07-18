@@ -30,7 +30,8 @@ void initialize_ai_module(ModuleInitializationLevel p_level) {
 		ClassDB::register_class<DeepInfraProvider>();
 		ClassDB::register_class<ParasailProvider>();
 		ClassDB::register_class<ClarifaiProvider>();
-		
+		ClassDB::register_class<MoonshotProvider>();
+
 		// Register retrieval class
 		ClassDB::register_class<RetrievalIndex>();
 
