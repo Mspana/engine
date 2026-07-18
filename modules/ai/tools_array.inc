@@ -391,7 +391,7 @@
 }
 {
 	Dictionary props;
-	props["directory"] = _make_prop("string", "Directory to list (e.g. res://scripts)");
+	props["directory"] = _make_prop("string", "Directory to list (e.g. res://scripts). Optional; defaults to res:// (project root).");
 	props["depth"] = _make_prop("integer", "Recursion depth (default 1 = top level only, 0 = full recursion)");
 	props["glob"] = _make_prop("string", "File filter pattern (e.g. '*.gd')");
 	props["include_hidden"] = _make_prop("boolean", "Include dot-prefixed files/dirs (default false)");

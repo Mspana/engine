@@ -350,12 +350,19 @@ static void _collect_tree(const String &p_dir, int p_current_depth, int p_max_de
 
 Dictionary exec_list_files(const Dictionary &args) {
 #ifdef TOOLS_ENABLED
-	if (!args.has("directory") || args["directory"].get_type() != Variant::STRING) {
+	// directory is optional (see tools_array.inc — it is not in the required list)
+	// and defaults to the project root. Some models call list_files with only a
+	// depth/glob and no directory; treat a missing or empty value as "res://"
+	// rather than erroring. A present-but-non-string value is still a mistake.
+	if (args.has("directory") && args["directory"].get_type() != Variant::STRING) {
 		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
 			"'directory' must be a string");
 	}
 
-	String directory = args["directory"];
+	String directory = "res://";
+	if (args.has("directory") && !String(args["directory"]).is_empty()) {
+		directory = args["directory"];
+	}
 
 	// Validate directory starts with "res://"
 	if (!directory.begins_with("res://")) {
@@ -412,12 +419,13 @@ Dictionary exec_list_files(const Dictionary &args) {
 
 	// Build resolved args for display (fills in defaults, normalises float depth → int)
 	// Defaulted params are shown as strings with "(default)" annotation.
+	bool dir_defaulted = !args.has("directory") || String(args["directory"]).is_empty();
 	bool depth_defaulted = !args.has("depth");
 	bool glob_defaulted = !args.has("glob");
 	bool hidden_defaulted = !args.has("include_hidden");
 
 	Dictionary display_args;
-	display_args["directory"] = directory;
+	display_args["directory"] = dir_defaulted ? Variant(vformat("%s (default)", directory)) : Variant(directory);
 	display_args["depth"] = depth_defaulted ? Variant(vformat("%d (default)", max_depth)) : Variant(max_depth);
 	display_args["glob"] = glob_defaulted ? Variant(String("null (default)")) : (suffix_filter.is_empty() ? Variant() : Variant(suffix_filter));
 	display_args["include_hidden"] = hidden_defaulted ? Variant(vformat("%s (default)", include_hidden ? "true" : "false")) : Variant(include_hidden);
