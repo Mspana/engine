@@ -77,9 +77,17 @@ static bool ai_set_property_values_match(const Variant &actual, const Variant &t
 		return ao == to_obj; // pointer identity fallback
 	}
 
-	// Float: epsilon comparison
-	if (ta == Variant::FLOAT && tt == Variant::FLOAT) {
-		return Math::is_equal_approx((float)actual, (float)target);
+	// Numeric: compare INT and FLOAT interchangeably with an epsilon. Tool
+	// arguments arrive from JSON as FLOAT (e.g. 4.0), but many properties are
+	// INT-typed (enums, flags, sizes, theme constants) so the engine stores an
+	// INT (4). Godot's Variant has no cross-type INT/FLOAT equality evaluator, so
+	// a strict `actual == target` treats 4 and 4.0 as different — producing
+	// spurious "did not take the target value" failures that make the model retry
+	// until it exhausts its turn budget. Comparing the numeric values fixes this
+	// while still catching real clamps/rejections (e.g. target 4, actual 3).
+	if ((ta == Variant::INT || ta == Variant::FLOAT) &&
+			(tt == Variant::INT || tt == Variant::FLOAT)) {
+		return Math::is_equal_approx((double)actual, (double)target);
 	}
 
 	// Color: component-wise with tolerance
