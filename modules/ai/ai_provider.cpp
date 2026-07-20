@@ -2418,12 +2418,27 @@ Dictionary AnthropicProvider::build_request_body(const String &user_prompt, cons
 	body["model"] = model;
 	body["max_tokens"] = max_tokens;
 
-	// System prompt as top-level field
-	String system_content = get_system_prompt();
-	if (!context_block.is_empty()) {
-		system_content += context_block;
+	// System prompt as top-level field, as a content-block array with a
+	// prompt-caching breakpoint on the static prompt. The per-request context
+	// (retrieval snippets) goes in its own block AFTER the breakpoint so the
+	// static prefix stays cacheable across requests.
+	{
+		Dictionary cache_ctrl;
+		cache_ctrl["type"] = "ephemeral";
+		Array system_blocks;
+		Dictionary sys_block;
+		sys_block["type"] = "text";
+		sys_block["text"] = get_system_prompt();
+		sys_block["cache_control"] = cache_ctrl;
+		system_blocks.push_back(sys_block);
+		if (!context_block.is_empty()) {
+			Dictionary ctx_blk;
+			ctx_blk["type"] = "text";
+			ctx_blk["text"] = context_block;
+			system_blocks.push_back(ctx_blk);
+		}
+		body["system"] = system_blocks;
 	}
-	body["system"] = system_content;
 
 	Array messages;
 	Dictionary user_msg;
@@ -2613,17 +2628,74 @@ void AnthropicProvider::_perform_request(const String &user_prompt, const String
 	memdelete(http_client);
 }
 
+// Attach a prompt-caching breakpoint to the last content block of the last message.
+// Anthropic caching is prefix-based and opt-in: this marker makes the whole
+// conversation up to this point readable from cache on the next request (each
+// loop iteration's breakpoint becomes the next iteration's read point).
+static void _anthropic_mark_last_block_cached(Array &r_messages) {
+	if (r_messages.is_empty()) {
+		return;
+	}
+	Dictionary cache_ctrl;
+	cache_ctrl["type"] = "ephemeral";
+
+	Dictionary last_msg = r_messages[r_messages.size() - 1];
+	Variant content = last_msg.get("content", Variant());
+	if (content.get_type() == Variant::ARRAY) {
+		Array blocks = content;
+		if (blocks.is_empty()) {
+			return;
+		}
+		Dictionary last_block = blocks[blocks.size() - 1];
+		last_block["cache_control"] = cache_ctrl;
+		blocks[blocks.size() - 1] = last_block;
+		last_msg["content"] = blocks;
+	} else if (content.get_type() == Variant::STRING) {
+		String text = content;
+		if (text.is_empty()) {
+			return; // Empty text blocks are rejected by the API — skip the breakpoint.
+		}
+		Dictionary text_block;
+		text_block["type"] = "text";
+		text_block["text"] = text;
+		text_block["cache_control"] = cache_ctrl;
+		Array blocks;
+		blocks.push_back(text_block);
+		last_msg["content"] = blocks;
+	} else {
+		return;
+	}
+	r_messages[r_messages.size() - 1] = last_msg;
+}
+
 Dictionary AnthropicProvider::build_request_body_with_messages(const Array &p_messages, const String &context_block) const {
 	Dictionary body;
 	body["model"] = model;
 	body["max_tokens"] = max_tokens;
 
-	// System prompt as top-level field (Anthropic keeps it separate from messages)
-	String system_content = get_system_prompt_native_tools();
-	if (!context_block.is_empty()) {
-		system_content += context_block;
+	// System prompt as top-level field (Anthropic keeps it separate from messages).
+	// Sent as a content-block array so a prompt-caching breakpoint can be attached.
+	// Render order is tools -> system -> messages, so this single marker caches the
+	// tool schemas AND the system prompt together.
+	{
+		Dictionary cache_ctrl;
+		cache_ctrl["type"] = "ephemeral";
+		Array system_blocks;
+		Dictionary sys_block;
+		sys_block["type"] = "text";
+		sys_block["text"] = get_system_prompt_native_tools();
+		sys_block["cache_control"] = cache_ctrl;
+		system_blocks.push_back(sys_block);
+		if (!context_block.is_empty()) {
+			// Per-request context goes in its own block AFTER the breakpoint so it
+			// cannot invalidate the cached static prefix.
+			Dictionary ctx_blk;
+			ctx_blk["type"] = "text";
+			ctx_blk["text"] = context_block;
+			system_blocks.push_back(ctx_blk);
+		}
+		body["system"] = system_blocks;
 	}
-	body["system"] = system_content;
 
 	// Convert OpenAI tool definitions to Anthropic format
 	Array openai_tools = AIProvider::build_tools_array();
@@ -2814,6 +2886,10 @@ Dictionary AnthropicProvider::build_request_body_with_messages(const Array &p_me
 		}
 		merged.push_back(msg);
 	}
+
+	// Second caching breakpoint: end of the conversation so far. History is
+	// append-only, so on the next request everything up to here is a cache read.
+	_anthropic_mark_last_block_cached(merged);
 
 	body["messages"] = merged;
 
@@ -3011,15 +3087,24 @@ void AnthropicProvider::_perform_request_with_messages(const Array &p_messages, 
 	choices.push_back(choice);
 	openai_response["choices"] = choices;
 
-	// Translate usage
+	// Translate usage. With prompt caching enabled, Anthropic's input_tokens is
+	// only the UNCACHED remainder — the full prompt is input + cache_read +
+	// cache_creation. Fold cached tokens into prompt_tokens (OpenAI semantics:
+	// prompt_tokens includes cached tokens) and keep the raw cache fields so the
+	// dashboard can report hit rates.
 	if (anthropic_response.has("usage")) {
 		Dictionary anthropic_usage = anthropic_response["usage"];
 		Dictionary usage;
 		int input_tokens = anthropic_usage.get("input_tokens", 0);
 		int output_tokens = anthropic_usage.get("output_tokens", 0);
-		usage["prompt_tokens"] = input_tokens;
+		int cache_read_tokens = anthropic_usage.get("cache_read_input_tokens", 0);
+		int cache_creation_tokens = anthropic_usage.get("cache_creation_input_tokens", 0);
+		int full_prompt_tokens = input_tokens + cache_read_tokens + cache_creation_tokens;
+		usage["prompt_tokens"] = full_prompt_tokens;
 		usage["completion_tokens"] = output_tokens;
-		usage["total_tokens"] = input_tokens + output_tokens;
+		usage["total_tokens"] = full_prompt_tokens + output_tokens;
+		usage["cache_read_input_tokens"] = cache_read_tokens;
+		usage["cache_creation_input_tokens"] = cache_creation_tokens;
 		openai_response["usage"] = usage;
 	}
 
