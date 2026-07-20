@@ -50,7 +50,7 @@ static const Vector<String> ALLOWED_ACTIONS = {
     "create_node","delete_node","duplicate_node","set_property","create_resource",
     "create_script","update_script","attach_script","detach_script","rename_script","delete_script",
     "connect_signal","disconnect_signal","run_project","play_test",
-    "rename_node","reparent_node","create_scene","open_scene","save_scene","close_scene","set_main_scene",
+    "rename_node","reparent_node","create_scene","open_scene","save_scene","close_scene","set_main_scene","read_scene_file","update_scene_file",
     "get_node_info","find_nodes_by_type","list_nodes","list_files","read_script","preview_asset","set_project_setting","get_project_settings","create_autoload_singleton","remove_autoload_singleton","import_asset","delete_asset","copy_file",
     "write_dev_note",
     "update_todos",
@@ -173,6 +173,28 @@ bool AI::_validate_command_dictionary(const Dictionary &cmd, String &error_msg) 
         }
         if (!args.has("new_string") || args["new_string"].get_type() != Variant::STRING) {
             error_msg = "'update_script' requires string 'new_string'.";
+            return false;
+        }
+    } else if (action == "read_scene_file") {
+        if (!args.has("file_path") || args["file_path"].get_type() != Variant::STRING) {
+            error_msg = "'read_scene_file' requires string 'file_path'.";
+            return false;
+        }
+    } else if (action == "update_scene_file") {
+        if (!args.has("file_path") || args["file_path"].get_type() != Variant::STRING) {
+            error_msg = "'update_scene_file' requires string 'file_path'.";
+            return false;
+        }
+        if (!args.has("old_string") || args["old_string"].get_type() != Variant::STRING) {
+            error_msg = "'update_scene_file' requires string 'old_string'.";
+            return false;
+        }
+        if (!args.has("new_string") || args["new_string"].get_type() != Variant::STRING) {
+            error_msg = "'update_scene_file' requires string 'new_string'.";
+            return false;
+        }
+        if (args.has("replace_all") && args["replace_all"].get_type() != Variant::BOOL) {
+            error_msg = "'update_scene_file' optional 'replace_all' must be a bool.";
             return false;
         }
     } else if (action == "attach_script") {
@@ -543,6 +565,10 @@ Dictionary AI::execute_single_action(const Dictionary &p_action) {
         action_result = AISceneActions::exec_close_scene(action_args);
     } else if (action_name == "list_open_scenes") {
         action_result = AISceneActions::exec_list_open_scenes(action_args);
+    } else if (action_name == "read_scene_file") {
+        action_result = AISceneActions::exec_read_scene_file(action_args);
+    } else if (action_name == "update_scene_file") {
+        action_result = AISceneActions::exec_update_scene_file(action_args);
     } else if (action_name == "stop_game") {
         action_result = AISceneActions::exec_stop_game(action_args);
     } else if (action_name == "set_project_setting") {
@@ -695,7 +721,7 @@ void AI::_process_and_execute_actions(const String &ai_json_response) {
     }
 }
 
-bool AI::_was_file_read_in_history(const String &file_path) const {
+bool AI::_was_file_read_in_history(const String &file_path, const Vector<String> &p_tool_names) const {
 	if (orchestrator.is_valid()) {
 		Array history = orchestrator->get_conversation_history();
 
@@ -716,7 +742,7 @@ bool AI::_was_file_read_in_history(const String &file_path) const {
 					}
 					Dictionary func = tool_call["function"];
 					String func_name = func.get("name", "");
-					if (func_name != "read_script" && func_name != "create_script") {
+					if (!p_tool_names.has(func_name)) {
 						continue;
 					}
 					if (!func.has("arguments")) {
@@ -739,7 +765,11 @@ bool AI::_was_file_read_in_history(const String &file_path) const {
 }
 
 bool AI::was_file_read(const String &file_path) const {
-	return _was_file_read_in_history(file_path);
+	return _was_file_read_in_history(file_path, { "read_script", "create_script" });
+}
+
+bool AI::was_scene_file_read(const String &file_path) const {
+	return _was_file_read_in_history(file_path, { "read_scene_file" });
 }
 
 String AI::_get_active_scene_path() const {

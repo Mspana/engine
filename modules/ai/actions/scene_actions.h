@@ -44,6 +44,16 @@ Dictionary exec_list_open_scenes(const Dictionary &args);
 // Returns: Dictionary with was_playing bool
 Dictionary exec_stop_game(const Dictionary &args);
 
+// Reads the raw text of a .tscn scene file from disk.
+// Required args: file_path (String, res://... .tscn)
+// Returns: content, size, is_open_in_editor, has_unsaved_changes (+ staleness warning when dirty)
+Dictionary exec_read_scene_file(const Dictionary &args);
+
+// Exact string replacement in a .tscn file on disk, with pre-commit validation
+// and editor reload of the affected tab. Refuses if the scene tab has unsaved changes.
+// Required args: file_path, old_string, new_string (String). Optional: replace_all (bool)
+Dictionary exec_update_scene_file(const Dictionary &args);
+
 } // namespace AISceneActions
 
 #endif // AI_SCENE_ACTIONS_H

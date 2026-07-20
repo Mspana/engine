@@ -212,6 +212,25 @@
 	Array req;
 	tools.push_back(_make_tool("list_open_scenes", "List all currently open scene tabs in the editor", props, req));
 }
+{
+	Dictionary props;
+	props["file_path"] = _make_prop("string", "Scene file path to read (e.g. res://scenes/main.tscn). Must be a .tscn file.");
+	Array req;
+	req.push_back("file_path");
+	tools.push_back(_make_tool("read_scene_file", "Read the raw text content of a .tscn scene file from disk. Check 'has_unsaved_changes' in the result: if true, the scene is open in the editor with unsaved changes and the disk content is STALE — the scene must be saved before you can edit the file with update_scene_file.", props, req));
+}
+{
+	Dictionary props;
+	props["file_path"] = _make_prop("string", "Path of the .tscn scene file to update (e.g. res://scenes/main.tscn)");
+	props["old_string"] = _make_prop("string", "The exact text to find and replace");
+	props["new_string"] = _make_prop("string", "The replacement text (must differ from old_string)");
+	props["replace_all"] = _make_prop("boolean", "Replace all occurrences (default false)");
+	Array req;
+	req.push_back("file_path");
+	req.push_back("old_string");
+	req.push_back("new_string");
+	tools.push_back(_make_tool("update_scene_file", "Performs exact string replacement in a .tscn scene file on disk. You MUST have called read_scene_file on this file first — this tool will fail otherwise. Fails if old_string is not found or is not unique (provide more surrounding context, or set replace_all to true). Fails if the scene is open in the editor with unsaved changes — the user must save first. Never change the uid in the [gd_scene] header — such edits are rejected. The edited scene is validated by loading it BEFORE committing: on failure the file on disk is left untouched (check 'load_errors' in the error details). If the scene is open in a tab it is reloaded from disk automatically. These edits are NOT undoable with Ctrl+Z — prefer node tools (create_node, set_property, reparent_node) for small tweaks; use this for bulk or structural changes that would take many node-tool calls.", props, req));
+}
 
 // ==========================================================================
 // Project actions

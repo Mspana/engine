@@ -83,8 +83,8 @@ private:
 	// Helper to get active scene path
 	String _get_active_scene_path() const;
 
-	// Check conversation history for a prior read_script call on this file
-	bool _was_file_read_in_history(const String &file_path) const;
+	// Check conversation history for a prior call to any of the given tools on this file
+	bool _was_file_read_in_history(const String &file_path, const Vector<String> &p_tool_names) const;
 
 	// File operation helpers for UndoRedo
 	void _create_script_file(const String &abs_path, const String &content);
@@ -143,6 +143,9 @@ public:
 
 	// Check if a file was read via read_script in the current conversation
 	bool was_file_read(const String &file_path) const;
+
+	// Check if a scene file was read via read_scene_file in the current conversation
+	bool was_scene_file_read(const String &file_path) const;
 
 	// Raw API logging for dashboard
 	void log_raw_api(const String &p_direction, int p_turn, const Dictionary &p_payload,
