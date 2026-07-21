@@ -169,10 +169,11 @@ Dictionary exec_create_node(const Dictionary &args) {
 			"EditorUndoRedoManager singleton not found");
 	}
 
-	Node *edited_scene_root = ai_get_edited_scene_root();
+	Dictionary focus_error;
+	bool switched_tab = false;
+	Node *edited_scene_root = ai_focus_scene_for_mutation(args, focus_error, &switched_tab);
 	if (!edited_scene_root) {
-		return ai_create_error_result(AIErrorCodes::NO_ACTIVE_SCENE,
-			"No edited scene root");
+		return focus_error;
 	}
 
 	String node_name = args["node_name"];
@@ -216,16 +217,22 @@ Dictionary exec_create_node(const Dictionary &args) {
 	undo_redo->add_undo_method(new_node, "queue_free");
 	undo_redo->commit_action();
 
-	// Return success with details
+	// Return success with details. Paths are relative to the scene root ("" = root),
+	// matching what node tools accept — not absolute editor-tree paths.
+	String rel_node_path = String(edited_scene_root->get_path_to(new_node));
 	Dictionary result_data;
 	result_data["node_name"] = node_name;
 	result_data["node_type"] = node_type;
-	result_data["parent_path"] = parent_node->get_path();
-	result_data["node_path"] = new_node->get_path();
+	result_data["parent_path"] = parent_node == edited_scene_root ? String("") : String(edited_scene_root->get_path_to(parent_node));
+	result_data["node_path"] = rel_node_path;
+	result_data["scene_path"] = edited_scene_root->get_scene_file_path();
+	if (switched_tab) {
+		result_data["switched_scene_tab"] = true;
+	}
 	result_data["warnings"] = ai_get_node_warnings(new_node);
 	result_data["parent_warnings"] = ai_get_node_warnings(parent_node);
 
-	print_line(vformat("AI: Executed create_node. Name: %s, Type: %s, Parent: %s", node_name, node_type, parent_node->get_path()));
+	print_line(vformat("AI: Executed create_node. Name: %s, Type: %s, Scene: %s", node_name, node_type, edited_scene_root->get_scene_file_path()));
 	return ai_create_success_result(result_data);
 }
 
@@ -236,10 +243,11 @@ Dictionary exec_set_property(const Dictionary &args) {
 			"EditorUndoRedoManager singleton not found");
 	}
 
-	Node *edited_scene_root = ai_get_edited_scene_root();
+	Dictionary focus_error;
+	bool switched_tab = false;
+	Node *edited_scene_root = ai_focus_scene_for_mutation(args, focus_error, &switched_tab);
 	if (!edited_scene_root) {
-		return ai_create_error_result(AIErrorCodes::NO_ACTIVE_SCENE,
-			"No edited scene root");
+		return focus_error;
 	}
 
 	String node_path_str = args["node_path"];
@@ -278,6 +286,10 @@ Dictionary exec_set_property(const Dictionary &args) {
 		result_data["old_value"] = current_value;
 		result_data["target_value"] = value;
 		result_data["actual_value"] = actual_value;
+		result_data["scene_path"] = edited_scene_root->get_scene_file_path();
+		if (switched_tab) {
+			result_data["switched_scene_tab"] = true;
+		}
 		result_data["warnings"] = ai_get_node_warnings(target_node);
 
 		print_line(vformat("AI: Executed set_property. Node: %s, Property: %s, Value: %s", node_path_str, property_name, String(value)));
@@ -335,6 +347,10 @@ Dictionary exec_set_property(const Dictionary &args) {
 		result_data["old_value"] = old_value;
 		result_data["target_value"] = value;
 		result_data["actual_value"] = actual_value;
+		result_data["scene_path"] = edited_scene_root->get_scene_file_path();
+		if (switched_tab) {
+			result_data["switched_scene_tab"] = true;
+		}
 		result_data["warnings"] = ai_get_node_warnings(target_node);
 
 		print_line(vformat("AI: Executed set_property. Node: %s, Property: %s, Value: %s", node_path_str, property_name, String(value)));
@@ -355,10 +371,11 @@ Dictionary exec_rename_node(const Dictionary &args) {
 			"EditorUndoRedoManager singleton not found");
 	}
 
-	Node *edited_scene_root = ai_get_edited_scene_root();
+	Dictionary focus_error;
+	bool switched_tab = false;
+	Node *edited_scene_root = ai_focus_scene_for_mutation(args, focus_error, &switched_tab);
 	if (!edited_scene_root) {
-		return ai_create_error_result(AIErrorCodes::NO_ACTIVE_SCENE,
-			"No edited scene root");
+		return focus_error;
 	}
 
 	String node_path_str = args["node_path"];
@@ -388,6 +405,10 @@ Dictionary exec_rename_node(const Dictionary &args) {
 	result_data["node_path"] = node_path_str;
 	result_data["old_name"] = old_name;
 	result_data["new_name"] = new_name;
+	result_data["scene_path"] = edited_scene_root->get_scene_file_path();
+	if (switched_tab) {
+		result_data["switched_scene_tab"] = true;
+	}
 
 	print_line(vformat("AI: Executed rename_node. Path: %s, OldName: %s, NewName: %s", node_path_str, old_name, new_name));
 	return ai_create_success_result(result_data);
@@ -400,10 +421,11 @@ Dictionary exec_reparent_node(const Dictionary &args) {
 			"EditorUndoRedoManager singleton not found");
 	}
 
-	Node *edited_scene_root = ai_get_edited_scene_root();
+	Dictionary focus_error;
+	bool switched_tab = false;
+	Node *edited_scene_root = ai_focus_scene_for_mutation(args, focus_error, &switched_tab);
 	if (!edited_scene_root) {
-		return ai_create_error_result(AIErrorCodes::NO_ACTIVE_SCENE,
-			"No edited scene root");
+		return focus_error;
 	}
 
 	String node_path_str = args["node_path"];
@@ -466,14 +488,18 @@ Dictionary exec_reparent_node(const Dictionary &args) {
 
 	undo_redo->commit_action();
 
-	// Return success with details
+	// Return success with details. Parent paths are relative to the scene root ("" = root).
 	Dictionary result_data;
 	result_data["node_path"] = node_path_str;
-	result_data["old_parent_path"] = old_parent->get_path();
-	result_data["new_parent_path"] = new_parent->get_path();
+	result_data["old_parent_path"] = old_parent == edited_scene_root ? String("") : String(edited_scene_root->get_path_to(old_parent));
+	result_data["new_parent_path"] = new_parent == edited_scene_root ? String("") : String(edited_scene_root->get_path_to(new_parent));
 	result_data["old_index"] = old_index;
 	if (has_index) {
 		result_data["new_index"] = target_index;
+	}
+	result_data["scene_path"] = edited_scene_root->get_scene_file_path();
+	if (switched_tab) {
+		result_data["switched_scene_tab"] = true;
 	}
 
 	print_line(vformat("AI: Executed reparent_node. Node: %s, OldParent: %s, NewParent: %s", node_path_str, old_parent->get_name(), new_parent->get_name()));
@@ -487,10 +513,11 @@ Dictionary exec_delete_node(const Dictionary &args) {
 			"EditorUndoRedoManager singleton not found");
 	}
 
-	Node *edited_scene_root = ai_get_edited_scene_root();
+	Dictionary focus_error;
+	bool switched_tab = false;
+	Node *edited_scene_root = ai_focus_scene_for_mutation(args, focus_error, &switched_tab);
 	if (!edited_scene_root) {
-		return ai_create_error_result(AIErrorCodes::NO_ACTIVE_SCENE,
-			"No edited scene root");
+		return focus_error;
 	}
 
 	String node_path_str = args["node_path"];
@@ -528,13 +555,17 @@ Dictionary exec_delete_node(const Dictionary &args) {
 	undo_redo->add_undo_method(parent, "move_child", node, old_index);
 	undo_redo->commit_action();
 
-	// Return success with details
+	// Return success with details. Parent path is relative to the scene root ("" = root).
 	Dictionary result_data;
 	result_data["node_path"] = node_path_str;
 	result_data["node_name"] = node_name;
-	result_data["parent_path"] = parent->get_path();
+	result_data["parent_path"] = parent == edited_scene_root ? String("") : String(edited_scene_root->get_path_to(parent));
+	result_data["scene_path"] = edited_scene_root->get_scene_file_path();
+	if (switched_tab) {
+		result_data["switched_scene_tab"] = true;
+	}
 
-	print_line(vformat("AI: Executed delete_node. Node: %s, Parent: %s", node_path_str, parent->get_path()));
+	print_line(vformat("AI: Executed delete_node. Node: %s, Scene: %s", node_path_str, edited_scene_root->get_scene_file_path()));
 	return ai_create_success_result(result_data);
 }
 
@@ -545,10 +576,11 @@ Dictionary exec_duplicate_node(const Dictionary &args) {
 			"EditorUndoRedoManager singleton not found");
 	}
 
-	Node *edited_scene_root = ai_get_edited_scene_root();
+	Dictionary focus_error;
+	bool switched_tab = false;
+	Node *edited_scene_root = ai_focus_scene_for_mutation(args, focus_error, &switched_tab);
 	if (!edited_scene_root) {
-		return ai_create_error_result(AIErrorCodes::NO_ACTIVE_SCENE,
-			"No edited scene root");
+		return focus_error;
 	}
 
 	String node_path_str = args["node_path"];
@@ -603,14 +635,18 @@ Dictionary exec_duplicate_node(const Dictionary &args) {
 	undo_redo->add_undo_method(dup, "queue_free");
 	undo_redo->commit_action();
 
-	// Return success with details
+	// Return success with details. Paths are relative to the scene root ("" = root).
 	Dictionary result_data;
 	result_data["original_node_path"] = node_path_str;
 	result_data["duplicate_name"] = final_name;
-	result_data["parent_path"] = parent->get_path();
-	result_data["duplicate_path"] = dup->get_path();
+	result_data["parent_path"] = parent == edited_scene_root ? String("") : String(edited_scene_root->get_path_to(parent));
+	result_data["duplicate_path"] = String(edited_scene_root->get_path_to(dup));
+	result_data["scene_path"] = edited_scene_root->get_scene_file_path();
+	if (switched_tab) {
+		result_data["switched_scene_tab"] = true;
+	}
 
-	print_line(vformat("AI: Executed duplicate_node. Node: %s, Duplicate: %s, Parent: %s", node_path_str, final_name, parent->get_path()));
+	print_line(vformat("AI: Executed duplicate_node. Node: %s, Duplicate: %s, Scene: %s", node_path_str, final_name, edited_scene_root->get_scene_file_path()));
 	return ai_create_success_result(result_data);
 }
 
@@ -621,10 +657,11 @@ Dictionary exec_create_resource(const Dictionary &args) {
 			"EditorUndoRedoManager singleton not found");
 	}
 
-	Node *edited_scene_root = ai_get_edited_scene_root();
+	Dictionary focus_error;
+	bool switched_tab = false;
+	Node *edited_scene_root = ai_focus_scene_for_mutation(args, focus_error, &switched_tab);
 	if (!edited_scene_root) {
-		return ai_create_error_result(AIErrorCodes::NO_ACTIVE_SCENE,
-			"No edited scene root");
+		return focus_error;
 	}
 
 	if (!args.has("node_path") || args["node_path"].get_type() != Variant::STRING) {
@@ -762,6 +799,10 @@ Dictionary exec_create_resource(const Dictionary &args) {
 	result_data["property_name"] = property_name;
 	result_data["resource_type"] = resource_type;
 	result_data["old_value"] = old_value;
+	result_data["scene_path"] = edited_scene_root->get_scene_file_path();
+	if (switched_tab) {
+		result_data["switched_scene_tab"] = true;
+	}
 	result_data["warnings"] = ai_get_node_warnings(target_node);
 
 	print_line(vformat("AI: Executed create_resource. Node: %s, Property: %s, Type: %s",

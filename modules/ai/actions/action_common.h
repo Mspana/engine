@@ -208,5 +208,53 @@ namespace AIErrorCodes {
 	static const char *INTERNAL_ERROR = "internal_error";
 }
 
+// Resolves the scene a MUTATION tool should target from the optional args["scene_path"],
+// switching the focused scene tab when necessary. Mutation tools must operate on the
+// focused scene: EditorUndoRedoManager routes a node's undo history through the
+// *currently edited* scene, so mutating a background tab would push the action into the
+// global history and skip that tab's dirty-marking.
+//   - scene_path absent/empty → the currently edited scene (error if none).
+//   - scene_path == the focused scene → no-op.
+//   - scene_path is another OPEN tab → switches focus to it (synchronous).
+//   - scene_path not open → error; the model should call open_scene first.
+// Returns the target scene root, or nullptr with r_error filled.
+// r_switched_tab (optional) reports whether a tab switch happened, so tools can
+// surface it in their result.
+static inline Node *ai_focus_scene_for_mutation(const Dictionary &args, Dictionary &r_error, bool *r_switched_tab = nullptr) {
+	if (r_switched_tab) {
+		*r_switched_tab = false;
+	}
+	String scene_path = args.get("scene_path", String());
+	if (scene_path.is_empty()) {
+		Node *current = ai_get_edited_scene_root();
+		if (!current) {
+			r_error = ai_create_error_result(AIErrorCodes::NO_ACTIVE_SCENE,
+				"No edited scene root");
+		}
+		return current;
+	}
+	Node *current = ai_get_edited_scene_root();
+	if (current && current->get_scene_file_path() == scene_path) {
+		return current;
+	}
+	Node *open_root = ai_get_open_scene_root_by_path(scene_path);
+	if (!open_root) {
+		r_error = ai_scene_not_open_error(scene_path);
+		return nullptr;
+	}
+	// open_scene_from_path on an already-open path switches tabs synchronously,
+	// unless the editor is mid scene-change — verify the switch actually landed.
+	EditorInterface::get_singleton()->open_scene_from_path(scene_path);
+	if (ai_get_edited_scene_root() != open_root) {
+		r_error = ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+			vformat("Could not switch to scene tab '%s' (the editor is busy changing scenes). Retry, or call open_scene first.", scene_path));
+		return nullptr;
+	}
+	if (r_switched_tab) {
+		*r_switched_tab = true;
+	}
+	return open_root;
+}
+
 #endif // AI_ACTION_COMMON_H
 

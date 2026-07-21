@@ -17,6 +17,15 @@ The AI calls `preview_asset` with an array of `res://` image paths. For each pat
 
 Multiple images can be previewed in a single tool call (batch mode).
 
+### Reported Dimensions
+
+Each preview entry reports both the file's true dimensions (`source_width` /
+`source_height`) and the thumbnail's (`preview_width` / `preview_height`). The
+distinction matters: the model must base layout and scale math on the source
+dimensions, never the thumbnail. (Earlier versions reported only the post-resize
+size, which led models to treat a 256px thumbnail as the asset's real resolution
+and mis-derive scale factors from it.)
+
 ### Supported Formats
 
 `.png`, `.jpg`, `.jpeg`, `.bmp`, `.tga`, `.webp`, `.svg`

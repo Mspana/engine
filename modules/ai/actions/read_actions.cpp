@@ -601,14 +601,16 @@ Dictionary exec_preview_asset(const Dictionary &args) {
 		}
 
 		// Resize if larger than max_size, preserving aspect ratio.
-		int w = img->get_width();
-		int h = img->get_height();
-		if (w > max_size || h > max_size) {
-			if (w >= h) {
-				int new_h = MAX(1, h * max_size / w);
+		// Keep the source dimensions: the thumbnail size alone misleads the model
+		// into treating the downscaled preview as the asset's real resolution.
+		const int source_w = img->get_width();
+		const int source_h = img->get_height();
+		if (source_w > max_size || source_h > max_size) {
+			if (source_w >= source_h) {
+				int new_h = MAX(1, source_h * max_size / source_w);
 				img->resize(max_size, new_h, Image::INTERPOLATE_BILINEAR);
 			} else {
-				int new_w = MAX(1, w * max_size / h);
+				int new_w = MAX(1, source_w * max_size / source_h);
 				img->resize(new_w, max_size, Image::INTERPOLATE_BILINEAR);
 			}
 		}
@@ -625,8 +627,10 @@ Dictionary exec_preview_asset(const Dictionary &args) {
 		memcpy(pba.ptrw(), png_bytes.ptr(), png_bytes.size());
 		String b64 = CoreBind::Marshalls::get_singleton()->raw_to_base64(pba);
 
-		entry["width"] = img->get_width();
-		entry["height"] = img->get_height();
+		entry["source_width"] = source_w;
+		entry["source_height"] = source_h;
+		entry["preview_width"] = img->get_width();
+		entry["preview_height"] = img->get_height();
 		previews.push_back(entry);
 		images.push_back(b64);
 	}

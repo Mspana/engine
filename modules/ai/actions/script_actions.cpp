@@ -279,10 +279,11 @@ Dictionary exec_attach_script(const Dictionary &args) {
 			"EditorUndoRedoManager singleton not found");
 	}
 
-	Node *edited_scene_root = ai_get_edited_scene_root();
+	Dictionary focus_error;
+	bool switched_tab = false;
+	Node *edited_scene_root = ai_focus_scene_for_mutation(args, focus_error, &switched_tab);
 	if (!edited_scene_root) {
-		return ai_create_error_result(AIErrorCodes::NO_ACTIVE_SCENE,
-			"No edited scene root");
+		return focus_error;
 	}
 
 	String node_path_str = args["node_path"];
@@ -315,6 +316,10 @@ Dictionary exec_attach_script(const Dictionary &args) {
 	result_data["node_path"] = node_path_str;
 	result_data["script_path"] = script_path;
 	result_data["had_previous_script"] = !old_script.is_null() && old_script.get_type() != Variant::NIL;
+	result_data["scene_path"] = edited_scene_root->get_scene_file_path();
+	if (switched_tab) {
+		result_data["switched_scene_tab"] = true;
+	}
 
 	ai_log_verbose(vformat("attach_script to node: %s", node_path_str));
 	print_line(vformat("AI: Executed attach_script. Node: %s, Script: %s", node_path_str, script_path));
@@ -328,10 +333,11 @@ Dictionary exec_detach_script(const Dictionary &args) {
 			"EditorUndoRedoManager singleton not found");
 	}
 
-	Node *edited_scene_root = ai_get_edited_scene_root();
+	Dictionary focus_error;
+	bool switched_tab = false;
+	Node *edited_scene_root = ai_focus_scene_for_mutation(args, focus_error, &switched_tab);
 	if (!edited_scene_root) {
-		return ai_create_error_result(AIErrorCodes::NO_ACTIVE_SCENE,
-			"No edited scene root");
+		return focus_error;
 	}
 
 	String node_path_str = args["node_path"];
@@ -348,6 +354,10 @@ Dictionary exec_detach_script(const Dictionary &args) {
 
 	Dictionary result_data;
 	result_data["node_path"] = node_path_str;
+	result_data["scene_path"] = edited_scene_root->get_scene_file_path();
+	if (switched_tab) {
+		result_data["switched_scene_tab"] = true;
+	}
 
 	// If already detached, return success (no-op)
 	if (old_script.is_null() || old_script.get_type() == Variant::NIL) {

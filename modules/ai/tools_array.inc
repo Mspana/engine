@@ -6,11 +6,15 @@
 // ==========================================================================
 // Node actions
 // ==========================================================================
+// Shared description for the optional scene_path accepted by all node-mutating tools.
+// Mutations always apply to the ACTIVE scene tab, so naming another open scene switches to it.
+const String mutation_scene_path_desc = "Scene to modify, e.g. 'res://main.tscn' (optional). Must be a currently OPEN scene tab; if it is not the active tab, the editor switches to it before applying the change. Omit to use the active scene. IMPORTANT: without this, the change goes to whichever scene tab is active — which may not be the scene you last read.";
 {
 	Dictionary props;
 	props["node_name"] = _make_prop("string", "Name for the new node");
 	props["node_type"] = _make_prop("string", "Godot node type (e.g. CharacterBody2D, Sprite2D, Camera2D)");
 	props["parent_path"] = _make_prop("string", "Path relative to scene root. Omit for root child.");
+	props["scene_path"] = _make_prop("string", mutation_scene_path_desc);
 	Array req;
 	req.push_back("node_name");
 	req.push_back("node_type");
@@ -19,6 +23,7 @@
 {
 	Dictionary props;
 	props["node_path"] = _make_prop("string", "Path of the node to delete (relative to scene root)");
+	props["scene_path"] = _make_prop("string", mutation_scene_path_desc);
 	Array req;
 	req.push_back("node_path");
 	tools.push_back(_make_tool("delete_node", "Delete a node from the scene tree", props, req));
@@ -27,6 +32,7 @@
 	Dictionary props;
 	props["node_path"] = _make_prop("string", "Path of the node to duplicate");
 	props["new_name"] = _make_prop("string", "Name for the duplicate (optional, defaults to <name>_copy)");
+	props["scene_path"] = _make_prop("string", mutation_scene_path_desc);
 	Array req;
 	req.push_back("node_path");
 	tools.push_back(_make_tool("duplicate_node", "Duplicate a node in the scene tree", props, req));
@@ -39,6 +45,7 @@
 	Dictionary value_prop;
 	value_prop["description"] = "The value to set. Pass raw values — strings as \"hello\", numbers as 1.0, bools as true. For Vector2/Vector3/Color use arrays: [x,y] or [x,y,z]. Do NOT wrap values in {type, value} objects.";
 	props["value"] = value_prop;
+	props["scene_path"] = _make_prop("string", mutation_scene_path_desc);
 	Array req;
 	req.push_back("node_path");
 	req.push_back("property_name");
@@ -54,6 +61,7 @@
 	props_prop["type"] = "object";
 	props_prop["description"] = "Optional initial property values for the resource";
 	props["properties"] = props_prop;
+	props["scene_path"] = _make_prop("string", mutation_scene_path_desc);
 	Array req;
 	req.push_back("node_path");
 	req.push_back("property_name");
@@ -64,6 +72,7 @@
 	Dictionary props;
 	props["node_path"] = _make_prop("string", "Path of the node to rename");
 	props["new_name"] = _make_prop("string", "New name for the node");
+	props["scene_path"] = _make_prop("string", mutation_scene_path_desc);
 	Array req;
 	req.push_back("node_path");
 	req.push_back("new_name");
@@ -74,6 +83,7 @@
 	props["node_path"] = _make_prop("string", "Path of the node to move");
 	props["new_parent_path"] = _make_prop("string", "Path of the new parent node");
 	props["index"] = _make_prop("integer", "Position among siblings (optional)");
+	props["scene_path"] = _make_prop("string", mutation_scene_path_desc);
 	Array req;
 	req.push_back("node_path");
 	req.push_back("new_parent_path");
@@ -110,6 +120,7 @@
 	Dictionary props;
 	props["node_path"] = _make_prop("string", "Path of the node to attach the script to");
 	props["script_path"] = _make_prop("string", "Path of the script file (e.g. res://scripts/player.gd)");
+	props["scene_path"] = _make_prop("string", mutation_scene_path_desc);
 	Array req;
 	req.push_back("node_path");
 	req.push_back("script_path");
@@ -118,6 +129,7 @@
 {
 	Dictionary props;
 	props["node_path"] = _make_prop("string", "Path of the node to detach the script from");
+	props["scene_path"] = _make_prop("string", mutation_scene_path_desc);
 	Array req;
 	req.push_back("node_path");
 	tools.push_back(_make_tool("detach_script", "Detach a script from a node", props, req));
@@ -150,6 +162,7 @@
 	props["target_path"] = _make_prop("string", "Path of the node with the target method");
 	props["method_name"] = _make_prop("string", "Method name to connect (e.g. '_on_button_pressed')");
 	Array req;
+	props["scene_path"] = _make_prop("string", mutation_scene_path_desc);
 	req.push_back("emitter_path");
 	req.push_back("signal_name");
 	req.push_back("target_path");
@@ -162,6 +175,7 @@
 	props["signal_name"] = _make_prop("string", "Signal name");
 	props["target_path"] = _make_prop("string", "Path of the target node");
 	props["method_name"] = _make_prop("string", "Method name to disconnect");
+	props["scene_path"] = _make_prop("string", mutation_scene_path_desc);
 	Array req;
 	req.push_back("emitter_path");
 	req.push_back("signal_name");
@@ -439,7 +453,10 @@
 	req.push_back("paths");
 	tools.push_back(_make_tool("preview_asset",
 		"Get low-res image previews. Returns visible thumbnails for each image file. "
-		"Use after list_files to see what images contain before placing them.",
+		"Use after list_files to see what images contain before placing them. "
+		"The thumbnail is DOWNSCALED — it is NOT the asset's real resolution. Each preview entry "
+		"reports source_width/source_height (the file's true dimensions — use these for any "
+		"layout or scale math) and preview_width/preview_height (the thumbnail).",
 		props, req));
 }
 

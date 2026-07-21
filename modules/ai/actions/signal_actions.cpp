@@ -20,10 +20,11 @@ Dictionary exec_connect_signal(const Dictionary &args) {
 			"EditorUndoRedoManager singleton not found");
 	}
 
-	Node *edited_scene_root = ai_get_edited_scene_root();
+	Dictionary focus_error;
+	bool switched_tab = false;
+	Node *edited_scene_root = ai_focus_scene_for_mutation(args, focus_error, &switched_tab);
 	if (!edited_scene_root) {
-		return ai_create_error_result(AIErrorCodes::NO_ACTIVE_SCENE,
-			"No edited scene root");
+		return focus_error;
 	}
 
 	// Validate required arguments
@@ -114,6 +115,10 @@ Dictionary exec_connect_signal(const Dictionary &args) {
 	result_data["target_path"] = target_path_str;
 	result_data["method_name"] = method_name_str;
 	result_data["flags"] = flags;
+	result_data["scene_path"] = edited_scene_root->get_scene_file_path();
+	if (switched_tab) {
+		result_data["switched_scene_tab"] = true;
+	}
 
 	print_line(vformat("AI: Executed connect_signal. Emitter: %s, Signal: %s, Target: %s, Method: %s", emitter_path_str, signal_name_str, target_path_str, method_name_str));
 	return ai_create_success_result(result_data);
@@ -131,10 +136,11 @@ Dictionary exec_disconnect_signal(const Dictionary &args) {
 			"EditorUndoRedoManager singleton not found");
 	}
 
-	Node *edited_scene_root = ai_get_edited_scene_root();
+	Dictionary focus_error;
+	bool switched_tab = false;
+	Node *edited_scene_root = ai_focus_scene_for_mutation(args, focus_error, &switched_tab);
 	if (!edited_scene_root) {
-		return ai_create_error_result(AIErrorCodes::NO_ACTIVE_SCENE,
-			"No edited scene root");
+		return focus_error;
 	}
 
 	// Validate required arguments
@@ -221,6 +227,10 @@ Dictionary exec_disconnect_signal(const Dictionary &args) {
 	result_data["target_path"] = target_path_str;
 	result_data["method_name"] = method_name_str;
 	result_data["was_connected"] = true;
+	result_data["scene_path"] = edited_scene_root->get_scene_file_path();
+	if (switched_tab) {
+		result_data["switched_scene_tab"] = true;
+	}
 
 	print_line(vformat("AI: Executed disconnect_signal. Emitter: %s, Signal: %s, Target: %s, Method: %s", emitter_path_str, signal_name_str, target_path_str, method_name_str));
 	return ai_create_success_result(result_data);
