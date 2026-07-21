@@ -222,6 +222,7 @@ void AgenticOrchestrator::run_agentic_loop(const Array &p_initial_messages, Ref<
 	provider = p_provider;
 	_is_running = true;
 	_waiting_for_response = false;
+	_request_retry_attempt = 0;
 
 	// Emit run_started signal
 	emit_signal("run_started");
@@ -305,6 +306,44 @@ void AgenticOrchestrator::_send_model_request() {
 	provider->send_request_with_messages(messages_to_send, "");
 }
 
+// True for pre-response transport failures worth retrying. These are the exact
+// messages the providers emit before any HTTP response is received. API-level
+// failures ("HTTP error: N", parsed error bodies, "API key is not set") are
+// deliberately excluded — a retry would not change the outcome.
+bool AgenticOrchestrator::_is_transient_network_error(const String &p_error) {
+	return p_error.begins_with("Request failed") ||
+			p_error.begins_with("Connection failed") ||
+			p_error.begins_with("Failed to connect") ||
+			p_error.begins_with("Failed to send request");
+}
+
+void AgenticOrchestrator::_schedule_request_retry(float p_delay_seconds) {
+	SceneTree *tree = Object::cast_to<SceneTree>(OS::get_singleton()->get_main_loop());
+	if (!tree) {
+		// No main loop to time against — fail the run rather than hang it silently.
+		ERR_PRINT("AgenticOrchestrator: cannot schedule retry (no SceneTree); ending run.");
+		_emit_run_complete(false, "Error: Model request failed - network error (retry unavailable)");
+		_is_running = false;
+		return;
+	}
+	Ref<SceneTreeTimer> timer = tree->create_timer(p_delay_seconds);
+	timer->connect("timeout", callable_mp(this, &AgenticOrchestrator::_retry_model_request), CONNECT_ONE_SHOT);
+}
+
+void AgenticOrchestrator::_retry_model_request() {
+	if (!_is_running) {
+		return; // Run ended while the backoff timer was pending.
+	}
+	if (current_run.cancelled) {
+		_handle_cancellation();
+		return;
+	}
+	// A retry re-sends the same turn. _send_model_request increments model_turns, so
+	// pre-decrement to keep retries from consuming the model-turn budget.
+	current_run.model_turns--;
+	_send_model_request();
+}
+
 void AgenticOrchestrator::_on_provider_response(bool p_success, const String &p_response, const String &p_error) {
 	_waiting_for_response = false;
 
@@ -330,11 +369,28 @@ void AgenticOrchestrator::_on_provider_response(bool p_success, const String &p_
 	}
 
 	if (!p_success) {
+		// Transient network failures (connection reset, DNS, TLS, timeout — common on
+		// flaky wifi) are retried with exponential backoff rather than aborting the
+		// run. Real API errors (HTTP 4xx/5xx, parsed error bodies, missing key) fall
+		// through and end the run — retrying those would not help.
+		if (_is_transient_network_error(p_error) && _request_retry_attempt < MAX_REQUEST_RETRIES) {
+			_request_retry_attempt++;
+			float delay = (float)(1 << (_request_retry_attempt - 1)); // 1s, 2s, 4s
+			print_line(vformat("AgenticOrchestrator: transient network failure (%s); retry %d/%d in %.0fs",
+					p_error, _request_retry_attempt, MAX_REQUEST_RETRIES, delay));
+			_emit_progress_update(vformat("Network issue, retrying (%d/%d)...",
+					_request_retry_attempt, MAX_REQUEST_RETRIES), current_run.model_turns);
+			_schedule_request_retry(delay);
+			return;
+		}
 		ERR_PRINT(vformat("AgenticOrchestrator: Provider request failed: %s", p_error));
 		_emit_run_complete(false, vformat("Error: Model request failed - %s", p_error));
 		_is_running = false;
 		return;
 	}
+
+	// Request succeeded — clear the transient-failure retry counter for the next turn.
+	_request_retry_attempt = 0;
 
 	// Parse the full API response JSON
 	JSON json;

@@ -54,9 +54,13 @@ class AgenticOrchestrator : public RefCounted {
 
 public:
 	// Guardrail constants
-	static constexpr int MAX_MODEL_TURNS_PER_RUN = 20;
+	static constexpr int MAX_MODEL_TURNS_PER_RUN = 50;
 	static constexpr int MAX_ACTIONS_PER_RESPONSE = 12;
-	static constexpr int MAX_ACTIONS_PER_RUN = 100;
+	static constexpr int MAX_ACTIONS_PER_RUN = 200;
+	// Max automatic retries for a single model request after a transient network
+	// failure (connection reset, DNS/TLS, timeout). Retries use exponential backoff
+	// and do not consume a model turn.
+	static constexpr int MAX_REQUEST_RETRIES = 3;
 	// MAX_REPAIR_CYCLES removed — native tool-calling handles validation via the API
 
 	// Per-item in the AI's self-managed task list
@@ -119,6 +123,9 @@ private:
 	bool _waiting_for_response = false;
 	Ref<AIProvider> provider;
 
+	// Retry count for the in-flight model request; reset on success and at run start.
+	int _request_retry_attempt = 0;
+
 	// Pending user injection (mid-run message, consumed before next API call)
 	String _pending_user_injection;
 
@@ -133,6 +140,13 @@ private:
 
 	// Request sending (initiates async call)
 	void _send_model_request();
+
+	// Transient network-failure retry. Classifies pre-response transport failures
+	// (vs. real API errors), then re-sends the same request after a backoff delay
+	// without consuming a model turn.
+	static bool _is_transient_network_error(const String &p_error);
+	void _schedule_request_retry(float p_delay_seconds);
+	void _retry_model_request();
 
 	// Response processing (deferred to next frame to avoid message queue conflicts)
 	void _process_model_response_deferred();
