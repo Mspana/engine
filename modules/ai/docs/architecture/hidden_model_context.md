@@ -50,16 +50,16 @@ screenshots (e.g. from `run_and_screenshot`), which do appear inline in the chat
 - **UI visibility:** None. The debug context pill shows error/warning counts but does not
   indicate that a screenshot was included.
 
-## Per-Turn TODO Injection
+## TODO State (via update_todos tool results)
 
-A synthetic `[CURRENT_TODOS]` user message is injected on every API turn (not just the first).
-It contains a formatted list of current TODO items with status icons and an instruction to use
-the `update_todos` tool.
+Todo state is no longer injected per turn. The former `[CURRENT_TODOS]` per-turn injection was
+removed because a fresh trailing message every turn shifted position each turn and invalidated
+the prompt-cache prefix (see `prompt_caching.md`). The model's todo state now lives where it
+changes: the `update_todos` tool call arguments and the echoed list in its tool result, both of
+which are part of ordinary append-only history.
 
-- **Injected in:** `agentic_orchestrator.cpp`, `_send_model_request()`
-- **UI visibility:** Partial. The todo panel widget shows current todo state, but the user
-  does not see that it is re-sent as a message on every turn. Not persisted to chat history.
-
+- **UI visibility:** Full. The todo panel shows current state; the tool call and result are in
+  the transcript like any other tool use.
 ## Timestamp Prefix
 
 A `[YYYY-MM-DD HH:MM]` timestamp is prepended to user message content (part of the XML

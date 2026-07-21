@@ -234,22 +234,11 @@ void AgenticOrchestrator::_send_model_request() {
 	// Emit progress update to indicate we're thinking
 	_emit_progress_update(vformat("Thinking... (turn %d)", current_run.model_turns), current_run.model_turns);
 
-	// Build message list, injecting current TODO state if present
+	// Send conversation history as-is. Todo state is NOT injected per turn: a
+	// fresh trailing block would shift position every turn and invalidate the
+	// prompt-cache prefix. The model's own update_todos calls (args + echoed
+	// result) already carry the state in append-only history.
 	Array messages_to_send = current_run.conversation_history;
-	if (current_run.has_todos) {
-		messages_to_send = current_run.conversation_history.duplicate();
-		String block = "[CURRENT_TODOS]\n";
-		for (int i = 0; i < current_run.todos.size(); i++) {
-			const TodoItem &t = current_run.todos[i];
-			String icon = (t.status == "completed") ? "[x]" : (t.status == "in_progress") ? "[-]" : "[ ]";
-			block += icon + " " + t.id + ": " + t.content + "\n";
-		}
-		block += "[/CURRENT_TODOS]\nUpdate this list using update_todos as you complete steps.";
-		Dictionary todos_msg;
-		todos_msg["role"] = "user";
-		todos_msg["content"] = block;
-		messages_to_send.push_back(todos_msg);
-	}
 
 	// Debug: print full conversation being sent
 	print_line("====== AI REQUEST (full conversation) ======");

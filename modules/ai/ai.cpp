@@ -1571,9 +1571,25 @@ Dictionary AI::_exec_update_todos(const Dictionary &args) {
         orchestrator->set_todos(args["todos"]);
     }
 
+    // Echo the accepted list back in the tool result. This is the model's
+    // persistent record of todo state: tool results stay in append-only history
+    // (cache-friendly), so no per-turn re-injection is needed.
+    Array todos = args["todos"];
+    String formatted;
+    for (int i = 0; i < todos.size(); i++) {
+        Dictionary t = todos[i];
+        String status = t.get("status", "pending");
+        String icon = (status == "completed") ? "[x]" : (status == "in_progress") ? "[-]" : "[ ]";
+        formatted += icon + " " + String(t.get("id", "")) + ": " + String(t.get("content", "")) + "\n";
+    }
+
+    Dictionary result_data;
+    result_data["todo_count"] = todos.size();
+    result_data["todos"] = formatted.strip_edges();
+
     Dictionary result;
     result["status"] = "success";
-    result["result"] = Dictionary();
+    result["result"] = result_data;
     return result;
 }
 

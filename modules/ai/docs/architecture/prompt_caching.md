@@ -54,3 +54,8 @@ OpenAI semantics, so UI token counts stay meaningful with caching on.
 - Anthropic looks back at most ~20 content blocks from a breakpoint to find the previous
   one. A single turn that adds more than ~20 blocks (massive parallel tool batches) would
   need an intermediate breakpoint; current tool batch sizes stay well under this.
+- The former per-turn `[CURRENT_TODOS]` injection violated the append-only rule: it was a
+  fresh trailing message each turn, so on todo-bearing runs the message-history breakpoint
+  never hit. It was removed; todo state now travels in the `update_todos` tool call and its
+  echoed result, which are ordinary appended history. Scene diffs (`scene_state_diffs.md`)
+  follow the same rule — appended messages, never re-rendered blocks.
