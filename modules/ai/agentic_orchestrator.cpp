@@ -669,9 +669,27 @@ void AgenticOrchestrator::_process_native_tool_response(const Dictionary &p_api_
 			action["args"] = args;
 
 			AI *ai = AI::get_singleton();
+			Dictionary run_result;
 			if (ai) {
-				Dictionary run_result = ai->execute_single_action(action);
+				run_result = ai->execute_single_action(action);
 				print_line(vformat("AI_RNS: game launch result status=%s", (String)run_result.get("status", "?")));
+			}
+			if ((String)run_result.get("status", "") != "success") {
+				// Launch failed synchronously (e.g. invalid scene_path) — report the
+				// launch error now instead of polling until the 8s start timeout.
+				// Deferred so the loop resumes from a callback, matching how every
+				// other RNS terminal state re-enters, never from inside tool dispatch.
+				if (run_result.is_empty()) {
+					Dictionary ed;
+					ed["code"] = "internal_error";
+					ed["message"] = "AI singleton not available to launch the game.";
+					ed["details"] = Dictionary();
+					run_result["status"] = "error";
+					run_result["error"] = ed;
+				}
+				_async_rns_phase = ASYNC_RNS_INACTIVE;
+				callable_mp(this, &AgenticOrchestrator::_on_async_rns_complete).bind(run_result).call_deferred();
+				return;
 			}
 
 			_schedule_rns_tick(0.1f);
@@ -1191,7 +1209,9 @@ void AgenticOrchestrator::_on_async_rns_complete(const Dictionary &p_exec_result
 		}
 	}
 
-	// Include the main scene path so the model knows which scene was actually run.
+	// Include which scene was actually run: the custom scene when one was requested
+	// (run_project launches it via EditorRunBar::play_custom_scene), else the main scene.
+	String requested_scene = _async_rns_action_args.get("scene_path", String());
 	String main_scene = ProjectSettings::get_singleton()->get_setting("application/run/main_scene", "");
 
 	// Enrich the exec result with errors and game output.
@@ -1199,7 +1219,9 @@ void AgenticOrchestrator::_on_async_rns_complete(const Dictionary &p_exec_result
 	String status = enriched.get("status", "error");
 	if (status == "success") {
 		Dictionary rd = ((Dictionary)enriched.get("result", Dictionary())).duplicate();
-		if (!main_scene.is_empty()) {
+		if (!requested_scene.is_empty()) {
+			rd["scene_path"] = requested_scene;
+		} else if (!main_scene.is_empty()) {
 			rd["main_scene"] = main_scene;
 		}
 		if (game_errors.size() > 0) {

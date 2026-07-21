@@ -4,7 +4,7 @@ Three capture tools are available to the AI, each suited to a different situatio
 
 | Tool | What it captures | Sync? | When to use |
 |---|---|---|---|
-| `run_and_screenshot` | The running game window (main scene) | Async (launches + waits + stops game) | Verify real runtime behavior, physics, scripts, animations. |
+| `run_and_screenshot` | The running game window (main scene by default, or any scene via `scene_path`) | Async (launches + waits + stops game) | Verify real runtime behavior, physics, scripts, animations. |
 | `capture_2d_viewport` | The 2D editor canvas (shared scene SubViewport, with current pan/zoom) | Sync | Quick visual check of the 2D scene the user is editing without running anything. |
 | `capture_3d_viewport` | The last-used 3D editor viewport (its own SubViewport + camera) | Sync | Quick visual check of the 3D scene from the current editor camera angle. |
 
@@ -39,6 +39,18 @@ the actual window content even when occluded, unfocused, or partially offscreen.
 
 Non-Windows platforms skip step 1 (base class returns empty) and use the screen-based
 fallbacks.
+
+### Scene Selection (`scene_path`)
+
+Both `run_project` and `run_and_screenshot` accept an optional `scene_path`
+(res:// path). When provided, the scene is launched via
+`EditorRunBar::play_custom_scene` instead of the main-scene run command — so the
+AI can test a specific scene without touching the project's
+`application/run/main_scene` setting. The path is validated up front (must be a
+`res://` path to an existing file); an invalid path fails the tool immediately
+rather than letting the run_and_screenshot state machine poll until its 8-second
+start timeout. The result reports which scene was actually run: `scene_path`
+when a custom scene was requested, `main_scene` otherwise.
 
 ### Result Fields
 
@@ -134,16 +146,22 @@ this case (used by `SubViewportContainer` itself when it lays out its child).
 Inside `_capture_subviewport_to_result`:
 
 1. **Flush the MessageQueue.** `MessageQueue::get_singleton()->flush()` forces any
-   pending deferred calls, including `CanvasItem::_redraw_callback`s queued by
-   `CanvasItemEditor::update_viewport()`, to run now. Those callbacks submit the
-   actual draw commands (CanvasItem `_draw()` → RS commands).
-2. **Set the target SubViewport to `UPDATE_ONCE`.** Scene-level API, writes
+   pending deferred `CanvasItem::_redraw_callback`s to run now. Those callbacks
+   submit the actual draw commands (CanvasItem `_draw()` → RS commands). Side
+   effect to be aware of: if the 2D tab is visible and its overlay Control has a
+   redraw queued, this flush runs `CanvasItemEditor::_draw_viewport`, which
+   resets `scene_root`'s global canvas transform to the editor's own zoom/pan.
+2. **Apply the caller's framing transform (if any).** The `frame_rect` transform
+   is passed into `_force_render_subviewport` and applied *here* — after the
+   flush, never before it. See "Why the transform is applied after the flush"
+   below.
+3. **Set the target SubViewport to `UPDATE_ONCE`.** Scene-level API, writes
    through to RS and keeps the Viewport node's cached state in sync.
-3. **`RS::draw(false)`.** In threaded RS mode this only enqueues the draw; in
+4. **`RS::draw(false)`.** In threaded RS mode this only enqueues the draw; in
    non-threaded it renders immediately.
-4. **`RS::sync()`.** Blocks until the render thread drains the queue, so
+5. **`RS::sync()`.** Blocks until the render thread drains the queue, so
    `get_image()` sees the rendered texture and not a pre-render snapshot.
-5. **Restore the previous `UpdateMode`.**
+6. **Restore the previous `UpdateMode`.**
 
 We do **not** deactivate the editor's root viewport. The preview plugins do that
 because their target is an isolated off-screen viewport — our target is part of
@@ -206,11 +224,42 @@ view_offset  = center - viewport_size / (2 * zoom)
 transform    = scale(zoom) * translate(-view_offset)
 ```
 
-The override is computed *after* the hidden-tab `set_size_force` so it sees the
-post-resize viewport size, then applied via `SubViewport::set_global_canvas_transform`.
-After the capture we restore the saved transform synchronously, then call
-`CanvasItemEditor::update_viewport()` so the editor's `_draw_viewport` re-syncs
-its own state on the next frame.
+The override is *computed* after the hidden-tab `set_size_force` (so the framing
+math sees the post-resize viewport size) but *applied* inside
+`_force_render_subviewport`, after the MessageQueue flush and immediately before
+the render. After the capture we restore the saved transform synchronously, then
+call `CanvasItemEditor::update_viewport()` so the editor's `_draw_viewport`
+re-syncs its own state on the next frame.
+
+#### Why the transform is applied after the flush
+
+`CanvasItemEditor::_draw_viewport`'s first act is to reset `scene_root`'s global
+canvas transform from the editor's own `zoom`/`view_offset` — and the editor's
+internal zoom includes the display scale (`EDSCALE`), so what the zoom widget
+shows as "100%" is internally 2.0 on a 200%-scale display. An earlier version of
+this tool set the framing transform up front and also queued an overlay redraw
+via `update_viewport()` before capturing; the capture's own MessageQueue flush
+then ran `_draw_viewport`, silently replacing the framing with the editor's view
+whenever the 2D tab was the active main screen. Captures came out ~EDSCALE×
+larger than requested and panned to the editor's current view — but only from
+the 2D tab (hidden CanvasItems skip `NOTIFICATION_DRAW`, so captures taken from
+the Script tab were correctly framed), which made the bug look like flaky
+capture rather than a deterministic race.
+
+Applying the framing after the flush closes the race regardless of the active
+tab. The pre-capture `update_viewport()` call was removed entirely: the overlay
+it redraws (grid, rulers, selection) lives on a Control *outside* `scene_root`
+and can never appear in the capture anyway, so its only real effect was
+triggering the clobber.
+
+#### Pixel↔world metadata
+
+Successful 2D captures include `px_per_world_unit` and
+`world_rect: [x, y, width, height]` — the world-space region the image spans,
+derived from the canvas transform the render actually used. Use these to convert
+image-pixel measurements into world/node coordinates. This matters most for
+no-`frame_rect` captures: the editor's view transform includes `EDSCALE`, so
+image pixels are generally *not* 1:1 with world units.
 
 #### Why no off-screen SubViewport
 

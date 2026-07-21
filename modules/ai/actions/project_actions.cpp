@@ -605,39 +605,43 @@ Dictionary exec_run_project(const Dictionary &args) {
 	String mode = args.get("mode", "play");
 	String scene_path = args.get("scene_path", String());
 
-	// Try to get EditorRunBar if available
-	// For now, use command palette approach similar to save_scene
-	EditorCommandPalette *command_palette = ei->get_command_palette();
-	if (!command_palette) {
-		return ai_create_error_result(AIErrorCodes::INTERNAL_ERROR,
-			"EditorCommandPalette not found");
-	}
-
 	if (mode == "headless_smoke") {
 		// For headless smoke test, try to execute a specific command if available
 		// v0: log that it's not fully implemented yet
 		ai_log_verbose("Execute 'run_project': headless_smoke mode requested but not fully implemented in v0.");
-		// Try to execute the command anyway - it might work if the command exists
-		// For now, just log and return error
 		return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
 			"headless_smoke mode is not implemented in this build");
 	} else if (mode == "play") {
-		// Execute the standard run project command
-		if (!scene_path.is_empty()) {
-			// If scene_path is provided, we'd need to use EditorRunBar::play_custom_scene
-			// For v0, just log that custom scene path is not fully supported
-			ai_log_verbose(vformat("Execute 'run_project': scene_path '%s' provided but custom scene execution not fully implemented in v0. Running main scene instead.", scene_path));
-		}
-
-		// Execute the standard "editor/run_project" command
-		command_palette->execute_command("editor/run_project");
-
 		Dictionary result_data;
 		result_data["mode"] = mode;
+
 		if (!scene_path.is_empty()) {
-			result_data["requested_scene_path"] = scene_path;
-			result_data["note"] = "Custom scene path not fully supported, ran main scene instead";
+			if (!scene_path.begins_with("res://")) {
+				return ai_create_error_result(AIErrorCodes::INVALID_PATH,
+					vformat("scene_path must be a res:// path, got '%s'.", scene_path));
+			}
+			if (!FileAccess::exists(scene_path)) {
+				return ai_create_error_result(AIErrorCodes::FILE_NOT_FOUND,
+					vformat("Scene file '%s' does not exist.", scene_path));
+			}
+			EditorRunBar *run_bar = EditorRunBar::get_singleton();
+			if (!run_bar) {
+				return ai_create_error_result(AIErrorCodes::INTERNAL_ERROR,
+					"EditorRunBar singleton not found");
+			}
+			run_bar->play_custom_scene(scene_path);
+			result_data["scene_path"] = scene_path;
+			print_line(vformat("AI: Executed run_project (play mode, custom scene '%s').", scene_path));
+			return ai_create_success_result(result_data);
 		}
+
+		// No scene_path: run the project's main scene via the standard command.
+		EditorCommandPalette *command_palette = ei->get_command_palette();
+		if (!command_palette) {
+			return ai_create_error_result(AIErrorCodes::INTERNAL_ERROR,
+				"EditorCommandPalette not found");
+		}
+		command_palette->execute_command("editor/run_project");
 
 		print_line("AI: Executed run_project (play mode).");
 		return ai_create_success_result(result_data);
@@ -653,9 +657,11 @@ Dictionary exec_run_project(const Dictionary &args) {
 
 Dictionary exec_run_and_screenshot(const Dictionary &args) {
 	// In agentic mode the orchestrator intercepts this action and handles
-	// async wait + screenshot via SceneTree timers. This fallback is for
-	// direct/legacy calls only — it just starts the game.
-	return exec_run_project(Dictionary());
+	// async wait + screenshot via SceneTree timers; it launches the game by
+	// routing back through here (execute_single_action). Forward the args so
+	// scene_path reaches exec_run_project — screenshot timing args (wait_seconds,
+	// screenshot_times_seconds) are consumed by the orchestrator and ignored here.
+	return exec_run_project(args);
 }
 
 #ifdef TOOLS_ENABLED
@@ -666,8 +672,7 @@ Dictionary exec_run_and_screenshot(const Dictionary &args) {
 // Implementation notes:
 // - Flush the MessageQueue first. CanvasItem::queue_redraw() uses call_deferred
 //   to schedule its _redraw_callback, which is what actually submits draw
-//   commands to the RenderingServer. On a tab where CanvasItems were recently
-//   queued (e.g. after exec_capture_2d_viewport called update_viewport()), we
+//   commands to the RenderingServer. Any CanvasItems with redraws still pending
 //   need those deferred callbacks to fire BEFORE we draw — otherwise the
 //   viewport renders with an empty command list and we get the clear color.
 // - Scene-level set_update_mode(UPDATE_ONCE) writes through to RS and keeps the
@@ -680,7 +685,15 @@ Dictionary exec_run_and_screenshot(const Dictionary &args) {
 //   up with RS::sync(), which blocks until the render thread drains the queue.
 // - We never use the preview-plugin frame_pre_draw + semaphore branch. That
 //   pattern only works from a worker thread; on the main thread it deadlocks.
-static void _force_render_subviewport(SubViewport *p_viewport) {
+// - p_canvas_transform (optional) is a framing transform applied to the viewport's
+//   global canvas transform AFTER the MessageQueue flush and immediately before the
+//   render. Order matters: when the 2D tab is visible, the flush runs
+//   CanvasItemEditor::_draw_viewport, whose first act is to reset scene_root's
+//   global canvas transform to the editor's own zoom/pan (which internally includes
+//   EDSCALE). A framing transform set before the flush gets silently overwritten —
+//   captures came out ~EDSCALE× too large, panned to the editor's current view.
+//   Nothing runs between the post-flush write and rs->draw(), so this is race-free.
+static void _force_render_subviewport(SubViewport *p_viewport, const Transform2D *p_canvas_transform = nullptr) {
 	RenderingServer *rs = RenderingServer::get_singleton();
 	if (!rs || !p_viewport->get_viewport_rid().is_valid()) {
 		return;
@@ -689,6 +702,9 @@ static void _force_render_subviewport(SubViewport *p_viewport) {
 	// their draw commands to RS before we trigger the render pass.
 	if (MessageQueue::get_singleton()) {
 		MessageQueue::get_singleton()->flush();
+	}
+	if (p_canvas_transform) {
+		p_viewport->set_global_canvas_transform(*p_canvas_transform);
 	}
 	SubViewport::UpdateMode prev_mode = p_viewport->get_update_mode();
 	p_viewport->set_update_mode(SubViewport::UPDATE_ONCE);
@@ -699,7 +715,8 @@ static void _force_render_subviewport(SubViewport *p_viewport) {
 
 // Shared encoder: takes a SubViewport, returns a success/error result dict with
 // a base64 PNG attached via _images for the orchestrator to forward to the model.
-static Dictionary _capture_subviewport_to_result(SubViewport *p_viewport, const String &p_label) {
+// p_canvas_transform is forwarded to _force_render_subviewport (see comment there).
+static Dictionary _capture_subviewport_to_result(SubViewport *p_viewport, const String &p_label, const Transform2D *p_canvas_transform = nullptr) {
 	if (!p_viewport) {
 		return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
 			vformat("%s viewport is not available (editor not ready?).", p_label));
@@ -715,7 +732,7 @@ static Dictionary _capture_subviewport_to_result(SubViewport *p_viewport, const 
 	// is already rendering (adds one frame of latency); essential when it is not
 	// (cold-start: user has never interacted with this viewport, so it has never
 	// produced a frame and get_image() would return black).
-	_force_render_subviewport(p_viewport);
+	_force_render_subviewport(p_viewport, p_canvas_transform);
 
 	Ref<Image> img = tex->get_image();
 	if (img.is_null() || img->is_empty()) {
@@ -799,8 +816,14 @@ Dictionary exec_capture_2d_viewport(const Dictionary &args) {
 	// framing math sees the post-resize viewport size. Restored after the capture.
 	// Mirrors the editor's own zoom/offset → Transform2D math in
 	// CanvasItemEditor::_draw_viewport.
+	//
+	// The transform is only COMPUTED here — it is applied inside
+	// _force_render_subviewport, after the MessageQueue flush. Setting it now would
+	// lose it: with the 2D tab visible, the flush runs CanvasItemEditor::_draw_viewport,
+	// which resets scene_root's global canvas transform to the editor's own zoom/pan.
 	bool has_frame_rect = false;
 	Transform2D saved_transform;
+	Transform2D frame_transform;
 	if (sv && args.has("frame_rect")) {
 		Variant fr_v = args["frame_rect"];
 		if (fr_v.get_type() != Variant::ARRAY) {
@@ -837,20 +860,43 @@ Dictionary exec_capture_2d_viewport(const Dictionary &args) {
 		Vector2 center(rx + rw * 0.5, ry + rh * 0.5);
 		Vector2 view_offset = center - Vector2(vp_size.x, vp_size.y) / (2.0 * zoom);
 
-		Transform2D t;
-		t.scale_basis(Size2(zoom, zoom));
-		t.columns[2] = -view_offset * zoom;
+		frame_transform.scale_basis(Size2(zoom, zoom));
+		frame_transform.columns[2] = -view_offset * zoom;
 
 		saved_transform = sv->get_global_canvas_transform();
-		sv->set_global_canvas_transform(t);
 		has_frame_rect = true;
 	}
 
-	// Queue a redraw of the 2D canvas overlay (grid, rulers, selection, guides) so
-	// it appears on top of the scene contents. The MessageQueue flush inside
-	// _capture_subviewport_to_result fires the deferred _redraw_callback before draw.
-	cie->update_viewport();
-	Dictionary result = _capture_subviewport_to_result(sv, "2D");
+	// Deliberately NO CanvasItemEditor::update_viewport() before the capture. The
+	// grid/rulers/selection overlay draws into the CanvasItemEditor's own overlay
+	// Control (in the editor window's viewport tree, a sibling of the
+	// SubViewportContainer hosting scene_root), so it can never appear in a capture
+	// of scene_root anyway — and queuing that redraw makes _draw_viewport fire during
+	// the capture's MessageQueue flush, clobbering the framing transform.
+	Dictionary result = _capture_subviewport_to_result(sv, "2D", has_frame_rect ? &frame_transform : nullptr);
+
+	// Report the transform the render actually used, so the model can convert image
+	// pixels to world units. Without frame_rect the capture shows the editor's current
+	// view, whose internal zoom includes the editor display scale (EDSCALE) — image
+	// pixels are NOT 1:1 with world units, so measuring layout off the raw image
+	// silently over-reads by that factor (~2x on a 200%-scale display).
+	// world_rect = [x, y, width, height] of the world-space region the image spans.
+	if (sv && (String)result.get("status", "") == "success") {
+		Transform2D used = sv->get_global_canvas_transform();
+		Size2 vps = sv->get_size();
+		real_t px_per_unit = used.get_scale().x;
+		if (px_per_unit > 0.0 && vps.x > 0 && vps.y > 0) {
+			Rect2 world_rect = used.affine_inverse().xform(Rect2(Point2(), vps));
+			Dictionary rd = result["result"];
+			rd["px_per_world_unit"] = px_per_unit;
+			Array wr;
+			wr.push_back(world_rect.position.x);
+			wr.push_back(world_rect.position.y);
+			wr.push_back(world_rect.size.x);
+			wr.push_back(world_rect.size.y);
+			rd["world_rect"] = wr;
+		}
+	}
 
 	if (has_frame_rect) {
 		// Restore the editor's transform synchronously (so anything reading

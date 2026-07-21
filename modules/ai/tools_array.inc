@@ -321,6 +321,7 @@
 }
 {
 	Dictionary props;
+	props["scene_path"] = _make_prop("string", "Scene to run (res:// path, optional). Defaults to the project's main scene. Use this to test a specific scene without changing the project's main scene setting.");
 	props["wait_seconds"] = _make_prop("number", "Seconds to let the game run before capturing a single screenshot (default 2.0). Ignored when screenshot_times_seconds is provided.");
 	Dictionary times_prop;
 	times_prop["type"] = "array";
@@ -342,7 +343,7 @@
 	frame_rect_prop["items"] = frame_rect_items;
 	props["frame_rect"] = frame_rect_prop;
 	Array req;
-	tools.push_back(_make_tool("capture_2d_viewport", "Capture the 2D editor viewport as an image. Use to visually check the 2D scene the user is editing (sprites, UI, layout) without running the game. Much faster than run_and_screenshot for quick visual checks, and shows exactly what the user sees in the 2D canvas (including their current pan/zoom — unless you pass frame_rect to override the framing). The image is returned and shown to you automatically.", props, req));
+	tools.push_back(_make_tool("capture_2d_viewport", "Capture the 2D editor viewport as an image. Use to visually check the 2D scene the user is editing (sprites, UI, layout) without running the game. Much faster than run_and_screenshot for quick visual checks, and shows exactly what the user sees in the 2D canvas (including their current pan/zoom — unless you pass frame_rect to override the framing). The image is returned and shown to you automatically. The result includes world_rect ([x, y, width, height] of the world-space region the image spans) and px_per_world_unit — use them to convert image pixels to world/node coordinates; without frame_rect the editor's view scale means image pixels are usually NOT 1:1 with world units.", props, req));
 }
 {
 	Dictionary props;
