@@ -160,6 +160,10 @@ public:
 	// context injection: todo state
 	static Dictionary make_todo_state_item(const Array &p_tasks);
 
+	// context injection: scene diffs injected into model context
+	// (persisted so the transcript/dashboard can show what the model was told)
+	static Dictionary make_scene_diff_item(const String &p_attribution, const Array &p_scenes);
+
 	// context injection: model info (which model/provider is handling this turn)
 	static Dictionary make_model_info_item(const String &p_model_id, const String &p_provider_name);
 

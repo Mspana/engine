@@ -60,6 +60,21 @@ which are part of ordinary append-only history.
 
 - **UI visibility:** Full. The todo panel shows current state; the tool call and result are in
   the transcript like any other tool use.
+
+## Scene Diff Injection
+
+When AI tool calls change a scene, a `[SCENE UPDATE]` user message with a unified diff of the
+scene's serialized `.tscn` text is appended after the tool batch. At run start, a
+`[SCENE CHANGES]` message reports scenes edited outside the conversation (user edits) since the
+model last saw them. Diffs above a size cap collapse to a "changed substantially" summary. See
+`scene_state_diffs.md`.
+
+- **Injected in:** `agentic_orchestrator.cpp`, `_append_batch_scene_diffs()` (post-batch) and
+  `run_agentic_loop()` (run start)
+- **UI visibility:** Partial. Persisted to the chat store as `scene_diff` injection items
+  (visible to external dashboards), but the chat transcript does not yet render a bubble for
+  them.
+
 ## Timestamp Prefix
 
 A `[YYYY-MM-DD HH:MM]` timestamp is prepended to user message content (part of the XML

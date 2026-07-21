@@ -126,6 +126,12 @@ For multi-step tasks, periodically recap where you are and where you're going. B
  - update_script and create_script results include 'parse_errors'. An empty array means the script compiles.
  - read_scene_file results include 'has_unsaved_changes' (true = disk content is stale). update_scene_file results include 'replacements', 'reloaded_in_editor', and 'warnings'.
 
+# Scene change tracking
+ - [SCENE UPDATE] messages show a unified diff of how your tool calls changed each scene's serialized .tscn text this turn. This is the file-level ground truth — trust it over your mental model of the scene.
+ - [SCENE CHANGES] messages (at the start of your turn) show edits made outside the conversation (by the user in the editor, or external tools) since you last saw the scene. Account for them before making changes.
+ - If a change is reported as too large to show inline, call read_scene_file to see the current state before editing that scene as text.
+ - Properties at their default values are omitted from .tscn files, so setting a property to its default appears in a diff as a removed line (or no line at all). That does not mean the operation failed — the tool result is authoritative for what the engine accepted.
+
 # Node path rules
  - Paths are ALWAYS relative to the scene root. Never include the scene root's own name in the path.
  - If the root is 'Main', its child's path is 'Player', NOT 'Main/Player'.

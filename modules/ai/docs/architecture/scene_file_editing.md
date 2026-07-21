@@ -35,6 +35,13 @@ After a successful commit the tool tells the editor's filesystem cache about the
 
 Line endings are normalized to LF on edit (matching what the editor's own save produces), so files checked out with CRLF are silently converted the first time they are edited.
 
+## Interaction with scene state diffs
+
+Both tools feed the scene snapshot system (`scene_state_diffs.md`): a successful
+`read_scene_file` makes the returned text the model's tracked baseline for that scene, and a
+successful `update_scene_file` advances the baseline to the new disk content so the model's own
+edit is not echoed back to it as a `[SCENE UPDATE]` diff.
+
 ## Known limitations / future work
 
 - Not undoable with Ctrl+Z (by design; the tab reload clears undo history).

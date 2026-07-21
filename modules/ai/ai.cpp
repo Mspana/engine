@@ -2,6 +2,7 @@
 #include "ai.h"
 #include "ai_provider.h"
 #include "retrieval.h"
+#include "scene_diff.h"
 
 // Action implementations
 #include "actions/node_actions.h"
@@ -21,6 +22,7 @@
 
 // Headers for execution logic
 #include "editor/editor_interface.h"
+#include "editor/editor_node.h"
 #include "editor/editor_undo_redo_manager.h" // For editor undo/redo
 #include "editor/editor_file_system.h" // For filesystem refresh
 #include "core/object/class_db.h"
@@ -521,6 +523,39 @@ Dictionary AI::execute_single_action(const Dictionary &p_action) {
     EditorRunBar *run_bar = EditorRunBar::get_singleton();
     bool game_is_running = run_bar && run_bar->is_playing();
 
+    // Scene-diff support: actions that mutate the edited scene's serialized
+    // content. Before the first mutation of a scene we have no snapshot for,
+    // capture a baseline so the post-batch diff shows exactly this batch's
+    // changes. (read_scene_file/update_scene_file are handled separately below
+    // — their results already put the file text in front of the model.)
+    static const char *scene_mutating_actions[] = {
+        "create_node", "set_property", "rename_node", "reparent_node",
+        "delete_node", "duplicate_node", "create_resource", "attach_script",
+        "detach_script", "connect_signal", "disconnect_signal", "create_scene",
+        nullptr
+    };
+    bool scene_mutating = false;
+    for (int i = 0; scene_mutating_actions[i]; i++) {
+        if (action_name == scene_mutating_actions[i]) {
+            scene_mutating = true;
+            break;
+        }
+    }
+    String pre_scene_path;
+    if (scene_mutating) {
+        EditorNode *en = EditorNode::get_singleton();
+        Node *edited = en ? en->get_edited_scene() : nullptr;
+        if (edited) {
+            pre_scene_path = edited->get_scene_file_path();
+        }
+        if (!pre_scene_path.is_empty() && !AISceneDiff::has_snapshot(pre_scene_path)) {
+            String baseline = AISceneDiff::serialize_open_scene(pre_scene_path);
+            if (!baseline.is_empty()) {
+                AISceneDiff::set_snapshot(pre_scene_path, baseline);
+            }
+        }
+    }
+
     // Dispatch to appropriate action handler based on action_name
     Dictionary action_result;
     if (action_name == "create_node") {
@@ -616,6 +651,38 @@ Dictionary AI::execute_single_action(const Dictionary &p_action) {
         error_dict["details"] = Dictionary();
         action_result["status"] = "error";
         action_result["error"] = error_dict;
+    }
+
+    // Scene-diff support: record which scenes this batch touched (consumed by
+    // the orchestrator after the batch), and keep snapshots in sync with the
+    // file tools so their changes are never re-reported as diffs.
+    bool action_succeeded = String(action_result.get("status", "")) == "success";
+    if (scene_mutating && action_succeeded) {
+        AISceneDiff::note_batch_scene(pre_scene_path);
+        // create_scene (and future tab-switching mutators) change which scene
+        // is current during the call — record the post-dispatch scene too.
+        EditorNode *en = EditorNode::get_singleton();
+        Node *edited = en ? en->get_edited_scene() : nullptr;
+        if (edited) {
+            AISceneDiff::note_batch_scene(edited->get_scene_file_path());
+        }
+    } else if (action_name == "read_scene_file" && action_succeeded) {
+        // The model just saw the raw disk text — that IS its new baseline.
+        Dictionary r = action_result.get("result", Dictionary());
+        String fp = r.get("file_path", "");
+        String content = String(r.get("content", "")).replace("\r\n", "\n");
+        if (!fp.is_empty() && !content.is_empty()) {
+            AISceneDiff::set_snapshot(fp, content);
+        }
+    } else if (action_name == "update_scene_file" && action_succeeded) {
+        // The model authored this edit; refresh the snapshot from disk so the
+        // post-batch pass doesn't echo the change back as a diff.
+        Dictionary r = action_result.get("result", Dictionary());
+        String fp = r.get("file_path", "");
+        String content = AISceneDiff::read_disk_scene(fp);
+        if (!fp.is_empty() && !content.is_empty()) {
+            AISceneDiff::set_snapshot(fp, content);
+        }
     }
 
     // Inject game state into every result so the model always has situational awareness.

@@ -1173,6 +1173,9 @@ void AIStatusPanel::_notification(int p_what) {
 						if (!orchestrator->is_connected("turn_tokens_ready", callable_mp(this, &AIStatusPanel::_on_turn_tokens_ready))) {
 							orchestrator->connect("turn_tokens_ready", callable_mp(this, &AIStatusPanel::_on_turn_tokens_ready));
 						}
+						if (!orchestrator->is_connected("scene_diff_ready", callable_mp(this, &AIStatusPanel::_on_scene_diff_ready))) {
+							orchestrator->connect("scene_diff_ready", callable_mp(this, &AIStatusPanel::_on_scene_diff_ready));
+						}
 					}
 				}
 			}
@@ -3229,6 +3232,17 @@ void AIStatusPanel::_on_todos_updated(const Array &p_todos) {
 	todo_panel->set_visible(!p_todos.is_empty());
 }
 
+void AIStatusPanel::_on_scene_diff_ready(const Dictionary &p_diff_info) {
+	// Persist the injected scene diffs so the transcript and external
+	// dashboards can show what the model was told. Not resent on reload
+	// (injection items are skipped by _build_model_messages).
+	if (!chat_store.is_valid()) {
+		return;
+	}
+	chat_store->append_item(AIChatStore::make_scene_diff_item(
+			p_diff_info.get("attribution", ""), p_diff_info.get("scenes", Array())));
+}
+
 void AIStatusPanel::_update_debug_pill() {
 	if (!debug_pill) {
 		return;
@@ -5027,6 +5041,9 @@ AIStatusPanel::~AIStatusPanel() {
 				}
 				if (orchestrator->is_connected("todos_updated", callable_mp(this, &AIStatusPanel::_on_todos_updated))) {
 					orchestrator->disconnect("todos_updated", callable_mp(this, &AIStatusPanel::_on_todos_updated));
+				}
+				if (orchestrator->is_connected("scene_diff_ready", callable_mp(this, &AIStatusPanel::_on_scene_diff_ready))) {
+					orchestrator->disconnect("scene_diff_ready", callable_mp(this, &AIStatusPanel::_on_scene_diff_ready));
 				}
 				if (orchestrator->is_connected("api_round_started", callable_mp(this, &AIStatusPanel::_on_api_round_started))) {
 					orchestrator->disconnect("api_round_started", callable_mp(this, &AIStatusPanel::_on_api_round_started));

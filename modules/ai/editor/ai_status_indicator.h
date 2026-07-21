@@ -478,6 +478,7 @@ private:
 	void _on_todos_updated(const Array &p_todos);
 	void _on_api_round_started(int p_turn);
 	void _on_turn_tokens_ready(int p_tokens);
+	void _on_scene_diff_ready(const Dictionary &p_diff_info);
 
 	// Pending message helpers
 	void _show_pending_message();

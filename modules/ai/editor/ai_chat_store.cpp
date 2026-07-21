@@ -314,6 +314,15 @@ Dictionary AIChatStore::make_todo_state_item(const Array &p_tasks) {
 	return d;
 }
 
+Dictionary AIChatStore::make_scene_diff_item(const String &p_attribution, const Array &p_scenes) {
+	Dictionary d;
+	d["type"] = "scene_diff";
+	d["attribution"] = p_attribution; // "ai" (post-tool-batch) or "user" (run start)
+	d["scenes"] = p_scenes; // [{path, diff, too_large, added, removed, missing}]
+	d["timestamp"] = _now_ms();
+	return d;
+}
+
 Dictionary AIChatStore::make_model_info_item(const String &p_model_id, const String &p_provider_name) {
 	Dictionary d;
 	d["type"] = "model_info";

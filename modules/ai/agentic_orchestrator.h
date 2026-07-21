@@ -148,6 +148,17 @@ private:
 	void _handle_max_turns_exceeded();
 	void _handle_max_actions_exceeded();
 
+	// Scene diffs: after a tool batch, append a [SCENE UPDATE] message showing
+	// how the batch changed each touched scene's serialized .tscn text.
+	// At run start, run_agentic_loop injects [SCENE CHANGES] for edits made
+	// outside the conversation (user edits between runs).
+	void _append_batch_scene_diffs();
+	// Refresh snapshots without emitting messages (cancelled batches), so the
+	// next run's user-attributed diff doesn't pick up the AI's own changes.
+	void _refresh_batch_snapshots_silent();
+	// Shared formatter: one scene's entry for a diff context block.
+	static String _format_scene_diff_entry(const Dictionary &p_diff);
+
 	// Signal emissions
 	void _emit_progress_update(const String &p_status, int p_turn);
 	void _emit_tool_result(const Dictionary &p_tool_result);
