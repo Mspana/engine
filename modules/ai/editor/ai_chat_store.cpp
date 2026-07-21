@@ -562,6 +562,21 @@ String AIChatStore::save_screenshot(const String &p_tool_call_id, const String &
 	return filename;
 }
 
+Vector<String> AIChatStore::save_screenshots(const String &p_tool_call_id, const Vector<String> &p_b64s) {
+	// Reuse save_screenshot's full pipeline (sanitisation, dir creation,
+	// decode, write) by calling it per-index with a synthesised pseudo-id
+	// "<call>__<index>". Resulting filenames look like "<call>__0.png" — they
+	// can never collide with the bare "<call>.png" written by single-shot
+	// tools, so old chats with single-screenshot results keep loading.
+	Vector<String> filenames;
+	filenames.resize(p_b64s.size());
+	for (int i = 0; i < p_b64s.size(); i++) {
+		const String pseudo_id = vformat("%s__%d", p_tool_call_id, i);
+		filenames.write[i] = save_screenshot(pseudo_id, p_b64s[i]);
+	}
+	return filenames;
+}
+
 String AIChatStore::load_screenshot_b64(const String &p_filename) const {
 	ERR_FAIL_COND_V_MSG(p_filename.is_empty(), String(), "AIChatStore: Empty filename for screenshot load.");
 

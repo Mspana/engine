@@ -183,6 +183,11 @@ public:
 	String get_images_dir() const;
 	// Save base64 PNG to <images_dir>/<tool_call_id>.png. Returns filename on success, empty on failure.
 	String save_screenshot(const String &p_tool_call_id, const String &p_b64_png);
+	// Multi-screenshot variant: writes PNGs as <safe_call_id>_0.png, _1.png …
+	// and returns the parallel filename vector. Used for run_and_screenshot's
+	// multi-time captures. Single-shot tools still call save_screenshot above
+	// (writes the bare <safe_call_id>.png filename) — schemas don't collide.
+	Vector<String> save_screenshots(const String &p_tool_call_id, const Vector<String> &p_b64s);
 	// Load PNG from <images_dir>/<filename>, return base64 string. Empty on failure.
 	String load_screenshot_b64(const String &p_filename) const;
 

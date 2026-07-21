@@ -9,6 +9,7 @@
 
 #ifdef TOOLS_ENABLED
 #include "editor/ai_chat_store.h"
+#include "editor/ai_image_widgets.h"
 #include "editor/ai_status_indicator.h"
 #include "editor/gif_import_handler.h"
 #include "editor/plugins/editor_plugin.h"
@@ -47,6 +48,8 @@ void initialize_ai_module(ModuleInitializationLevel p_level) {
 	if (p_level == MODULE_INITIALIZATION_LEVEL_EDITOR) {
 		// Register editor plugin classes
 		GDREGISTER_CLASS(AIChatStore);
+		GDREGISTER_CLASS(AIImageStack);
+		GDREGISTER_CLASS(AIImageViewer);
 		GDREGISTER_CLASS(ThinkingCollapsibleEntry);
 		GDREGISTER_CLASS(ToolCollapsibleEntry);
 GDREGISTER_CLASS(AIStatusIndicator);

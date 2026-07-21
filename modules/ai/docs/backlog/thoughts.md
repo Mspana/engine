@@ -28,6 +28,7 @@ Values are just an example here.
 ~~"GIFs are not supported. Would you like to convert your file to a sprite sheet?"~~
 ~~"Convert GIF"   "Cancel"~~
 
+Revert doesn't work. Disable and fix.
 
 ~~The cancelled message is 'thoughts', why? Change.~~
 

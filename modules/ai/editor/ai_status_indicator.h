@@ -32,6 +32,7 @@
 #define AI_STATUS_INDICATOR_H
 
 #include "ai_chat_store.h"
+#include "ai_image_widgets.h"
 #include "core/templates/hash_map.h"
 #include "editor/plugins/editor_plugin.h"
 #include "scene/gui/box_container.h"
@@ -64,6 +65,8 @@ private:
 	bool is_collapsed = true;
 	Button *toggle_button = nullptr;
 	RichTextLabel *body_label = nullptr;
+	Ref<Tween> _collapse_tween;
+	void _on_collapse_finished();
 
 	void _on_toggle_pressed();
 
@@ -94,12 +97,25 @@ private:
 	// Body (hidden when collapsed)
 	PanelContainer *body_container = nullptr;
 	TextEdit *body_text = nullptr;
-	TextureRect *body_screenshot = nullptr;
-	String screenshot_b64;
+	AIImageStack *body_stack = nullptr;
+	// Base64 PNGs feeding the stack and (on click) the viewer. Single-image
+	// tool results yield a 1-element vector; multi-shot run_and_screenshot and
+	// preview_asset populate it with N entries in the order they should be
+	// navigated. Empty when no images.
+	PackedStringArray screenshot_b64s;
 
 	void _on_toggle_pressed();
 	void _on_header_gui_input(const Ref<InputEvent> &p_event);
 	void _update_toggle_icon();
+
+	// Height + fade collapse/expand animation, per the AI design language doc.
+	// `_collapse_tween` is the currently-running tween (if any); it's killed
+	// before a new one starts so rapid toggles don't pile up half-finished
+	// transitions. The "finished" callback only runs at the end of a collapse
+	// (resets minimum size + visibility back to clean defaults).
+	Ref<Tween> _collapse_tween;
+	void _animate_to_collapsed(bool p_collapsed);
+	void _on_collapse_finished();
 
 protected:
 	static void _bind_methods();
@@ -121,8 +137,8 @@ public:
 
 	void set_token_label_visible(bool p_visible);
 
-	TextureRect *get_screenshot_widget() const { return body_screenshot; }
-	String get_screenshot_b64() const { return screenshot_b64; }
+	AIImageStack *get_image_stack() const { return body_stack; }
+	const PackedStringArray &get_screenshot_b64s() const { return screenshot_b64s; }
 
 	ToolCollapsibleEntry();
 };
@@ -390,9 +406,10 @@ private:
 	// Image preview strip (shown above input bar when images are pending)
 	HBoxContainer *image_preview_strip = nullptr;
 
-	// Image lightbox popup (click thumbnail to enlarge)
-	PopupPanel *image_popup = nullptr;
-	TextureRect *image_popup_tex = nullptr;
+	// Image lightbox popup (click thumbnail to enlarge). The viewer accepts a
+	// vector of base64 PNGs and exposes prev/next navigation when more than
+	// one is supplied; a single image looks identical to the old popup.
+	AIImageViewer *image_viewer = nullptr;
 
 	// Build messages array for API call with truncation
 	Array _build_model_messages();
@@ -401,7 +418,7 @@ private:
 	void _remove_pending_image(int p_index);
 	void _clear_pending_images();
 	void _rebuild_image_preview_strip();
-	void _show_image_popup(const String &p_base64);
+	void _show_image_popup(const PackedStringArray &p_b64s);
 	void _on_thumbnail_gui_input(const Ref<InputEvent> &p_event, const String &p_base64);
 
 	// Context usage indicator

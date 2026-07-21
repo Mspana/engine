@@ -708,6 +708,24 @@ static Array _sanitize_tool_calls_index(const Array &p_tool_calls) {
 	return out;
 }
 
+// Human-readable reason for an HTTPClient transport status when a request never
+// reached the response body (connection dropped, DNS/TLS failure, timeout, etc.).
+// Lets the UI distinguish a flaky-network failure from a real API error instead of
+// surfacing a bare "Request failed".
+static String _http_transport_status_reason(int p_status) {
+	switch ((HTTPClient::Status)p_status) {
+		case HTTPClient::STATUS_CANT_RESOLVE: return "could not resolve host";
+		case HTTPClient::STATUS_CANT_CONNECT: return "could not connect";
+		case HTTPClient::STATUS_CONNECTION_ERROR: return "connection error or reset";
+		case HTTPClient::STATUS_TLS_HANDSHAKE_ERROR: return "TLS handshake failed";
+		case HTTPClient::STATUS_DISCONNECTED: return "disconnected";
+		case HTTPClient::STATUS_RESOLVING: return "timed out resolving host";
+		case HTTPClient::STATUS_CONNECTING: return "timed out connecting";
+		case HTTPClient::STATUS_REQUESTING: return "timed out sending request";
+		default: return vformat("transport status %d", p_status);
+	}
+}
+
 // ============================================================================
 // OpenAIProvider Implementation
 // ============================================================================
@@ -900,7 +918,7 @@ void OpenAIProvider::_perform_request(const String &user_prompt, const String &c
 	if (http_client->get_status() != HTTPClient::STATUS_BODY &&
 	    http_client->get_status() != HTTPClient::STATUS_CONNECTED) {
 		ERR_PRINT(vformat("OpenAIProvider: Request failed, status: %d", http_client->get_status()));
-		call_deferred("emit_signal", "request_completed", false, "", "Request failed");
+		call_deferred("emit_signal", "request_completed", false, "", vformat("Request failed (%s)", _http_transport_status_reason(http_client->get_status())));
 		memdelete(http_client);
 		return;
 	}
@@ -1178,7 +1196,7 @@ void OpenAIProvider::_perform_request_with_messages(const Array &p_messages, con
 	if (http_client->get_status() != HTTPClient::STATUS_BODY &&
 	    http_client->get_status() != HTTPClient::STATUS_CONNECTED) {
 		ERR_PRINT(vformat("OpenAIProvider: Request failed, status: %d", http_client->get_status()));
-		call_deferred("emit_signal", "request_completed", false, "", "Request failed");
+		call_deferred("emit_signal", "request_completed", false, "", vformat("Request failed (%s)", _http_transport_status_reason(http_client->get_status())));
 		memdelete(http_client);
 		return;
 	}
@@ -1430,7 +1448,7 @@ void GeminiProvider::_perform_request(const String &user_prompt, const String &c
 	if (http_client->get_status() != HTTPClient::STATUS_BODY &&
 	    http_client->get_status() != HTTPClient::STATUS_CONNECTED) {
 		ERR_PRINT(vformat("GeminiProvider: Request failed, status: %d", http_client->get_status()));
-		call_deferred("emit_signal", "request_completed", false, "", "Request failed");
+		call_deferred("emit_signal", "request_completed", false, "", vformat("Request failed (%s)", _http_transport_status_reason(http_client->get_status())));
 		memdelete(http_client);
 		return;
 	}
@@ -1753,7 +1771,7 @@ void GeminiProvider::_perform_request_with_messages(const Array &p_messages, con
 	if (http_client->get_status() != HTTPClient::STATUS_BODY &&
 	    http_client->get_status() != HTTPClient::STATUS_CONNECTED) {
 		ERR_PRINT(vformat("GeminiProvider: Request failed, status: %d", http_client->get_status()));
-		call_deferred("emit_signal", "request_completed", false, "", "Request failed");
+		call_deferred("emit_signal", "request_completed", false, "", vformat("Request failed (%s)", _http_transport_status_reason(http_client->get_status())));
 		memdelete(http_client);
 		return;
 	}
@@ -2067,7 +2085,7 @@ void XAIProvider::_perform_request(const String &user_prompt, const String &cont
 	if (http_client->get_status() != HTTPClient::STATUS_BODY &&
 	    http_client->get_status() != HTTPClient::STATUS_CONNECTED) {
 		ERR_PRINT(vformat("XAIProvider: Request failed, status: %d", http_client->get_status()));
-		call_deferred("emit_signal", "request_completed", false, "", "Request failed");
+		call_deferred("emit_signal", "request_completed", false, "", vformat("Request failed (%s)", _http_transport_status_reason(http_client->get_status())));
 		memdelete(http_client);
 		return;
 	}
@@ -2322,7 +2340,7 @@ void XAIProvider::_perform_request_with_messages(const Array &p_messages, const 
 	if (http_client->get_status() != HTTPClient::STATUS_BODY &&
 	    http_client->get_status() != HTTPClient::STATUS_CONNECTED) {
 		ERR_PRINT(vformat("XAIProvider: Request failed, status: %d", http_client->get_status()));
-		call_deferred("emit_signal", "request_completed", false, "", "Request failed");
+		call_deferred("emit_signal", "request_completed", false, "", vformat("Request failed (%s)", _http_transport_status_reason(http_client->get_status())));
 		memdelete(http_client);
 		return;
 	}
@@ -2550,7 +2568,7 @@ void AnthropicProvider::_perform_request(const String &user_prompt, const String
 	if (http_client->get_status() != HTTPClient::STATUS_BODY &&
 	    http_client->get_status() != HTTPClient::STATUS_CONNECTED) {
 		ERR_PRINT(vformat("AnthropicProvider: Request failed, status: %d", http_client->get_status()));
-		call_deferred("emit_signal", "request_completed", false, "", "Request failed");
+		call_deferred("emit_signal", "request_completed", false, "", vformat("Request failed (%s)", _http_transport_status_reason(http_client->get_status())));
 		memdelete(http_client);
 		return;
 	}
@@ -2965,7 +2983,7 @@ void AnthropicProvider::_perform_request_with_messages(const Array &p_messages, 
 	if (http_client->get_status() != HTTPClient::STATUS_BODY &&
 	    http_client->get_status() != HTTPClient::STATUS_CONNECTED) {
 		ERR_PRINT(vformat("AnthropicProvider: Request failed, status: %d", http_client->get_status()));
-		call_deferred("emit_signal", "request_completed", false, "", "Request failed");
+		call_deferred("emit_signal", "request_completed", false, "", vformat("Request failed (%s)", _http_transport_status_reason(http_client->get_status())));
 		memdelete(http_client);
 		return;
 	}

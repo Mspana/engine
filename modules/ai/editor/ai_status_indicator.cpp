@@ -161,8 +161,58 @@ void ThinkingCollapsibleEntry::_bind_methods() {
 
 void ThinkingCollapsibleEntry::_on_toggle_pressed() {
 	is_collapsed = !is_collapsed;
-	body_label->set_visible(!is_collapsed);
 	toggle_button->set_text(is_collapsed ? String::utf8("\xe2\x96\xb8 Thinking") : String::utf8("\xe2\x96\xbe Thinking"));
+
+	if (!body_label) {
+		return;
+	}
+
+	if (_collapse_tween.is_valid() && _collapse_tween->is_valid()) {
+		Ref<Tween> prev = _collapse_tween;
+		prev->kill();
+		_collapse_tween.unref();
+	}
+
+	const float duration = 0.15f;
+
+	if (!is_collapsed) {
+		// Expanding — show first so layout can measure, then animate from 0.
+		body_label->show();
+		body_label->set_custom_minimum_size(Size2(0, 0));
+		const float target_h = body_label->get_combined_minimum_size().y;
+		body_label->set_clip_contents(true);
+		body_label->set_modulate(Color(1, 1, 1, 0));
+	} else {
+		body_label->set_clip_contents(true);
+	}
+
+	_collapse_tween = create_tween();
+	_collapse_tween->set_parallel(true);
+	_collapse_tween->set_trans(Tween::TRANS_CUBIC);
+	_collapse_tween->set_ease(Tween::EASE_OUT);
+	const float a_target = is_collapsed ? 0.0f : 1.0f;
+	float h_target;
+	if (!is_collapsed) {
+		body_label->set_custom_minimum_size(Size2(0, 0));
+		h_target = body_label->get_combined_minimum_size().y;
+	} else {
+		h_target = 0.0f;
+	}
+	_collapse_tween->tween_property(body_label, NodePath("modulate:a"), a_target, duration);
+	_collapse_tween->tween_property(body_label, NodePath("custom_minimum_size:y"), h_target, duration);
+	_collapse_tween->chain()->tween_callback(callable_mp(this, &ThinkingCollapsibleEntry::_on_collapse_finished));
+}
+
+void ThinkingCollapsibleEntry::_on_collapse_finished() {
+	if (body_label) {
+		body_label->set_clip_contents(false);
+		body_label->set_modulate(Color(1, 1, 1, 1));
+		body_label->set_custom_minimum_size(Size2(0, 0));
+		if (is_collapsed) {
+			body_label->hide();
+		}
+	}
+	_collapse_tween.unref();
 }
 
 void ThinkingCollapsibleEntry::set_text(const String &p_text) {
@@ -250,13 +300,87 @@ void ToolCollapsibleEntry::set_collapsed(bool p_collapsed) {
 
 	is_collapsed = p_collapsed;
 	_update_toggle_icon();
+	_animate_to_collapsed(is_collapsed);
+}
+
+void ToolCollapsibleEntry::_animate_to_collapsed(bool p_collapsed) {
+	if (_collapse_tween.is_valid() && _collapse_tween->is_valid()) {
+		Ref<Tween> prev = _collapse_tween;
+		prev->kill();
+		_collapse_tween.unref();
+	}
+
+	const float duration = 0.15f;
+	const bool has_stack = body_stack && body_stack->get_image_count() > 0;
+
+	float body_target_h = 0.0f;
+	float stack_target_h = 0.0f;
+
+	if (!p_collapsed) {
+		// Expanding — show targets first so layout populates their natural sizes.
+		if (body_container) {
+			body_container->show();
+			body_container->set_custom_minimum_size(Size2(0, 0));
+			body_target_h = body_container->get_combined_minimum_size().y;
+			body_container->set_clip_contents(true);
+			body_container->set_modulate(Color(1, 1, 1, 0));
+			body_container->set_custom_minimum_size(Size2(0, 0));
+		}
+		if (has_stack) {
+			body_stack->show();
+			stack_target_h = 200.0f * EDSCALE;
+			body_stack->set_clip_contents(true);
+			body_stack->set_modulate(Color(1, 1, 1, 0));
+			body_stack->set_custom_minimum_size(Size2(0, 0));
+		}
+	} else {
+		// Collapsing — start from currently rendered state.
+		if (body_container) {
+			body_container->set_clip_contents(true);
+		}
+		if (has_stack) {
+			body_stack->set_clip_contents(true);
+		}
+	}
+
+	_collapse_tween = create_tween();
+	_collapse_tween->set_parallel(true);
+	_collapse_tween->set_trans(Tween::TRANS_CUBIC);
+	_collapse_tween->set_ease(Tween::EASE_OUT);
+	const float a_target = p_collapsed ? 0.0f : 1.0f;
+	if (body_container) {
+		_collapse_tween->tween_property(body_container, NodePath("modulate:a"), a_target, duration);
+		_collapse_tween->tween_property(body_container, NodePath("custom_minimum_size:y"), p_collapsed ? 0.0f : body_target_h, duration);
+	}
+	if (has_stack) {
+		_collapse_tween->tween_property(body_stack, NodePath("modulate:a"), a_target, duration);
+		_collapse_tween->tween_property(body_stack, NodePath("custom_minimum_size:y"), p_collapsed ? 0.0f : stack_target_h, duration);
+	}
+	_collapse_tween->chain()->tween_callback(callable_mp(this, &ToolCollapsibleEntry::_on_collapse_finished));
+}
+
+void ToolCollapsibleEntry::_on_collapse_finished() {
+	const bool has_stack = body_stack && body_stack->get_image_count() > 0;
 
 	if (body_container) {
-		body_container->set_visible(!is_collapsed);
+		body_container->set_clip_contents(false);
+		body_container->set_modulate(Color(1, 1, 1, 1));
+		body_container->set_custom_minimum_size(Size2(0, 0));
+		if (is_collapsed) {
+			body_container->hide();
+		}
 	}
-	if (body_screenshot && body_screenshot->get_texture().is_valid()) {
-		body_screenshot->set_visible(!is_collapsed);
+	if (has_stack) {
+		body_stack->set_clip_contents(false);
+		body_stack->set_modulate(Color(1, 1, 1, 1));
+		// Restore the default thumbnail height so layout sizes the stack like
+		// it did before the animation started.
+		body_stack->set_custom_minimum_size(Size2(0, 200.0f * EDSCALE));
+		if (is_collapsed) {
+			body_stack->hide();
+		}
 	}
+	_collapse_tween.unref();
 }
 
 bool ToolCollapsibleEntry::get_collapsed() const {
@@ -354,48 +478,76 @@ void ToolCollapsibleEntry::update_from_tool_result(const Dictionary &p_tool_resu
 		if (p_tool_result.has("result")) {
 			Dictionary result = p_tool_result["result"];
 			if (!result.is_empty()) {
-				String b64;
+				// Collect every base64 image this result carries, in display
+				// order (chronological for run_and_screenshot, source order for
+				// preview_asset). Three shapes are recognised:
+				//   - result.screenshot_b64           (single-shot tools)
+				//   - result.screenshots[].screenshot_b64  (multi-shot run_and_screenshot)
+				//   - result._images[]                (preview_asset)
+				PackedStringArray collected_b64s;
+				Dictionary display_result = result.duplicate();
+				bool stripped_for_display = false;
+
 				if (result.has("screenshot_b64")) {
-					b64 = result["screenshot_b64"];
-					Dictionary display_result = result.duplicate();
+					collected_b64s.push_back(result["screenshot_b64"]);
 					display_result.erase("screenshot_b64");
 					display_result["screenshot"] = "<image>";
-					body_content += vformat("\nResult:\n%s", JSON::stringify(display_result, "  ", false));
-				} else if (result.has("screenshots") && result["screenshots"].get_type() == Variant::ARRAY) {
-					// Multi-screenshot case: pull the first b64 for the preview thumbnail
-					// (body_screenshot is single-image), and strip every base64 from the
-					// JSON so the body text stays readable.
+					stripped_for_display = true;
+				}
+				if (result.has("screenshots") && result["screenshots"].get_type() == Variant::ARRAY) {
 					Array shots = result["screenshots"];
-					Dictionary display_result = result.duplicate();
-					Array display_shots;
+					Array shots_for_display;
 					for (int si = 0; si < shots.size(); si++) {
-						Dictionary s = shots[si];
-						if (b64.is_empty() && s.has("screenshot_b64")) {
-							b64 = s["screenshot_b64"];
+						Dictionary entry = shots[si];
+						Dictionary stripped = entry.duplicate();
+						if (entry.has("screenshot_b64")) {
+							collected_b64s.push_back(entry["screenshot_b64"]);
+							stripped.erase("screenshot_b64");
+							stripped["screenshot"] = vformat("<image %d>", collected_b64s.size());
 						}
-						Dictionary stripped = s.duplicate();
-						stripped.erase("screenshot_b64");
-						stripped["screenshot"] = vformat("<image %d>", si + 1);
-						display_shots.push_back(stripped);
+						shots_for_display.push_back(stripped);
 					}
-					display_result["screenshots"] = display_shots;
+					display_result["screenshots"] = shots_for_display;
+					stripped_for_display = true;
+				}
+				if (result.has("_images") && result["_images"].get_type() == Variant::ARRAY) {
+					Array imgs = result["_images"];
+					for (int ii = 0; ii < imgs.size(); ii++) {
+						String s = imgs[ii];
+						if (!s.is_empty()) {
+							collected_b64s.push_back(s);
+						}
+					}
+					display_result.erase("_images");
+					display_result["_images_count"] = imgs.size();
+					stripped_for_display = true;
+				}
+
+				if (stripped_for_display) {
 					body_content += vformat("\nResult:\n%s", JSON::stringify(display_result, "  ", false));
 				} else {
 					body_content += vformat("\nResult:\n%s", JSON::stringify(result, "  ", false));
 				}
-				if (!b64.is_empty() && body_screenshot) {
-					PackedByteArray png_bytes = CoreBind::Marshalls::get_singleton()->base64_to_raw(b64);
-					if (!png_bytes.is_empty()) {
+
+				if (!collected_b64s.is_empty() && body_stack) {
+					Vector<Ref<Texture2D>> texs;
+					PackedStringArray decoded_b64s;
+					for (int i = 0; i < collected_b64s.size(); i++) {
+						const String &b64 = collected_b64s[i];
+						PackedByteArray png_bytes = CoreBind::Marshalls::get_singleton()->base64_to_raw(b64);
+						if (png_bytes.is_empty()) {
+							continue;
+						}
 						Ref<Image> img;
 						img.instantiate();
-						if (img->load_png_from_buffer(png_bytes) == OK) {
-							body_screenshot->set_texture(ImageTexture::create_from_image(img));
-							body_screenshot->set_mouse_filter(Control::MOUSE_FILTER_STOP);
-							body_screenshot->set_default_cursor_shape(Control::CURSOR_POINTING_HAND);
-							body_screenshot->show();
-							screenshot_b64 = b64;
+						if (img->load_png_from_buffer(png_bytes) != OK) {
+							continue;
 						}
+						texs.push_back(ImageTexture::create_from_image(img));
+						decoded_b64s.push_back(b64);
 					}
+					body_stack->set_images(texs);
+					screenshot_b64s = decoded_b64s;
 				}
 			}
 		}
@@ -552,13 +704,10 @@ ToolCollapsibleEntry::ToolCollapsibleEntry() {
 	body_container->add_child(body_text);
 
 	// Screenshot displayed below the text body, toggled by the same collapse button
-	body_screenshot = memnew(TextureRect);
-	body_screenshot->set_h_size_flags(SIZE_EXPAND_FILL);
-	body_screenshot->set_stretch_mode(TextureRect::STRETCH_KEEP_ASPECT_CENTERED);
-	body_screenshot->set_expand_mode(TextureRect::EXPAND_FIT_WIDTH_PROPORTIONAL);
-	body_screenshot->set_custom_minimum_size(Size2(0, 200 * EDSCALE));
-	body_screenshot->hide();
-	inner_vbox->add_child(body_screenshot);
+	body_stack = memnew(AIImageStack);
+	body_stack->set_h_size_flags(SIZE_EXPAND_FILL);
+	body_stack->hide();
+	inner_vbox->add_child(body_stack);
 }
 
 // ============================================================================
@@ -1408,12 +1557,35 @@ void AIStatusPanel::_rebuild_message_list() {
 				display["status"] = content_dict.get("status", "error");
 				if (content_dict.has("result")) {
 					Dictionary result = content_dict["result"];
-					// Reload persisted screenshot for UI thumbnail
-					if (result.has("screenshot") && chat_store.is_valid()) {
-						result = result.duplicate();
-						String b64 = chat_store->load_screenshot_b64(result["screenshot"]);
-						if (!b64.is_empty()) {
-							result["screenshot_b64"] = b64;
+					// Reload persisted screenshot(s) for UI thumbnail. Both the
+					// single-shot and multi-shot shapes need rehydration —
+					// `update_from_tool_result` reads `screenshot_b64` /
+					// `screenshots[].screenshot_b64`, so we restore those fields
+					// from disk before handing the dict on.
+					if (chat_store.is_valid()) {
+						bool needs_dup = result.has("screenshot") || result.has("screenshots");
+						if (needs_dup) {
+							result = result.duplicate();
+						}
+						if (result.has("screenshot")) {
+							String b64 = chat_store->load_screenshot_b64(result["screenshot"]);
+							if (!b64.is_empty()) {
+								result["screenshot_b64"] = b64;
+							}
+						}
+						if (result.has("screenshots") && result["screenshots"].get_type() == Variant::ARRAY) {
+							Array shots = result["screenshots"];
+							for (int si = 0; si < shots.size(); si++) {
+								Dictionary entry = shots[si];
+								if (entry.has("screenshot")) {
+									String b64 = chat_store->load_screenshot_b64(entry["screenshot"]);
+									if (!b64.is_empty()) {
+										entry["screenshot_b64"] = b64;
+										shots[si] = entry;
+									}
+								}
+							}
+							result["screenshots"] = shots;
 						}
 					}
 					display["result"] = result;
@@ -1425,7 +1597,16 @@ void AIStatusPanel::_rebuild_message_list() {
 
 				// Update paired entry if found, otherwise create standalone
 				if (!call_id.is_empty() && pending_tool_entries.has(call_id)) {
-					pending_tool_entries[call_id]->update_from_tool_result(display);
+					ToolCollapsibleEntry *paired = pending_tool_entries[call_id];
+					paired->update_from_tool_result(display);
+					// Wire stack-click → lightbox the same way the live and
+					// non-pending paths do; without this, screenshots loaded
+					// from a previous session render but never respond to a
+					// click. Mirrors the connect at line ~1909 / ~1930.
+					if (paired->get_image_stack() && paired->get_image_stack()->get_image_count() > 0) {
+						paired->get_image_stack()->connect("clicked",
+								callable_mp(this, &AIStatusPanel::_show_image_popup).bind(paired->get_screenshot_b64s()));
+					}
 					pending_tool_entries.erase(call_id);
 				} else {
 					Control *ui = _create_tool_result_ui(display);
@@ -1861,9 +2042,9 @@ Control *AIStatusPanel::_create_tool_result_ui(const Dictionary &p_tool_result) 
 	entry->update_from_tool_result(p_tool_result);
 	entry->set_token_label_visible(_show_token_counts);
 	// Wire screenshot click → lightbox popup (same as chat image thumbnails)
-	if (entry->get_screenshot_widget() && entry->get_screenshot_widget()->get_texture().is_valid()) {
-		entry->get_screenshot_widget()->connect("gui_input",
-				callable_mp(this, &AIStatusPanel::_on_thumbnail_gui_input).bind(entry->get_screenshot_b64()));
+	if (entry->get_image_stack() && entry->get_image_stack()->get_image_count() > 0) {
+		entry->get_image_stack()->connect("clicked",
+				callable_mp(this, &AIStatusPanel::_show_image_popup).bind(entry->get_screenshot_b64s()));
 	}
 	return entry;
 }
@@ -1881,10 +2062,10 @@ void AIStatusPanel::_append_tool_result_ui(const Dictionary &p_tool_result) {
 		if (entry) {
 			entry->update_from_tool_result(p_tool_result);
 			entry->set_token_label_visible(_show_token_counts);
-			// Re-wire screenshot click, now that a screenshot may exist
-			if (entry->get_screenshot_widget() && entry->get_screenshot_widget()->get_texture().is_valid()) {
-				entry->get_screenshot_widget()->connect("gui_input",
-						callable_mp(this, &AIStatusPanel::_on_thumbnail_gui_input).bind(entry->get_screenshot_b64()));
+			// Wire image click, now that a screenshot may exist
+			if (entry->get_image_stack() && entry->get_image_stack()->get_image_count() > 0) {
+				entry->get_image_stack()->connect("clicked",
+						callable_mp(this, &AIStatusPanel::_show_image_popup).bind(entry->get_screenshot_b64s()));
 			}
 		}
 		pending_tool_entries.erase(call_id);
@@ -2402,39 +2583,22 @@ void AIStatusPanel::_rebuild_image_preview_strip() {
 	image_preview_strip->set_visible(!pending_images_raw.is_empty());
 }
 
-void AIStatusPanel::_show_image_popup(const String &p_base64) {
-	if (!image_popup || !image_popup_tex) {
+void AIStatusPanel::_show_image_popup(const PackedStringArray &p_b64s) {
+	if (!image_viewer || p_b64s.is_empty()) {
 		return;
 	}
-	PackedByteArray bytes = CoreBind::Marshalls::get_singleton()->base64_to_raw(p_base64);
-	if (bytes.is_empty()) {
-		return;
-	}
-	Ref<Image> img;
-	img.instantiate();
-	if (img->load_png_from_buffer(bytes) != OK || img->is_empty()) {
-		return;
-	}
-	image_popup_tex->set_texture(ImageTexture::create_from_image(img));
-
-	// Size popup to 85% of viewport, preserving image aspect ratio
-	Size2 vp = get_viewport()->get_visible_rect().size;
-	Size2 max_size = vp * 0.85f;
-	float aspect = (float)img->get_width() / (float)img->get_height();
-	Size2 popup_size = max_size;
-	if (popup_size.x / aspect > max_size.y) {
-		popup_size.x = max_size.y * aspect;
-	} else {
-		popup_size.y = popup_size.x / aspect;
-	}
-	image_popup->set_size(popup_size);
-	image_popup->popup_centered();
+	// Open on the *last* image — that's the one shown topmost in the stack
+	// thumbnail, so the user expects the click to land there. Single-image
+	// callers see no behaviour change (size-1 case has only index 0).
+	image_viewer->popup_for_images(p_b64s, p_b64s.size() - 1);
 }
 
 void AIStatusPanel::_on_thumbnail_gui_input(const Ref<InputEvent> &p_event, const String &p_base64) {
 	Ref<InputEventMouseButton> mb = p_event;
 	if (mb.is_valid() && mb->is_pressed() && mb->get_button_index() == MouseButton::LEFT) {
-		_show_image_popup(p_base64);
+		PackedStringArray single;
+		single.push_back(p_base64);
+		_show_image_popup(single);
 		get_viewport()->set_input_as_handled();
 	}
 }
@@ -2573,16 +2737,34 @@ Array AIStatusPanel::_build_model_messages() {
 			// Content is a Dictionary in canonical format; serialize to string for OpenAI
 			msg["content"] = JSON::stringify(tool_content);
 
-			// Reload persisted screenshot for vision (cross-session continuity)
+			// Reload persisted screenshot(s) for vision (cross-session continuity).
+			// Walks both the single-shot (`screenshot`) and multi-shot
+			// (`screenshots[].screenshot`) shapes — without the multi-shot
+			// branch, reloading a chat that ran a multi-screenshot turn would
+			// only resend the first image to the model on the next request.
 			if (tool_content.has("result") && chat_store.is_valid()) {
 				Dictionary result = tool_content["result"];
+				Array imgs;
 				if (result.has("screenshot")) {
 					String b64 = chat_store->load_screenshot_b64(result["screenshot"]);
 					if (!b64.is_empty()) {
-						Array imgs;
 						imgs.push_back(b64);
-						msg["_images"] = imgs;
 					}
+				}
+				if (result.has("screenshots") && result["screenshots"].get_type() == Variant::ARRAY) {
+					Array shots = result["screenshots"];
+					for (int si = 0; si < shots.size(); si++) {
+						Dictionary entry = shots[si];
+						if (entry.has("screenshot")) {
+							String b64 = chat_store->load_screenshot_b64(entry["screenshot"]);
+							if (!b64.is_empty()) {
+								imgs.push_back(b64);
+							}
+						}
+					}
+				}
+				if (!imgs.is_empty()) {
+					msg["_images"] = imgs;
 				}
 			}
 		}
@@ -3667,10 +3849,11 @@ void AIStatusPanel::_on_orchestrator_tool_result(const Dictionary &p_tool_result
 
 		if (status == String("success")) {
 			Dictionary result = p_tool_result.get("result", Dictionary());
-			// Save screenshot to disk and replace base64 with filename reference.
-			// Applies to any tool that returns a screenshot_b64 field (run_and_screenshot,
-			// capture_2d_viewport, capture_3d_viewport) — keeps JSONL files small and
-			// lets the reload path rehydrate the image from a <call_id>.png on disk.
+			// Save screenshots to disk and replace base64 with filename references.
+			// Applies to any tool that returns image data — keeps JSONL files small
+			// and lets the reload path rehydrate images from PNGs on disk.
+			//   - result.screenshot_b64           → result.screenshot (filename)
+			//   - result.screenshots[].screenshot_b64 → result.screenshots[].screenshot
 			if (result.has("screenshot_b64")) {
 				result = result.duplicate();
 				String filename = chat_store->save_screenshot(call_id, result["screenshot_b64"]);
@@ -3678,6 +3861,28 @@ void AIStatusPanel::_on_orchestrator_tool_result(const Dictionary &p_tool_result
 				if (!filename.is_empty()) {
 					result["screenshot"] = filename;
 				}
+			}
+			if (result.has("screenshots") && result["screenshots"].get_type() == Variant::ARRAY) {
+				Array shots = result["screenshots"];
+				Vector<String> b64s;
+				b64s.resize(shots.size());
+				for (int i = 0; i < shots.size(); i++) {
+					Dictionary entry = shots[i];
+					b64s.write[i] = entry.get("screenshot_b64", "");
+				}
+				Vector<String> filenames = chat_store->save_screenshots(call_id, b64s);
+				Array shots_persisted;
+				shots_persisted.resize(shots.size());
+				for (int i = 0; i < shots.size(); i++) {
+					Dictionary stripped = ((Dictionary)shots[i]).duplicate();
+					stripped.erase("screenshot_b64");
+					if (i < filenames.size() && !filenames[i].is_empty()) {
+						stripped["screenshot"] = filenames[i];
+					}
+					shots_persisted[i] = stripped;
+				}
+				result = result.duplicate();
+				result["screenshots"] = shots_persisted;
 			}
 			content["result"] = result;
 		} else if (status == String("cancelled")) {
@@ -4979,16 +5184,10 @@ AIStatusPanel::AIStatusPanel() {
 	button_row->add_child(continue_revert_button);
 
 	// ========================================
-	// Image lightbox popup
+	// Image lightbox popup (handles 1..N images via AIImageViewer)
 	// ========================================
-	image_popup = memnew(PopupPanel);
-	image_popup_tex = memnew(TextureRect);
-	image_popup_tex->set_stretch_mode(TextureRect::STRETCH_KEEP_ASPECT_CENTERED);
-	image_popup_tex->set_expand_mode(TextureRect::EXPAND_FIT_WIDTH_PROPORTIONAL);
-	image_popup_tex->set_h_size_flags(SIZE_EXPAND_FILL);
-	image_popup_tex->set_v_size_flags(SIZE_EXPAND_FILL);
-	image_popup->add_child(image_popup_tex);
-	add_child(image_popup);
+	image_viewer = memnew(AIImageViewer);
+	add_child(image_viewer);
 
 	// Thinking dot animation timer
 	thinking_dot_timer = memnew(Timer);
