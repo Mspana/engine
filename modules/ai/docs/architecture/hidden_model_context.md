@@ -58,8 +58,9 @@ the prompt-cache prefix (see `prompt_caching.md`). The model's todo state now li
 changes: the `update_todos` tool call arguments and the echoed list in its tool result, both of
 which are part of ordinary append-only history.
 
-- **UI visibility:** Full. The todo panel shows current state; the tool call and result are in
-  the transcript like any other tool use.
+- **UI visibility:** Partial. The todo panel shows current state, but the tool call and its
+  result never render transcript cards. The result is still persisted to the chat store — it
+  must be, so rebuilt histories answer every tool call (see `message_alternation.md`).
 
 ## Scene Diff Injection
 

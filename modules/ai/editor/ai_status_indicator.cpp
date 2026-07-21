@@ -1512,6 +1512,11 @@ void AIStatusPanel::_rebuild_message_list() {
 					}
 					String call_id = block.get("id", "");
 					String tool_name = block.get("name", "");
+					// update_todos never gets a transcript card (todo panel instead) —
+					// without this skip it renders as a forever-pending card.
+					if (tool_name == "update_todos") {
+						continue;
+					}
 					Dictionary args = block.get("args", Dictionary());
 
 					Dictionary placeholder;
@@ -1535,6 +1540,12 @@ void AIStatusPanel::_rebuild_message_list() {
 			} else if (role == "tool") {
 				String call_id = item.data.get("tool_call_id", "");
 				Dictionary content_dict = item.data.get("content", Dictionary());
+
+				// update_todos is persisted for API-history correctness but shown in
+				// the todo panel, not the transcript (mirrors the live suppression).
+				if (String(content_dict.get("tool_name", "")) == "update_todos") {
+					continue;
+				}
 
 				// Estimate tokens for this tool result (same heuristic as orchestrator)
 				int tokens;
@@ -2774,6 +2785,50 @@ Array AIStatusPanel::_build_model_messages() {
 		}
 	}
 
+	// Repair pass: every assistant tool_call must be answered by a tool message
+	// before the next non-tool message, or strict OpenAI-compatible providers
+	// reject the whole request (HTTP 400). Transcripts saved before update_todos
+	// results were persisted have dangling calls, and a crash mid-run can leave
+	// them too — synthesize a stub response for each so those chats stay usable.
+	for (int i = 0; i < messages.size(); i++) {
+		Dictionary msg = messages[i];
+		if (String(msg.get("role", "")) != "assistant" || !msg.has("tool_calls")) {
+			continue;
+		}
+		int next_non_tool = i + 1;
+		Vector<String> answered_ids;
+		while (next_non_tool < messages.size()) {
+			Dictionary next = messages[next_non_tool];
+			if (String(next.get("role", "")) != "tool") {
+				break;
+			}
+			answered_ids.push_back(next.get("tool_call_id", ""));
+			next_non_tool++;
+		}
+		Array tool_calls = msg["tool_calls"];
+		for (int j = 0; j < tool_calls.size(); j++) {
+			Dictionary tc = tool_calls[j];
+			String call_id = tc.get("id", "");
+			if (call_id.is_empty() || answered_ids.has(call_id)) {
+				continue;
+			}
+			Dictionary func = tc.get("function", Dictionary());
+			Dictionary stub_content;
+			stub_content["status"] = "unknown";
+			stub_content["tool_name"] = func.get("name", "");
+			stub_content["note"] = "Tool result was not recorded in the transcript.";
+			Dictionary stub;
+			stub["role"] = "tool";
+			stub["tool_call_id"] = call_id;
+			stub["content"] = JSON::stringify(stub_content);
+			messages.insert(next_non_tool, stub);
+			next_non_tool++;
+			print_line(vformat("AI: Synthesized stub tool response for dangling tool_call '%s' (%s).",
+					call_id, String(func.get("name", ""))));
+		}
+		i = next_non_tool - 1;
+	}
+
 	// Log context info
 	int final_chars = 0;
 	for (int i = start_index; i < items.size(); i++) {
@@ -3826,15 +3881,18 @@ void AIStatusPanel::_on_orchestrator_tool_result(const Dictionary &p_tool_result
 	print_line(vformat("AIStatusPanel: _on_orchestrator_tool_result called - type=%s, status=%s",
 		String(p_tool_result.get("type", "unknown")), String(p_tool_result.get("status", "unknown"))));
 
-	// update_todos is reflected in the todo panel — suppress from transcript
-	if (String(p_tool_result.get("type", "")) == "update_todos") {
-		return;
+	// update_todos is reflected in the todo panel, not the transcript — skip the
+	// card and token count, but fall through to store persistence: the assistant's
+	// tool_call needs a matching tool item when history is rebuilt for the next
+	// request, or strict OpenAI-compatible providers reject it with HTTP 400.
+	const bool suppress_transcript_card = String(p_tool_result.get("type", "")) == "update_todos";
+
+	if (!suppress_transcript_card) {
+		_run_token_total += (int)p_tool_result.get("tokens", 0);
+
+		// Append tool result to chat transcript
+		_append_tool_result_ui(p_tool_result);
 	}
-
-	_run_token_total += (int)p_tool_result.get("tokens", 0);
-
-	// Append tool result to chat transcript
-	_append_tool_result_ui(p_tool_result);
 
 	// Persist to store as canonical tool item (save screenshot to disk, reference by filename)
 	if (chat_store.is_valid()) {

@@ -59,3 +59,14 @@ We merge consecutive same-role messages inside `AnthropicProvider::build_request
 **Option 2 -- Roll back on failure:** Remove the orphaned user message from `chat_store` when a run fails without producing an assistant response. Cleaner data, but adds complexity to the failure path and could lose messages if the error handling itself fails.
 
 **Option 3 -- Merge in provider (chosen):** Merge consecutive same-role messages in the Anthropic provider's request builder. Doesn't fix the underlying data shape but prevents the 400. Simplest, most isolated, provider-specific.
+
+## Dangling Tool Calls (Missing Tool Results)
+
+A related strictness: OpenAI-compatible APIs reject a request if an assistant message advertises `tool_calls` that are not each answered by a `role: "tool"` message before the next non-tool message (Moonshot enforces this; Anthropic has the same rule for `tool_use`/`tool_result` blocks).
+
+Rebuilt histories used to violate this: `update_todos` results were suppressed from the transcript with an early return that also (unintentionally) skipped chat-store persistence. Live runs were fine — the orchestrator's in-memory history had the results — but any follow-up message rebuilt history from the store via `_build_model_messages()`, producing unanswered `update_todos` tool_calls, and the whole request failed with HTTP 400. A crash mid-run can leave the same shape (assistant item persisted, its tool results never written).
+
+Two-part fix, both in `ai_status_indicator.cpp`:
+
+1. **Persist everything:** `_on_orchestrator_tool_result` now suppresses only the transcript card (and token count) for `update_todos`; the result is persisted to the store like any other tool. The reload path filters the same items from display, so live and reloaded transcripts match.
+2. **Repair on rebuild:** `_build_model_messages()` runs a repair pass that synthesizes a stub tool response (`status: "unknown"`, with an explanatory note) for any tool call left unanswered, so transcripts saved before the fix — and crash-truncated ones — remain usable.
