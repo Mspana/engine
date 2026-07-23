@@ -49,7 +49,7 @@
 AI *AI::singleton = nullptr;
 
 static const Vector<String> ALLOWED_ACTIONS = {
-    "create_node","delete_node","duplicate_node","set_property","create_resource",
+    "create_node","delete_node","duplicate_node","set_property","create_resource","create_sprite_frames",
     "create_script","update_script","attach_script","detach_script","rename_script","delete_script",
     "connect_signal","disconnect_signal","run_project","play_test",
     "rename_node","reparent_node","create_scene","open_scene","save_scene","close_scene","set_main_scene","read_scene_file","update_scene_file",
@@ -141,6 +141,26 @@ bool AI::_validate_command_dictionary(const Dictionary &cmd, String &error_msg) 
             error_msg = "'create_resource' optional 'properties' must be a Dictionary.";
             return false;
         }
+    } else if (action == "create_sprite_frames") {
+        if (!args.has("animations") || args["animations"].get_type() != Variant::ARRAY) {
+            error_msg = "'create_sprite_frames' requires array 'animations'.";
+            return false;
+        }
+        if (args.has("node_path") && args["node_path"].get_type() != Variant::STRING) {
+            error_msg = "'create_sprite_frames' optional 'node_path' must be a string.";
+            return false;
+        }
+        if (args.has("save_path") && args["save_path"].get_type() != Variant::STRING) {
+            error_msg = "'create_sprite_frames' optional 'save_path' must be a string.";
+            return false;
+        }
+        bool has_node = args.has("node_path") && !String(args["node_path"]).is_empty();
+        bool has_save = args.has("save_path") && !String(args["save_path"]).is_empty();
+        if (!has_node && !has_save) {
+            error_msg = "'create_sprite_frames' requires 'node_path', 'save_path', or both.";
+            return false;
+        }
+        // Deep per-animation validation happens in the handler (like update_todos).
     } else if (action == "write_dev_note") {
         if (!args.has("summary") || args["summary"].get_type() != Variant::STRING) {
             error_msg = "'write_dev_note' requires string 'summary'.";
@@ -530,8 +550,9 @@ Dictionary AI::execute_single_action(const Dictionary &p_action) {
     // — their results already put the file text in front of the model.)
     static const char *scene_mutating_actions[] = {
         "create_node", "set_property", "rename_node", "reparent_node",
-        "delete_node", "duplicate_node", "create_resource", "attach_script",
-        "detach_script", "connect_signal", "disconnect_signal", "create_scene",
+        "delete_node", "duplicate_node", "create_resource", "create_sprite_frames",
+        "attach_script", "detach_script", "connect_signal", "disconnect_signal",
+        "create_scene",
         nullptr
     };
     bool scene_mutating = false;
@@ -572,6 +593,8 @@ Dictionary AI::execute_single_action(const Dictionary &p_action) {
         action_result = AINodeActions::exec_duplicate_node(action_args);
     } else if (action_name == "create_resource") {
         action_result = AINodeActions::exec_create_resource(action_args);
+    } else if (action_name == "create_sprite_frames") {
+        action_result = AINodeActions::exec_create_sprite_frames(action_args);
     } else if (action_name == "write_dev_note") {
         action_result = _exec_write_dev_note(action_args);
     } else if (action_name == "update_todos") {

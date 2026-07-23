@@ -70,6 +70,56 @@ const String mutation_scene_path_desc = "Scene to modify, e.g. 'res://main.tscn'
 }
 {
 	Dictionary props;
+	props["node_path"] = _make_prop("string", "AnimatedSprite2D or AnimatedSprite3D node to receive the SpriteFrames (path relative to scene root). Optional when save_path is given; at least one of node_path / save_path is required.");
+	props["save_path"] = _make_prop("string", "Optional resource file path ending in .tres (e.g. res://animations/eyes.tres). When given, the SpriteFrames is saved to disk as a standalone resource; if node_path is also given, the node references the saved file instead of embedding it. Omit for a scene-embedded resource (the default, and fully undoable).");
+	props["scene_path"] = _make_prop("string", mutation_scene_path_desc);
+
+	Dictionary anims_prop;
+	anims_prop["type"] = "array";
+	anims_prop["description"] = "Animations to create in the SpriteFrames resource. Define ALL animations in one call (e.g. 'blink' and 'talk' together) — the call REPLACES any existing SpriteFrames on the node.";
+	Dictionary anim_items;
+	anim_items["type"] = "object";
+	Dictionary anim_props;
+	anim_props["name"] = _make_prop("string", "Animation name (e.g. 'idle', 'blink', 'talk'). Must be unique within this call.");
+	anim_props["fps"] = _make_prop("number", "Playback speed in frames per second (default 5.0, must be > 0).");
+	anim_props["loop"] = _make_prop("boolean", "Whether the animation loops (default true). Use false for one-shots like 'blink'.");
+	Dictionary frames_prop;
+	frames_prop["type"] = "array";
+	frames_prop["description"] = "Ordered frames of this animation. The same texture may appear in multiple frames or animations.";
+	Dictionary frame_items;
+	frame_items["type"] = "object";
+	Dictionary frame_props;
+	frame_props["texture"] = _make_prop("string", "Image asset path (res://...). Must be an already-imported texture (png/jpg/webp/svg).");
+	frame_props["duration"] = _make_prop("number", "Relative duration multiplier for this frame (default 1.0, must be > 0). At 5 fps, duration 2.0 shows the frame for 0.4s instead of 0.2s.");
+	Dictionary region_prop;
+	region_prop["type"] = "array";
+	Dictionary region_items;
+	region_items["type"] = "number";
+	region_prop["items"] = region_items;
+	region_prop["description"] = "Optional [x, y, width, height] pixel rect to cut this frame out of a sprite-sheet texture (wraps it in an AtlasTexture). Omit to use the whole image.";
+	frame_props["region"] = region_prop;
+	frame_items["properties"] = frame_props;
+	Array frame_req;
+	frame_req.push_back("texture");
+	frame_items["required"] = frame_req;
+	frames_prop["items"] = frame_items;
+	anim_props["frames"] = frames_prop;
+	anim_items["properties"] = anim_props;
+	Array anim_req;
+	anim_req.push_back("name");
+	anim_req.push_back("frames");
+	anim_items["required"] = anim_req;
+	anims_prop["items"] = anim_items;
+	props["animations"] = anims_prop;
+
+	Array req;
+	req.push_back("animations");
+	tools.push_back(_make_tool("create_sprite_frames",
+			"Build a fully-populated SpriteFrames resource — multiple named animations, per-frame textures, durations, fps, loop — and assign it to an AnimatedSprite2D/AnimatedSprite3D's sprite_frames slot in ONE declarative call. ALWAYS prefer this over scripted frame-swapping (texture-swap timers/coroutines, per-pixel ColorRects) for frame-by-frame animation. Replaces the node's existing SpriteFrames entirely (undoable), so re-issue the full desired state to modify. All texture paths are validated before anything changes; on error nothing is mutated. After assignment the node's current animation is set automatically; set the node's 'autoplay' property with set_property if it should play on scene start.",
+			props, req));
+}
+{
+	Dictionary props;
 	props["node_path"] = _make_prop("string", "Path of the node to rename");
 	props["new_name"] = _make_prop("string", "New name for the node");
 	props["scene_path"] = _make_prop("string", mutation_scene_path_desc);

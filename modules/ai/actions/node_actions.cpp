@@ -4,12 +4,21 @@
 #include "node_actions.h"
 #include "action_common.h"
 
+#include "core/config/project_settings.h"
 #include "core/object/class_db.h"
 #include "core/string/node_path.h"
+#include "core/io/dir_access.h"
+#include "core/io/file_access.h"
 #include "core/io/json.h"
 #include "core/io/resource.h"
 #include "core/io/resource_loader.h"
+#include "core/io/resource_saver.h"
+#include "core/templates/hash_map.h"
+#include "core/templates/hash_set.h"
+#include "editor/editor_file_system.h"
 #include "scene/main/node.h"
+#include "scene/resources/atlas_texture.h"
+#include "scene/resources/sprite_frames.h"
 
 namespace {
 
@@ -807,6 +816,350 @@ Dictionary exec_create_resource(const Dictionary &args) {
 
 	print_line(vformat("AI: Executed create_resource. Node: %s, Property: %s, Type: %s",
 		node_path_str, property_name, resource_type));
+	return ai_create_success_result(result_data);
+}
+
+Dictionary exec_create_sprite_frames(const Dictionary &args) {
+	// --- Top-level argument shape ---
+	String node_path_str;
+	if (args.has("node_path")) {
+		if (args["node_path"].get_type() != Variant::STRING) {
+			return ai_create_error_result(AIErrorCodes::INVALID_ARGS, "'node_path' must be a string");
+		}
+		node_path_str = args["node_path"];
+	}
+	String save_path;
+	if (args.has("save_path")) {
+		if (args["save_path"].get_type() != Variant::STRING) {
+			return ai_create_error_result(AIErrorCodes::INVALID_ARGS, "'save_path' must be a string");
+		}
+		save_path = args["save_path"];
+	}
+	const bool assign_to_node = !node_path_str.is_empty();
+	const bool save_to_disk = !save_path.is_empty();
+	if (!assign_to_node && !save_to_disk) {
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			"Provide 'node_path' (assign to an AnimatedSprite2D/3D), 'save_path' (save a .tres), or both.");
+	}
+	if (!args.has("animations") || args["animations"].get_type() != Variant::ARRAY) {
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS, "'animations' must be an array");
+	}
+	Array animations = args["animations"];
+
+	// --- Structural spec validation. Pure: collects EVERY problem before failing,
+	// so the model can fix the whole spec in one retry instead of ping-ponging. ---
+	Array problems;
+	Array spec_warnings;
+	HashSet<String> seen_names;
+	int total_frames = 0;
+	auto is_num = [](const Variant &v) {
+		return v.get_type() == Variant::INT || v.get_type() == Variant::FLOAT;
+	};
+
+	if (animations.is_empty()) {
+		problems.push_back("animations: must contain at least one animation");
+	}
+	for (int a = 0; a < animations.size(); a++) {
+		if (animations[a].get_type() != Variant::DICTIONARY) {
+			problems.push_back(vformat("animations[%d]: must be an object", a));
+			continue;
+		}
+		Dictionary anim = animations[a];
+		if (!anim.has("name") || anim["name"].get_type() != Variant::STRING || String(anim["name"]).is_empty()) {
+			problems.push_back(vformat("animations[%d].name: required non-empty string", a));
+		} else {
+			String name = anim["name"];
+			if (seen_names.has(name)) {
+				problems.push_back(vformat("animations[%d].name: duplicate name '%s'", a, name));
+			} else {
+				seen_names.insert(name);
+			}
+		}
+		if (anim.has("fps") && (!is_num(anim["fps"]) || (double)anim["fps"] <= 0.0)) {
+			problems.push_back(vformat("animations[%d].fps: must be a number > 0", a));
+		}
+		if (anim.has("loop") && anim["loop"].get_type() != Variant::BOOL) {
+			problems.push_back(vformat("animations[%d].loop: must be a boolean", a));
+		}
+		if (!anim.has("frames") || anim["frames"].get_type() != Variant::ARRAY || Array(anim["frames"]).is_empty()) {
+			problems.push_back(vformat("animations[%d].frames: required non-empty array", a));
+			continue;
+		}
+		Array frames_arr = anim["frames"];
+		for (int f = 0; f < frames_arr.size(); f++) {
+			if (frames_arr[f].get_type() != Variant::DICTIONARY) {
+				problems.push_back(vformat("animations[%d].frames[%d]: must be an object", a, f));
+				continue;
+			}
+			Dictionary frame = frames_arr[f];
+			if (!frame.has("texture") || frame["texture"].get_type() != Variant::STRING || !String(frame["texture"]).begins_with("res://")) {
+				problems.push_back(vformat("animations[%d].frames[%d].texture: required res:// path", a, f));
+			}
+			if (frame.has("duration")) {
+				if (!is_num(frame["duration"]) || (double)frame["duration"] <= 0.0) {
+					problems.push_back(vformat("animations[%d].frames[%d].duration: must be a number > 0", a, f));
+				} else if ((double)frame["duration"] < 0.01) {
+					spec_warnings.push_back(vformat("animations[%d].frames[%d].duration: below 0.01, SpriteFrames clamps it to 0.01", a, f));
+				}
+			}
+			if (frame.has("region")) {
+				bool region_ok = frame["region"].get_type() == Variant::ARRAY;
+				Array region = region_ok ? Array(frame["region"]) : Array();
+				region_ok = region_ok && region.size() == 4;
+				for (int i = 0; region_ok && i < 4; i++) {
+					region_ok = is_num(region[i]);
+				}
+				if (region_ok && ((double)region[2] <= 0.0 || (double)region[3] <= 0.0)) {
+					region_ok = false;
+				}
+				if (!region_ok) {
+					problems.push_back(vformat("animations[%d].frames[%d].region: must be [x, y, width, height] numbers with width/height > 0", a, f));
+				}
+			}
+			total_frames++;
+		}
+	}
+	// Guard against degenerate model output; UndoRedo history and .tres size grow linearly.
+	if (total_frames > 10000) {
+		problems.push_back(vformat("total frame count %d exceeds the 10000 limit", total_frames));
+	} else if (total_frames > 1000) {
+		spec_warnings.push_back(vformat("%d total frames is unusually large; expect a heavy resource", total_frames));
+	}
+	if (!problems.is_empty()) {
+		Dictionary details;
+		details["problems"] = problems;
+		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+			vformat("Animation spec invalid (%d problem(s)) — nothing was changed.", problems.size()), details);
+	}
+
+	if (save_to_disk) {
+		if (!save_path.begins_with("res://") || !(save_path.ends_with(".tres") || save_path.ends_with(".res"))) {
+			return ai_create_error_result(AIErrorCodes::INVALID_PATH,
+				"'save_path' must be a res:// path ending in .tres or .res");
+		}
+		if (FileAccess::exists(save_path)) {
+			return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+				vformat("'%s' already exists. Choose a new path, or remove it with delete_asset first.", save_path));
+		}
+	}
+
+	// --- Editor-state resolution (assignment only; save_path-only calls need no scene) ---
+	EditorUndoRedoManager *undo_redo = nullptr;
+	Node *edited_scene_root = nullptr;
+	Node *target_node = nullptr;
+	Variant old_value;
+	bool switched_tab = false;
+	if (assign_to_node) {
+		undo_redo = ai_get_undo_redo();
+		if (!undo_redo) {
+			return ai_create_error_result(AIErrorCodes::NO_UNDO_REDO,
+				"EditorUndoRedoManager singleton not found");
+		}
+		Dictionary focus_error;
+		edited_scene_root = ai_focus_scene_for_mutation(args, focus_error, &switched_tab);
+		if (!edited_scene_root) {
+			return focus_error;
+		}
+		target_node = ai_get_node_by_path(node_path_str);
+		if (!target_node) {
+			return ai_node_not_found_error(node_path_str);
+		}
+		// The node must expose a SpriteFrames-compatible 'sprite_frames' slot. Checked
+		// via the property list, not class names, so AnimatedSprite2D, AnimatedSprite3D,
+		// and scripted nodes with the same contract all pass.
+		bool slot_ok = false;
+		List<PropertyInfo> plist;
+		target_node->get_property_list(&plist);
+		for (const PropertyInfo &pi : plist) {
+			if (pi.name != StringName("sprite_frames")) {
+				continue;
+			}
+			if (pi.type == Variant::OBJECT) {
+				if (pi.hint != PROPERTY_HINT_RESOURCE_TYPE || pi.hint_string.is_empty()) {
+					slot_ok = true; // Untyped object slot — nothing to validate against.
+				} else {
+					Vector<String> accepted = pi.hint_string.split(",");
+					for (const String &base_raw : accepted) {
+						String base = base_raw.strip_edges();
+						if (!base.is_empty() && ClassDB::is_parent_class(StringName("SpriteFrames"), StringName(base))) {
+							slot_ok = true;
+							break;
+						}
+					}
+				}
+			}
+			break;
+		}
+		if (!slot_ok) {
+			return ai_create_error_result(AIErrorCodes::INVALID_TYPE,
+				vformat("Node '%s' (%s) has no SpriteFrames-compatible 'sprite_frames' property. Target an AnimatedSprite2D or AnimatedSprite3D.",
+					node_path_str, target_node->get_class()));
+		}
+		old_value = target_node->get("sprite_frames");
+	}
+
+	// --- Atomic texture loading: every path verified before anything is mutated ---
+	HashMap<String, Ref<Texture2D>> tex_cache;
+	Array bad_textures;
+	for (int a = 0; a < animations.size(); a++) {
+		Dictionary anim = animations[a];
+		Array frames_arr = anim["frames"];
+		for (int f = 0; f < frames_arr.size(); f++) {
+			Dictionary frame = frames_arr[f];
+			String tex_path = frame["texture"];
+			if (tex_cache.has(tex_path)) {
+				continue;
+			}
+			String reason;
+			Ref<Texture2D> tex;
+			if (!FileAccess::exists(tex_path)) {
+				reason = "file not found";
+			} else {
+				tex = ResourceLoader::load(tex_path);
+				if (tex.is_null()) {
+					reason = "not loadable as a Texture2D (if the file was just added, the editor may not have imported it yet — wait for the import to finish, or bring it in with import_asset)";
+				}
+			}
+			if (tex.is_valid()) {
+				tex_cache.insert(tex_path, tex);
+			} else {
+				Dictionary bad;
+				bad["path"] = tex_path;
+				bad["reason"] = reason;
+				bad_textures.push_back(bad);
+			}
+		}
+	}
+	if (!bad_textures.is_empty()) {
+		Dictionary details;
+		details["bad_textures"] = bad_textures;
+		return ai_create_error_result(AIErrorCodes::FILE_NOT_FOUND,
+			vformat("%d texture path(s) invalid — nothing was changed.", bad_textures.size()), details);
+	}
+	// Region-vs-texture bounds: warning, not error — a clipped frame renders wrong
+	// but recoverably, and import settings can legitimately alter dimensions.
+	for (int a = 0; a < animations.size(); a++) {
+		Dictionary anim = animations[a];
+		Array frames_arr = anim["frames"];
+		for (int f = 0; f < frames_arr.size(); f++) {
+			Dictionary frame = frames_arr[f];
+			if (!frame.has("region")) {
+				continue;
+			}
+			Array region = frame["region"];
+			Ref<Texture2D> tex = tex_cache[String(frame["texture"])];
+			const double rx = region[0];
+			const double ry = region[1];
+			const double rw = region[2];
+			const double rh = region[3];
+			if (rx < 0 || ry < 0 || rx + rw > tex->get_width() || ry + rh > tex->get_height()) {
+				spec_warnings.push_back(vformat("animations[%d].frames[%d].region: extends outside '%s' (%dx%d) — the frame will render clipped or empty",
+					a, f, String(frame["texture"]), tex->get_width(), tex->get_height()));
+			}
+		}
+	}
+
+	// --- Build the SpriteFrames (in-memory; still no editor mutation) ---
+	Ref<SpriteFrames> sprite_frames;
+	sprite_frames.instantiate();
+	// The constructor pre-creates a "default" animation; drop it so the resource holds
+	// exactly the requested set (a user-supplied "default" is re-added like any other).
+	// Both AnimatedSprite node types auto-select the first available animation on
+	// assignment, so removing it cannot leave the node without a valid animation.
+	sprite_frames->remove_animation(StringName("default"));
+
+	Array anim_summaries;
+	for (int a = 0; a < animations.size(); a++) {
+		Dictionary anim = animations[a];
+		StringName anim_name = String(anim["name"]);
+		double fps = anim.has("fps") ? (double)anim["fps"] : 5.0;
+		bool loop = anim.has("loop") ? (bool)anim["loop"] : true;
+		sprite_frames->add_animation(anim_name);
+		sprite_frames->set_animation_speed(anim_name, fps);
+		sprite_frames->set_animation_loop(anim_name, loop);
+		Array frames_arr = anim["frames"];
+		for (int f = 0; f < frames_arr.size(); f++) {
+			Dictionary frame = frames_arr[f];
+			Ref<Texture2D> tex = tex_cache[String(frame["texture"])];
+			if (frame.has("region")) {
+				Array region = frame["region"];
+				// Fresh AtlasTexture per frame — regions differ, never share.
+				Ref<AtlasTexture> atlas;
+				atlas.instantiate();
+				atlas->set_atlas(tex);
+				atlas->set_region(Rect2((real_t)(double)region[0], (real_t)(double)region[1], (real_t)(double)region[2], (real_t)(double)region[3]));
+				tex = atlas;
+			}
+			float duration = frame.has("duration") ? (float)(double)frame["duration"] : 1.0f;
+			sprite_frames->add_frame(anim_name, tex, duration);
+		}
+		Dictionary summary;
+		summary["name"] = String(anim["name"]);
+		summary["frame_count"] = sprite_frames->get_frame_count(anim_name);
+		summary["fps"] = fps;
+		summary["loop"] = loop;
+		anim_summaries.push_back(summary);
+	}
+
+	// --- save_path branch. Disk write is NOT undoable (same asymmetry as
+	// create_scene/create_script); the node assignment below still is. ---
+	String saved_path;
+	if (save_to_disk) {
+		Error mkdir_err = DirAccess::make_dir_recursive_absolute(ProjectSettings::get_singleton()->globalize_path(save_path.get_base_dir()));
+		if (mkdir_err != OK && mkdir_err != ERR_ALREADY_EXISTS) {
+			return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+				vformat("Could not create directory for '%s' (error %d)", save_path, mkdir_err));
+		}
+		Error save_err = ResourceSaver::save(sprite_frames, save_path);
+		if (save_err != OK) {
+			return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
+				vformat("ResourceSaver::save failed for '%s' (error %d)", save_path, save_err));
+		}
+		// Adopt the on-disk identity so the scene serializes an ext_resource
+		// reference instead of embedding a copy.
+		sprite_frames->set_path(save_path, true);
+		if (EditorFileSystem::get_singleton()) {
+			EditorFileSystem::get_singleton()->update_file(save_path);
+		}
+		saved_path = save_path;
+	}
+
+	// --- Assignment under UndoRedo. The history's Variants hold Refs to both the
+	// new and old resource, so lifetimes are covered for undo/redo/checkpoints. ---
+	if (assign_to_node) {
+		undo_redo->create_action("AI Create SpriteFrames");
+		undo_redo->add_do_method(target_node, "set", "sprite_frames", sprite_frames);
+		undo_redo->add_undo_method(target_node, "set", "sprite_frames", old_value);
+		undo_redo->commit_action();
+	}
+
+	Dictionary result_data;
+	result_data["animations"] = anim_summaries;
+	result_data["total_frames"] = total_frames;
+	if (assign_to_node) {
+		result_data["node_path"] = node_path_str;
+		result_data["scene_path"] = edited_scene_root->get_scene_file_path();
+		result_data["replaced_existing"] = old_value.get_type() == Variant::OBJECT && old_value.operator Object *() != nullptr;
+		bool anim_prop_valid = false;
+		Variant current_anim = target_node->get(StringName("animation"), &anim_prop_valid);
+		if (anim_prop_valid) {
+			result_data["current_animation"] = current_anim;
+		}
+		result_data["warnings"] = ai_get_node_warnings(target_node);
+		if (switched_tab) {
+			result_data["switched_scene_tab"] = true;
+		}
+	}
+	if (save_to_disk) {
+		result_data["saved_path"] = saved_path;
+	}
+	if (!spec_warnings.is_empty()) {
+		result_data["spec_warnings"] = spec_warnings;
+	}
+
+	print_line(vformat("AI: Executed create_sprite_frames. Node: %s, Animations: %d, Frames: %d, Saved: %s",
+		assign_to_node ? node_path_str : String("(none)"), animations.size(), total_frames,
+		save_to_disk ? saved_path : String("no")));
 	return ai_create_success_result(result_data);
 }
 
