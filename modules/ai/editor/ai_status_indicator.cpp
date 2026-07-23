@@ -2770,6 +2770,17 @@ Array AIStatusPanel::_build_model_messages() {
 					tool_calls_wire.push_back(tc);
 				}
 			}
+			// Skip items with no text and no tool calls — strict providers
+			// (Moonshot) reject empty assistant messages with HTTP 400.
+			// Transcripts saved before the orchestrator stopped persisting
+			// them can still contain one (e.g. a reasoning model that burned
+			// its whole completion budget thinking). Skipping may leave
+			// consecutive user messages, which AnthropicProvider already
+			// merges for the one API that enforces alternation.
+			if (text_content.is_empty() && tool_calls_wire.is_empty()) {
+				print_line("AI: Skipped empty assistant message during history rebuild.");
+				continue;
+			}
 			msg["role"] = "assistant";
 			msg["content"] = text_content.is_empty() ? Variant() : Variant(text_content);
 			if (!tool_calls_wire.is_empty()) {

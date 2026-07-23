@@ -3463,6 +3463,12 @@ Dictionary ClarifaiProvider::build_request_body_with_messages(const Array &p_mes
 MoonshotProvider::MoonshotProvider() : OpenAIProvider() {
 	model = get_default_model();
 	base_url = get_default_base_url();
+	// Kimi models have always-on reasoning that counts against the completion
+	// budget; the global 8000 default can be consumed entirely by the thinking
+	// channel, yielding finish_reason=length with no visible output. Moonshot's
+	// own default cap is 131072 — 32768 gives reasoning headroom while bounding
+	// worst-case per-turn output spend.
+	max_tokens = 32768;
 
 	String env_key = load_api_key_from_env("MOONSHOT_API_KEY");
 	if (!env_key.is_empty()) {

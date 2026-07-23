@@ -70,3 +70,16 @@ Two-part fix, both in `ai_status_indicator.cpp`:
 
 1. **Persist everything:** `_on_orchestrator_tool_result` now suppresses only the transcript card (and token count) for `update_todos`; the result is persisted to the store like any other tool. The reload path filters the same items from display, so live and reloaded transcripts match.
 2. **Repair on rebuild:** `_build_model_messages()` runs a repair pass that synthesizes a stub tool response (`status: "unknown"`, with an explanatory note) for any tool call left unanswered, so transcripts saved before the fix — and crash-truncated ones — remain usable.
+
+## Empty Assistant Messages
+
+Another strictness in the same family: Moonshot rejects any request containing an assistant message with no content and no tool calls (`HTTP 400: the message at position N with role 'assistant' must not be empty`).
+
+Reasoning models can produce exactly that shape. Kimi's thinking channel counts against the completion budget, so a hard problem can consume the entire `max_tokens` on `reasoning_content` and return `finish_reason: "length"` with empty `content` and no tool calls. The orchestrator used to treat this as a successful final answer and persist an empty assistant item — after which every follow-up message replayed it and the whole chat was permanently rejected with 400.
+
+Two-part fix, mirroring the dangling-tool-call approach:
+
+1. **Don't persist it:** `_process_native_tool_response` (orchestrator) now ends the run with a visible error when a response has no content and no tool calls — "model ran out of output tokens while reasoning" for `finish_reason: "length"` — instead of storing an empty assistant item. The error is persisted as a `system`/`error` item, which message building already skips.
+2. **Repair on rebuild:** `_build_model_messages()` skips any assistant item that yields no text and no tool calls, so transcripts saved before the fix remain usable. Skipping can leave consecutive `user` messages, which the Anthropic provider's same-role merge (above) already handles.
+
+Additionally, `MoonshotProvider` raises `max_tokens` from the global 8000 default to 32768, since always-on reasoning shares that budget and 8000 is easily exhausted before any visible output is produced.

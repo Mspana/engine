@@ -513,6 +513,22 @@ void AgenticOrchestrator::_process_native_tool_response(const Dictionary &p_api_
 	print_line(vformat("AgenticOrchestrator: finish_reason=%s, content_len=%d, tool_calls=%d",
 			finish_reason, content.length(), tool_calls.size()));
 
+	// A response with no content and no tool calls must not be persisted:
+	// strict providers (Moonshot) reject any later request that replays an
+	// empty assistant message, permanently bricking the chat. Reasoning models
+	// can burn the entire completion budget on their thinking channel and
+	// return exactly this shape with finish_reason == "length".
+	if (content.is_empty() && tool_calls.is_empty()) {
+		if (finish_reason == "length") {
+			_emit_run_complete(false, "Error: Model ran out of output tokens while reasoning (finish_reason=length) and returned no visible output. Try re-sending the request.");
+		} else {
+			print_line(vformat("AgenticOrchestrator: Empty final response (finish_reason=%s); nothing persisted.", finish_reason));
+			_emit_run_complete(true, "");
+		}
+		_is_running = false;
+		return;
+	}
+
 	// --- Build canonical assistant item (content_blocks) -------------------
 	// This is emitted via assistant_item_ready BEFORE executing any tools,
 	// so the store records the assistant message before its results arrive.
