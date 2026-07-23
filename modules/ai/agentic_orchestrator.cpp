@@ -94,8 +94,13 @@ void AgenticOrchestrator::_bind_methods() {
 	// Emitted whenever scene diffs are injected into model context, so the
 	// panel can persist them to the chat store (dashboard visibility).
 	ADD_SIGNAL(MethodInfo("scene_diff_ready", PropertyInfo(Variant::DICTIONARY, "diff_info")));
+	// user_injection_consumed: the queued mid-run messages with these ids were
+	// just appended to the model conversation (fires right before the next API
+	// call). The UI persists them to the transcript at this moment.
+	ADD_SIGNAL(MethodInfo("user_injection_consumed", PropertyInfo(Variant::ARRAY, "ids")));
 	ClassDB::bind_method(D_METHOD("set_todos", "todos"), &AgenticOrchestrator::set_todos);
-	ClassDB::bind_method(D_METHOD("inject_user_message", "message"), &AgenticOrchestrator::inject_user_message);
+	ClassDB::bind_method(D_METHOD("inject_user_message", "id", "message"), &AgenticOrchestrator::inject_user_message);
+	ClassDB::bind_method(D_METHOD("remove_pending_injection", "id"), &AgenticOrchestrator::remove_pending_injection);
 }
 
 void AgenticOrchestrator::run_agentic_loop(const Array &p_initial_messages, Ref<AIProvider> p_provider) {
@@ -211,6 +216,13 @@ void AgenticOrchestrator::run_agentic_loop(const Array &p_initial_messages, Ref<
 	current_run.user_message_id = 0;
 	current_run.todos.clear();
 	current_run.has_todos = false;
+	// Stale-state hygiene: _current_tool_calls persists past run end (a cancel
+	// on turn 1 of this run must not scan the previous run's batch), and a
+	// pending deferred response/retry from a cancelled run must not fire here.
+	_current_tool_calls = Array();
+	_pending_response = Dictionary();
+	_pending_user_injections.clear();
+	_run_gen++;
 
 	// Disconnect from old provider if any
 	if (provider.is_valid() && provider != p_provider) {
@@ -258,14 +270,25 @@ void AgenticOrchestrator::_send_model_request() {
 		return;
 	}
 
-	// Consume any pending user injection before sending to the model
-	if (!_pending_user_injection.is_empty()) {
-		Dictionary user_msg;
-		user_msg["role"] = "user";
-		user_msg["content"] = _pending_user_injection;
-		current_run.conversation_history.push_back(user_msg);
-		print_line(vformat("AgenticOrchestrator: Injected user message: %s", _pending_user_injection.substr(0, 80)));
-		_pending_user_injection = "";
+	// Consume pending user injections before sending to the model. Each becomes
+	// its own user message in the same <user_message> wrapper the panel applies
+	// when rebuilding history from the store, so the conversation this run sees
+	// matches the one the next run rebuilds. The consumed signal fires in the
+	// same synchronous step as the push — the UI persists the items on it.
+	if (!_pending_user_injections.is_empty()) {
+		Dictionary dt = Time::get_singleton()->get_datetime_dict_from_unix_time((int64_t)Time::get_singleton()->get_unix_time_from_system());
+		String prefix = vformat("[%04d-%02d-%02d %02d:%02d] ", (int)dt["year"], (int)dt["month"], (int)dt["day"], (int)dt["hour"], (int)dt["minute"]);
+		Array consumed_ids;
+		for (const PendingInjection &inj : _pending_user_injections) {
+			Dictionary user_msg;
+			user_msg["role"] = "user";
+			user_msg["content"] = vformat("<user_message>\n%s%s\n</user_message>", prefix, inj.text);
+			current_run.conversation_history.push_back(user_msg);
+			consumed_ids.push_back(inj.id);
+			print_line(vformat("AgenticOrchestrator: Injected user message: %s", inj.text.substr(0, 80)));
+		}
+		_pending_user_injections.clear();
+		emit_signal("user_injection_consumed", consumed_ids);
 	}
 
 	// Increment turn counter
@@ -327,10 +350,15 @@ void AgenticOrchestrator::_schedule_request_retry(float p_delay_seconds) {
 		return;
 	}
 	Ref<SceneTreeTimer> timer = tree->create_timer(p_delay_seconds);
-	timer->connect("timeout", callable_mp(this, &AgenticOrchestrator::_retry_model_request), CONNECT_ONE_SHOT);
+	timer->connect("timeout", callable_mp(this, &AgenticOrchestrator::_retry_model_request).bind(_run_gen), CONNECT_ONE_SHOT);
 }
 
-void AgenticOrchestrator::_retry_model_request() {
+void AgenticOrchestrator::_retry_model_request(uint64_t p_run_gen) {
+	if (p_run_gen != _run_gen) {
+		// Timer from a cancelled run; a new run may already be live — firing
+		// here would send a duplicate request into it.
+		return;
+	}
 	if (!_is_running) {
 		return; // Run ended while the backoff timer was pending.
 	}
@@ -562,38 +590,7 @@ void AgenticOrchestrator::_process_native_tool_response(const Dictionary &p_api_
 		if (current_run.cancelled) {
 			// Emit synthetic cancelled results for all remaining tool calls (no-orphan invariant)
 			for (int j = i; j < tool_calls.size(); j++) {
-				Dictionary tc = tool_calls[j];
-				String call_id = tc.get("id", "");
-				Dictionary function = tc.get("function", Dictionary());
-				String tool_name = function.get("name", "");
-				JSON args_parser;
-				Dictionary args;
-				if (args_parser.parse(String(function.get("arguments", "{}"))) == OK &&
-						args_parser.get_data().get_type() == Variant::DICTIONARY) {
-					args = args_parser.get_data();
-				}
-
-				// Add to in-memory history (wire format)
-				Dictionary cancelled_wire;
-				cancelled_wire["role"] = "tool";
-				cancelled_wire["tool_call_id"] = call_id;
-				Dictionary cancelled_content_dict;
-				cancelled_content_dict["status"] = "cancelled";
-				cancelled_content_dict["tool_name"] = tool_name;
-				cancelled_content_dict["reason"] = "user_cancelled_run";
-				cancelled_wire["content"] = JSON::stringify(cancelled_content_dict);
-				current_run.conversation_history.push_back(cancelled_wire);
-				current_run.run_messages.push_back(cancelled_wire);
-
-				// Emit as tool result so UI/store records the canonical item
-				Dictionary trd;
-				trd["tool_name"] = tool_name;
-				trd["action_id"] = call_id;
-				trd["type"] = tool_name;
-				trd["args"] = args;
-				trd["status"] = "cancelled";
-				trd["tokens"] = 0;
-				_emit_tool_result(trd);
+				_append_cancelled_tool_result(tool_calls[j]);
 			}
 			break;
 		}
@@ -833,6 +830,64 @@ void AgenticOrchestrator::_handle_cancellation() {
 	_waiting_for_response = false;
 }
 
+void AgenticOrchestrator::_append_cancelled_tool_result(const Dictionary &p_tool_call) {
+	String call_id = p_tool_call.get("id", "");
+	Dictionary function = p_tool_call.get("function", Dictionary());
+	String tool_name = function.get("name", "");
+	JSON args_parser;
+	Dictionary args;
+	if (args_parser.parse(String(function.get("arguments", "{}"))) == OK &&
+			args_parser.get_data().get_type() == Variant::DICTIONARY) {
+		args = args_parser.get_data();
+	}
+
+	// Add to in-memory history (wire format)
+	Dictionary cancelled_wire;
+	cancelled_wire["role"] = "tool";
+	cancelled_wire["tool_call_id"] = call_id;
+	Dictionary cancelled_content_dict;
+	cancelled_content_dict["status"] = "cancelled";
+	cancelled_content_dict["tool_name"] = tool_name;
+	cancelled_content_dict["reason"] = "user_cancelled_run";
+	cancelled_wire["content"] = JSON::stringify(cancelled_content_dict);
+	current_run.conversation_history.push_back(cancelled_wire);
+	current_run.run_messages.push_back(cancelled_wire);
+
+	// Emit as tool result so UI/store records the canonical item
+	Dictionary trd;
+	trd["tool_name"] = tool_name;
+	trd["action_id"] = call_id;
+	trd["type"] = tool_name;
+	trd["args"] = args;
+	trd["status"] = "cancelled";
+	trd["tokens"] = 0;
+	_emit_tool_result(trd);
+}
+
+void AgenticOrchestrator::_synthesize_cancelled_results_for_unanswered() {
+	if (_current_tool_calls.is_empty()) {
+		return;
+	}
+	Vector<String> answered;
+	for (int i = 0; i < current_run.conversation_history.size(); i++) {
+		Dictionary msg = current_run.conversation_history[i];
+		if (String(msg.get("role", "")) == "tool") {
+			String id = msg.get("tool_call_id", "");
+			if (!id.is_empty()) {
+				answered.push_back(id);
+			}
+		}
+	}
+	for (int i = 0; i < _current_tool_calls.size(); i++) {
+		Dictionary tc = _current_tool_calls[i];
+		String call_id = tc.get("id", "");
+		if (call_id.is_empty() || answered.has(call_id)) {
+			continue;
+		}
+		_append_cancelled_tool_result(tc);
+	}
+}
+
 // Formats one scene's diff entry for a context block. Empty result = nothing
 // worth telling the model.
 String AgenticOrchestrator::_format_scene_diff_entry(const Dictionary &p_diff) {
@@ -955,7 +1010,10 @@ void AgenticOrchestrator::_emit_tool_result(const Dictionary &p_tool_result) {
 }
 
 void AgenticOrchestrator::_emit_run_complete(bool p_success, const String &p_final_message) {
-	_pending_user_injection = "";
+	// Unconsumed injections die with the run; the UI still holds them in its
+	// queue and falls back to sending them as fresh runs (or returning them to
+	// the composer on cancel).
+	_pending_user_injections.clear();
 	emit_signal("run_complete", p_success, p_final_message);
 
 	// On successful run completion, emit checkpoint_recommended signal
@@ -975,25 +1033,57 @@ void AgenticOrchestrator::cancel_run() {
 	current_run.cancelled = true;
 	print_line("AgenticOrchestrator: Cancellation requested.");
 
-	// If we're waiting for a response, the cancellation will be handled
-	// when the response arrives in _on_provider_response
-	// If we're not waiting, the next checkpoint will detect it
+	if (_async_rns_phase != ASYNC_RNS_INACTIVE) {
+		// Tear down the async run_and_screenshot state machine: orphan any
+		// pending tick, drop the capture listener, stop the game.
+		_rns_tick_gen++;
+		AI *ai = AI::get_singleton();
+		Callable capture_cb = callable_mp(this, &AgenticOrchestrator::_on_async_rns_capture_received);
+		if (ai && ai->is_connected("game_screenshot_ready", capture_cb)) {
+			ai->disconnect("game_screenshot_ready", capture_cb);
+		}
+		if (ai) {
+			ai->call("stop_game");
+		}
+		_async_rns_phase = ASYNC_RNS_INACTIVE;
+	} else if (_waiting_for_response) {
+		// Abandon the in-flight request: its worker thread exits at its next
+		// poll, and the provider's serial gate drops its completion — so it
+		// can never deliver into a run started after this cancel.
+		if (provider.is_valid()) {
+			provider->abort_request();
+		}
+		_waiting_for_response = false;
+	}
+
+	// Terminal, and instant: repair the transcript and end the run now rather
+	// than waiting for a checkpoint to notice the flag.
+	_synthesize_cancelled_results_for_unanswered();
+	_handle_cancellation();
 }
 
 bool AgenticOrchestrator::is_cancelled() const {
 	return current_run.cancelled;
 }
 
-bool AgenticOrchestrator::inject_user_message(const String &p_message) {
+bool AgenticOrchestrator::inject_user_message(const String &p_id, const String &p_message) {
 	if (!_is_running || current_run.cancelled) {
 		return false;
 	}
-	if (_pending_user_injection.is_empty()) {
-		_pending_user_injection = p_message;
-	} else {
-		_pending_user_injection += "\n\n" + p_message;
-	}
+	PendingInjection inj;
+	inj.id = p_id;
+	inj.text = p_message;
+	_pending_user_injections.push_back(inj);
 	return true;
+}
+
+void AgenticOrchestrator::remove_pending_injection(const String &p_id) {
+	for (int i = 0; i < _pending_user_injections.size(); i++) {
+		if (_pending_user_injections[i].id == p_id) {
+			_pending_user_injections.remove_at(i);
+			return;
+		}
+	}
 }
 
 bool AgenticOrchestrator::is_running() const {
@@ -1183,6 +1273,13 @@ void AgenticOrchestrator::_on_async_rns_capture_received(const String &p_b64) {
 }
 
 void AgenticOrchestrator::_on_async_rns_complete(const Dictionary &p_exec_result) {
+	if (!_is_running) {
+		// Run ended (e.g. instant cancel) while this completion was deferred.
+		// The cancel path already synthesized a result for this tool call —
+		// appending another would duplicate it and re-trigger cancellation.
+		return;
+	}
+
 	// Wall-clock time from tool invocation to terminal state (capture or timeout).
 	// Lets the AI distinguish an immediate crash (elapsed ~= 8000 = POLL_START timeout)
 	// from a normal run (elapsed ~= wait_seconds*1000) from a capture hang.

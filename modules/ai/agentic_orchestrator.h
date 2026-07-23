@@ -90,7 +90,10 @@ public:
 	// Main entry point - runs the agentic loop
 	void run_agentic_loop(const Array &p_initial_messages, Ref<AIProvider> p_provider);
 
-	// Cancel control
+	// Cancel control. cancel_run() is terminal and instant: it aborts the
+	// in-flight request (or tears down an async run_and_screenshot), repairs
+	// the transcript, and emits run_complete before returning — the caller
+	// never waits on network or tools.
 	void cancel_run();
 	bool is_cancelled() const;
 	bool is_running() const;
@@ -111,8 +114,12 @@ public:
 	// Get conversation history (for validation checks like read-before-write)
 	Array get_conversation_history() const;
 
-	// Inject a user message mid-run (appended before next model turn)
-	bool inject_user_message(const String &p_message);
+	// Inject a user message mid-run (appended before the next model turn).
+	// p_id lets the UI track the message until it is consumed: consumption is
+	// announced via the user_injection_consumed signal, and an unconsumed
+	// message can be withdrawn with remove_pending_injection.
+	bool inject_user_message(const String &p_id, const String &p_message);
+	void remove_pending_injection(const String &p_id);
 
 protected:
 	static void _bind_methods();
@@ -126,8 +133,18 @@ private:
 	// Retry count for the in-flight model request; reset on success and at run start.
 	int _request_retry_attempt = 0;
 
-	// Pending user injection (mid-run message, consumed before next API call)
-	String _pending_user_injection;
+	// Bumped at every run start. Bound into deferred callbacks that must not
+	// fire into a later run (e.g. the transient-failure retry timer): with
+	// instant cancel, a run can end and a new one start while such a timer is
+	// still pending.
+	uint64_t _run_gen = 0;
+
+	// Pending user injections (mid-run messages, consumed before next API call).
+	struct PendingInjection {
+		String id;
+		String text;
+	};
+	Vector<PendingInjection> _pending_user_injections;
 
 	// Pending response for deferred processing (avoids ProgressDialog issues)
 	Dictionary _pending_response;
@@ -146,7 +163,7 @@ private:
 	// without consuming a model turn.
 	static bool _is_transient_network_error(const String &p_error);
 	void _schedule_request_retry(float p_delay_seconds);
-	void _retry_model_request();
+	void _retry_model_request(uint64_t p_run_gen);
 
 	// Response processing (deferred to next frame to avoid message queue conflicts)
 	void _process_model_response_deferred();
@@ -161,6 +178,12 @@ private:
 	void _handle_cancellation();
 	void _handle_max_turns_exceeded();
 	void _handle_max_actions_exceeded();
+
+	// Cancel-time transcript repair: append a synthetic cancelled result for
+	// one tool call, and for every call in _current_tool_calls that has no
+	// tool response in conversation_history yet (no-orphan invariant).
+	void _append_cancelled_tool_result(const Dictionary &p_tool_call);
+	void _synthesize_cancelled_results_for_unanswered();
 
 	// Scene diffs: after a tool batch, append a [SCENE UPDATE] message showing
 	// how the batch changed each touched scene's serialized .tscn text.

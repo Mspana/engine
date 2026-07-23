@@ -266,11 +266,12 @@ class AIStatusPanel : public VBoxContainer {
 	GDCLASS(AIStatusPanel, VBoxContainer);
 
 public:
-	// Run state for the composer
+	// Run state for the composer. Cancelling is instant (the orchestrator
+	// tears the run down synchronously in cancel_run), so there is no
+	// intermediate "stopping" state.
 	enum RunState {
 		STATE_IDLE,
-		STATE_RUNNING,
-		STATE_CANCELLING
+		STATE_RUNNING
 	};
 
 	// Queued message structure
@@ -453,8 +454,11 @@ private:
 	void _on_queue_item_remove(int p_index);
 
 	// Message queue management
-	void _enqueue_message(const String &p_text);
+	// Returns the generated queue id (used to track the message through the
+	// orchestrator's pending-injection list until consumed).
+	String _enqueue_message(const String &p_text);
 	void _dequeue_and_run_next();
+	void _withdraw_pending_injection(const String &p_queue_id);
 	void _remove_queued_message(int p_index);
 	String _generate_queue_id();
 
@@ -490,6 +494,9 @@ private:
 	void _on_orchestrator_assistant_item(const Dictionary &p_item);
 	void _on_orchestrator_tool_result(const Dictionary &p_tool_result);
 	void _on_orchestrator_complete(bool p_success, const String &p_final_message);
+	// Queued mid-run messages were just delivered to the model: persist them
+	// to the transcript at their true position and drop their queue chips.
+	void _on_user_injection_consumed(const Array &p_ids);
 	void _on_orchestrator_narration(const String &p_text); // legacy no-op
 	void _on_orchestrator_thinking(const String &p_text); // legacy no-op
 	void _on_todos_updated(const Array &p_todos);

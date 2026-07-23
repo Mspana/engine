@@ -3,6 +3,7 @@
 
 #include "core/object/ref_counted.h"
 #include "core/string/ustring.h"
+#include "core/templates/safe_refcount.h"
 #include "core/variant/array.h"
 #include "core/variant/dictionary.h"
 #include "core/io/http_client.h"
@@ -24,9 +25,31 @@ protected:
 	// response body has been fully received. Zero means "no sample yet."
 	int64_t _last_request_latency_ms = 0;
 
+	// Instant-cancel support. Each request gets a monotonically increasing
+	// serial (issued on the main thread). abort_request() marks every serial
+	// issued so far as aborted: worker threads poll _is_aborted() in their
+	// busy-wait loops to bail out early, and _finish_request() — the
+	// main-thread completion gate every worker posts through — drops aborted
+	// completions instead of emitting request_completed. This makes a
+	// cancelled request's (eventual) response undeliverable, so it can never
+	// be misattributed to a run started after the cancel.
+	uint64_t _request_serial = 0; // Main thread only.
+	SafeNumeric<uint64_t> _abort_before_serial; // Serials <= this are aborted.
+
+	uint64_t _begin_request() { return ++_request_serial; }
+	bool _is_aborted(uint64_t p_serial) const { return p_serial <= _abort_before_serial.get(); }
+	// Main-thread completion gate: drops aborted serials, else emits request_completed.
+	void _finish_request(uint64_t p_serial, bool p_success, const String &p_response, const String &p_error);
+	// Posts _finish_request to the main thread. Safe to call from worker threads.
+	void _post_request_completed(uint64_t p_serial, bool p_success, const String &p_response, const String &p_error);
+
 	static void _bind_methods();
 
 public:
+	// Invalidate the in-flight request (if any): its completion will be
+	// silently dropped and its worker thread will exit at the next poll.
+	void abort_request() { _abort_before_serial.set(_request_serial); }
+
 	int64_t get_last_request_latency_ms() const { return _last_request_latency_ms; }
 	// Signal emitted when request completes
 	// Parameters: success (bool), response_json (String), error_message (String)
@@ -110,9 +133,9 @@ class OpenAIProvider : public AIProvider {
 	GDCLASS(OpenAIProvider, AIProvider);
 
 protected:
-	void _perform_request(const String &user_prompt, const String &context_block);
-	void _perform_request_with_messages(const Array &p_messages, const String &context_block);
-	
+	void _perform_request(uint64_t p_serial, const String &user_prompt, const String &context_block);
+	void _perform_request_with_messages(uint64_t p_serial, const Array &p_messages, const String &context_block);
+
 	static void _bind_methods();
 
 public:
@@ -141,9 +164,9 @@ class GeminiProvider : public AIProvider {
 	GDCLASS(GeminiProvider, AIProvider);
 
 protected:
-	void _perform_request(const String &user_prompt, const String &context_block);
-	void _perform_request_with_messages(const Array &p_messages, const String &context_block);
-	
+	void _perform_request(uint64_t p_serial, const String &user_prompt, const String &context_block);
+	void _perform_request_with_messages(uint64_t p_serial, const Array &p_messages, const String &context_block);
+
 	static void _bind_methods();
 
 public:
@@ -167,9 +190,9 @@ class XAIProvider : public AIProvider {
 	GDCLASS(XAIProvider, AIProvider);
 
 protected:
-	void _perform_request(const String &user_prompt, const String &context_block);
-	void _perform_request_with_messages(const Array &p_messages, const String &context_block);
-	
+	void _perform_request(uint64_t p_serial, const String &user_prompt, const String &context_block);
+	void _perform_request_with_messages(uint64_t p_serial, const Array &p_messages, const String &context_block);
+
 	static void _bind_methods();
 
 public:
@@ -193,8 +216,8 @@ class AnthropicProvider : public AIProvider {
 	GDCLASS(AnthropicProvider, AIProvider);
 
 protected:
-	void _perform_request(const String &user_prompt, const String &context_block);
-	void _perform_request_with_messages(const Array &p_messages, const String &context_block);
+	void _perform_request(uint64_t p_serial, const String &user_prompt, const String &context_block);
+	void _perform_request_with_messages(uint64_t p_serial, const Array &p_messages, const String &context_block);
 
 	static void _bind_methods();
 

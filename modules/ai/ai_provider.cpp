@@ -2,6 +2,7 @@
 #include "ai_provider.h"
 
 #include "core/io/json.h"
+#include "core/object/callable_method_pointer.h"
 #include "core/variant/variant.h"
 #include "core/io/file_access.h"
 #include "core/os/os.h"
@@ -121,12 +122,28 @@ String AIProvider::get_request_url() const {
 
 void AIProvider::send_request(const String &user_prompt, const String &context_block) {
 	ERR_PRINT("AIProvider::send_request() - Base class method called. Override in subclass.");
-	emit_signal("request_completed", false, "", "Provider does not implement send_request()");
+	_post_request_completed(_begin_request(), false, "", "Provider does not implement send_request()");
 }
 
 void AIProvider::send_request_with_messages(const Array &p_messages, const String &context_block) {
 	ERR_PRINT("AIProvider::send_request_with_messages() - Base class method called. Override in subclass.");
-	emit_signal("request_completed", false, "", "Provider does not implement send_request_with_messages()");
+	_post_request_completed(_begin_request(), false, "", "Provider does not implement send_request_with_messages()");
+}
+
+void AIProvider::_finish_request(uint64_t p_serial, bool p_success, const String &p_response, const String &p_error) {
+	// Main thread. Completions for aborted serials are dropped so a cancelled
+	// request can never deliver into a run started after the cancel.
+	if (_is_aborted(p_serial)) {
+		print_line(vformat("AIProvider: Dropped completion for aborted request (serial %d).", (int64_t)p_serial));
+		return;
+	}
+	emit_signal("request_completed", p_success, p_response, p_error);
+}
+
+void AIProvider::_post_request_completed(uint64_t p_serial, bool p_success, const String &p_response, const String &p_error) {
+	// Callable::call_deferred goes through the thread-safe MessageQueue, so
+	// this is valid from WorkerThreadPool threads.
+	callable_mp(this, &AIProvider::_finish_request).bind(p_serial, p_success, p_response, p_error).call_deferred();
 }
 
 Dictionary AIProvider::build_request_body_with_messages(const Array &p_messages, const String &context_block) const {
@@ -430,6 +447,9 @@ Allowed actions:
   Use when get_node_info shows a sub_resource is null. resource_type must be a concrete class (e.g. "BoxMesh", "SphereShape3D"), not an abstract base (e.g. "Mesh", "Shape3D").
   Supports dot notation to reach nested resource slots (e.g. "environment.sky.sky_material"). All segments except the last must already be non-null resources.
   The optional 'properties' dict sets initial values on the resource in the same call.
+- create_sprite_frames: Build a fully-populated SpriteFrames (multiple named animations, per-frame textures/durations, fps, loop) and assign it to an AnimatedSprite2D/AnimatedSprite3D
+  Args: {"node_path": string (optional if save_path given), "animations": [{"name": string, "fps": number (default 5), "loop": bool (default true), "frames": [{"texture": "res://...", "duration": number (default 1.0), "region": [x,y,w,h] (optional)}]}], "save_path": string (optional .tres path)}
+  ALWAYS prefer this over scripted frame-swapping (texture-swap timers, per-pixel ColorRects) for frame-by-frame animation. Replaces any existing SpriteFrames on the node; define all animations in one call.
 - write_dev_note: Record a developer insight about this run to the AI journal
   Args: {"summary": string (required), "friction_points": array, "missing_tools": array,
   "schema_suggestions": array, "prompt_suggestions": array, "bugs_suspected": array,
@@ -842,9 +862,11 @@ String OpenAIProvider::get_request_path() const {
 }
 
 void OpenAIProvider::send_request(const String &user_prompt, const String &context_block) {
+	const uint64_t serial = _begin_request();
+
 	if (api_key.is_empty()) {
 		ERR_PRINT("OpenAIProvider::send_request() - API key is not set");
-		call_deferred("emit_signal", "request_completed", false, "", "API key is not set");
+		_post_request_completed(serial, false, "", "API key is not set");
 		return;
 	}
 	
@@ -852,11 +874,11 @@ void OpenAIProvider::send_request(const String &user_prompt, const String &conte
 	
 	// Submit task to worker thread pool
 	WorkerThreadPool::get_singleton()->add_task(
-		callable_mp(this, &OpenAIProvider::_perform_request).bind(user_prompt, context_block)
+		callable_mp(this, &OpenAIProvider::_perform_request).bind(serial, user_prompt, context_block)
 	);
 }
 
-void OpenAIProvider::_perform_request(const String &user_prompt, const String &context_block) {
+void OpenAIProvider::_perform_request(uint64_t p_serial, const String &user_prompt, const String &context_block) {
 	HTTPClient *http_client = HTTPClient::create();
 
 	// Transport host/path are virtual so subclasses (e.g. DeepInfra) can redirect.
@@ -869,7 +891,7 @@ void OpenAIProvider::_perform_request(const String &user_prompt, const String &c
 	Error err = http_client->connect_to_host(host, port, tls_options);
 	if (err != OK) {
 		ERR_PRINT(vformat("OpenAIProvider: Failed to connect to host: %d", err));
-		call_deferred("emit_signal", "request_completed", false, "", vformat("Failed to connect: %d", err));
+		_post_request_completed(p_serial, false, "", vformat("Failed to connect: %d", err));
 		memdelete(http_client);
 		return;
 	}
@@ -877,13 +899,17 @@ void OpenAIProvider::_perform_request(const String &user_prompt, const String &c
 	// Wait for connection
 	while (http_client->get_status() == HTTPClient::STATUS_CONNECTING ||
 	       http_client->get_status() == HTTPClient::STATUS_RESOLVING) {
+		if (_is_aborted(p_serial)) {
+			memdelete(http_client);
+			return;
+		}
 		http_client->poll();
 		OS::get_singleton()->delay_usec(10000); // 10ms
 	}
 	
 	if (http_client->get_status() != HTTPClient::STATUS_CONNECTED) {
 		ERR_PRINT(vformat("OpenAIProvider: Connection failed, status: %d", http_client->get_status()));
-		call_deferred("emit_signal", "request_completed", false, "", "Connection failed");
+		_post_request_completed(p_serial, false, "", "Connection failed");
 		memdelete(http_client);
 		return;
 	}
@@ -904,13 +930,17 @@ void OpenAIProvider::_perform_request(const String &user_prompt, const String &c
 	err = http_client->request(HTTPClient::METHOD_POST, request_path, headers_vector, (const uint8_t *)body_data.get_data(), body_data.length());
 	if (err != OK) {
 		ERR_PRINT(vformat("OpenAIProvider: Failed to send request: %d", err));
-		call_deferred("emit_signal", "request_completed", false, "", vformat("Failed to send request: %d", err));
+		_post_request_completed(p_serial, false, "", vformat("Failed to send request: %d", err));
 		memdelete(http_client);
 		return;
 	}
 
 	// Wait for response
 	while (http_client->get_status() == HTTPClient::STATUS_REQUESTING) {
+		if (_is_aborted(p_serial)) {
+			memdelete(http_client);
+			return;
+		}
 		http_client->poll();
 		OS::get_singleton()->delay_usec(10000); // 10ms
 	}
@@ -918,7 +948,7 @@ void OpenAIProvider::_perform_request(const String &user_prompt, const String &c
 	if (http_client->get_status() != HTTPClient::STATUS_BODY &&
 	    http_client->get_status() != HTTPClient::STATUS_CONNECTED) {
 		ERR_PRINT(vformat("OpenAIProvider: Request failed, status: %d", http_client->get_status()));
-		call_deferred("emit_signal", "request_completed", false, "", vformat("Request failed (%s)", _http_transport_status_reason(http_client->get_status())));
+		_post_request_completed(p_serial, false, "", vformat("Request failed (%s)", _http_transport_status_reason(http_client->get_status())));
 		memdelete(http_client);
 		return;
 	}
@@ -927,7 +957,7 @@ void OpenAIProvider::_perform_request(const String &user_prompt, const String &c
 	int response_code = http_client->get_response_code();
 	if (response_code != 200) {
 		ERR_PRINT(vformat("OpenAIProvider: HTTP error code: %d", response_code));
-		call_deferred("emit_signal", "request_completed", false, "", vformat("HTTP error: %d", response_code));
+		_post_request_completed(p_serial, false, "", vformat("HTTP error: %d", response_code));
 		memdelete(http_client);
 		return;
 	}
@@ -935,6 +965,10 @@ void OpenAIProvider::_perform_request(const String &user_prompt, const String &c
 	// Read response body
 	PackedByteArray response_body;
 	while (http_client->get_status() == HTTPClient::STATUS_BODY) {
+		if (_is_aborted(p_serial)) {
+			memdelete(http_client);
+			return;
+		}
 		http_client->poll();
 		PackedByteArray chunk = http_client->read_response_body_chunk();
 		if (chunk.size() > 0) {
@@ -944,7 +978,9 @@ void OpenAIProvider::_perform_request(const String &user_prompt, const String &c
 		}
 	}
 
-	_last_request_latency_ms = (int64_t)(Time::get_singleton()->get_ticks_msec() - _req_start_ms);
+	if (!_is_aborted(p_serial)) {
+		_last_request_latency_ms = (int64_t)(Time::get_singleton()->get_ticks_msec() - _req_start_ms);
+	}
 
 	String response_str = String::utf8((const char *)response_body.ptr(), response_body.size());
 	
@@ -953,7 +989,7 @@ void OpenAIProvider::_perform_request(const String &user_prompt, const String &c
 	err = json_parser.parse(response_str);
 	if (err != Error::OK) {
 		ERR_PRINT(vformat("OpenAIProvider: Failed to parse response JSON: %s", json_parser.get_error_message()));
-		call_deferred("emit_signal", "request_completed", false, "", "Failed to parse response JSON");
+		_post_request_completed(p_serial, false, "", "Failed to parse response JSON");
 		memdelete(http_client);
 		return;
 	}
@@ -963,13 +999,13 @@ void OpenAIProvider::_perform_request(const String &user_prompt, const String &c
 	
 	if (ai_response.is_empty()) {
 		ERR_PRINT("OpenAIProvider: Empty response from AI");
-		call_deferred("emit_signal", "request_completed", false, "", "Empty response");
+		_post_request_completed(p_serial, false, "", "Empty response");
 		memdelete(http_client);
 		return;
 	}
 	
 	print_line(vformat("OpenAIProvider: Received response: %s", ai_response));
-	call_deferred("emit_signal", "request_completed", true, ai_response, "");
+	_post_request_completed(p_serial, true, ai_response, "");
 	
 	// Clean up
 	memdelete(http_client);
@@ -1120,9 +1156,11 @@ Dictionary OpenAIProvider::build_request_body_with_messages(const Array &p_messa
 }
 
 void OpenAIProvider::send_request_with_messages(const Array &p_messages, const String &context_block) {
+	const uint64_t serial = _begin_request();
+
 	if (api_key.is_empty()) {
 		ERR_PRINT("OpenAIProvider::send_request_with_messages() - API key is not set");
-		call_deferred("emit_signal", "request_completed", false, "", "API key is not set");
+		_post_request_completed(serial, false, "", "API key is not set");
 		return;
 	}
 	
@@ -1130,11 +1168,11 @@ void OpenAIProvider::send_request_with_messages(const Array &p_messages, const S
 	
 	// Submit task to worker thread pool
 	WorkerThreadPool::get_singleton()->add_task(
-		callable_mp(this, &OpenAIProvider::_perform_request_with_messages).bind(p_messages, context_block)
+		callable_mp(this, &OpenAIProvider::_perform_request_with_messages).bind(serial, p_messages, context_block)
 	);
 }
 
-void OpenAIProvider::_perform_request_with_messages(const Array &p_messages, const String &context_block) {
+void OpenAIProvider::_perform_request_with_messages(uint64_t p_serial, const Array &p_messages, const String &context_block) {
 	HTTPClient *http_client = HTTPClient::create();
 
 	// Transport host/path are virtual so subclasses (e.g. DeepInfra) can redirect.
@@ -1147,7 +1185,7 @@ void OpenAIProvider::_perform_request_with_messages(const Array &p_messages, con
 	Error err = http_client->connect_to_host(host, port, tls_options);
 	if (err != OK) {
 		ERR_PRINT(vformat("OpenAIProvider: Failed to connect to host: %d", err));
-		call_deferred("emit_signal", "request_completed", false, "", vformat("Failed to connect: %d", err));
+		_post_request_completed(p_serial, false, "", vformat("Failed to connect: %d", err));
 		memdelete(http_client);
 		return;
 	}
@@ -1155,13 +1193,17 @@ void OpenAIProvider::_perform_request_with_messages(const Array &p_messages, con
 	// Wait for connection
 	while (http_client->get_status() == HTTPClient::STATUS_CONNECTING ||
 	       http_client->get_status() == HTTPClient::STATUS_RESOLVING) {
+		if (_is_aborted(p_serial)) {
+			memdelete(http_client);
+			return;
+		}
 		http_client->poll();
 		OS::get_singleton()->delay_usec(10000); // 10ms
 	}
 	
 	if (http_client->get_status() != HTTPClient::STATUS_CONNECTED) {
 		ERR_PRINT(vformat("OpenAIProvider: Connection failed, status: %d", http_client->get_status()));
-		call_deferred("emit_signal", "request_completed", false, "", "Connection failed");
+		_post_request_completed(p_serial, false, "", "Connection failed");
 		memdelete(http_client);
 		return;
 	}
@@ -1182,13 +1224,17 @@ void OpenAIProvider::_perform_request_with_messages(const Array &p_messages, con
 	err = http_client->request(HTTPClient::METHOD_POST, request_path, headers_vector, (const uint8_t *)body_data.get_data(), body_data.length());
 	if (err != OK) {
 		ERR_PRINT(vformat("OpenAIProvider: Failed to send request: %d", err));
-		call_deferred("emit_signal", "request_completed", false, "", vformat("Failed to send request: %d", err));
+		_post_request_completed(p_serial, false, "", vformat("Failed to send request: %d", err));
 		memdelete(http_client);
 		return;
 	}
 
 	// Wait for response
 	while (http_client->get_status() == HTTPClient::STATUS_REQUESTING) {
+		if (_is_aborted(p_serial)) {
+			memdelete(http_client);
+			return;
+		}
 		http_client->poll();
 		OS::get_singleton()->delay_usec(10000); // 10ms
 	}
@@ -1196,7 +1242,7 @@ void OpenAIProvider::_perform_request_with_messages(const Array &p_messages, con
 	if (http_client->get_status() != HTTPClient::STATUS_BODY &&
 	    http_client->get_status() != HTTPClient::STATUS_CONNECTED) {
 		ERR_PRINT(vformat("OpenAIProvider: Request failed, status: %d", http_client->get_status()));
-		call_deferred("emit_signal", "request_completed", false, "", vformat("Request failed (%s)", _http_transport_status_reason(http_client->get_status())));
+		_post_request_completed(p_serial, false, "", vformat("Request failed (%s)", _http_transport_status_reason(http_client->get_status())));
 		memdelete(http_client);
 		return;
 	}
@@ -1206,6 +1252,10 @@ void OpenAIProvider::_perform_request_with_messages(const Array &p_messages, con
 
 	PackedByteArray response_body;
 	while (http_client->get_status() == HTTPClient::STATUS_BODY) {
+		if (_is_aborted(p_serial)) {
+			memdelete(http_client);
+			return;
+		}
 		http_client->poll();
 		PackedByteArray chunk = http_client->read_response_body_chunk();
 		if (chunk.size() > 0) {
@@ -1215,7 +1265,9 @@ void OpenAIProvider::_perform_request_with_messages(const Array &p_messages, con
 		}
 	}
 
-	_last_request_latency_ms = (int64_t)(Time::get_singleton()->get_ticks_msec() - _req_start_ms);
+	if (!_is_aborted(p_serial)) {
+		_last_request_latency_ms = (int64_t)(Time::get_singleton()->get_ticks_msec() - _req_start_ms);
+	}
 
 	String response_str = String::utf8((const char *)response_body.ptr(), response_body.size());
 
@@ -1244,14 +1296,14 @@ void OpenAIProvider::_perform_request_with_messages(const Array &p_messages, con
 			? vformat("HTTP error: %d", response_code)
 			: vformat("HTTP %d: %s", response_code, error_detail);
 		ERR_PRINT(vformat("OpenAIProvider: %s", error_msg));
-		call_deferred("emit_signal", "request_completed", false, "", error_msg);
+		_post_request_completed(p_serial, false, "", error_msg);
 		memdelete(http_client);
 		return;
 	}
 
 	// Return the full API response JSON — orchestrator needs finish_reason, tool_calls, content
 	print_line(vformat("OpenAIProvider: Received full API response (%d bytes)", response_str.length()));
-	call_deferred("emit_signal", "request_completed", true, response_str, "");
+	_post_request_completed(p_serial, true, response_str, "");
 
 	// Clean up
 	memdelete(http_client);
@@ -1371,9 +1423,11 @@ String GeminiProvider::get_request_url() const {
 }
 
 void GeminiProvider::send_request(const String &user_prompt, const String &context_block) {
+	const uint64_t serial = _begin_request();
+
 	if (api_key.is_empty()) {
 		ERR_PRINT("GeminiProvider::send_request() - API key is not set");
-		call_deferred("emit_signal", "request_completed", false, "", "API key is not set");
+		_post_request_completed(serial, false, "", "API key is not set");
 		return;
 	}
 	
@@ -1381,11 +1435,11 @@ void GeminiProvider::send_request(const String &user_prompt, const String &conte
 	
 	// Submit task to worker thread pool
 	WorkerThreadPool::get_singleton()->add_task(
-		callable_mp(this, &GeminiProvider::_perform_request).bind(user_prompt, context_block)
+		callable_mp(this, &GeminiProvider::_perform_request).bind(serial, user_prompt, context_block)
 	);
 }
 
-void GeminiProvider::_perform_request(const String &user_prompt, const String &context_block) {
+void GeminiProvider::_perform_request(uint64_t p_serial, const String &user_prompt, const String &context_block) {
 	HTTPClient *http_client = HTTPClient::create();
 	
 	String host = "generativelanguage.googleapis.com";
@@ -1396,7 +1450,7 @@ void GeminiProvider::_perform_request(const String &user_prompt, const String &c
 	Error err = http_client->connect_to_host(host, port, tls_options);
 	if (err != OK) {
 		ERR_PRINT(vformat("GeminiProvider: Failed to connect to host: %d", err));
-		call_deferred("emit_signal", "request_completed", false, "", vformat("Failed to connect: %d", err));
+		_post_request_completed(p_serial, false, "", vformat("Failed to connect: %d", err));
 		memdelete(http_client);
 		return;
 	}
@@ -1404,13 +1458,17 @@ void GeminiProvider::_perform_request(const String &user_prompt, const String &c
 	// Wait for connection
 	while (http_client->get_status() == HTTPClient::STATUS_CONNECTING ||
 	       http_client->get_status() == HTTPClient::STATUS_RESOLVING) {
+		if (_is_aborted(p_serial)) {
+			memdelete(http_client);
+			return;
+		}
 		http_client->poll();
 		OS::get_singleton()->delay_usec(10000); // 10ms
 	}
 	
 	if (http_client->get_status() != HTTPClient::STATUS_CONNECTED) {
 		ERR_PRINT(vformat("GeminiProvider: Connection failed, status: %d", http_client->get_status()));
-		call_deferred("emit_signal", "request_completed", false, "", "Connection failed");
+		_post_request_completed(p_serial, false, "", "Connection failed");
 		memdelete(http_client);
 		return;
 	}
@@ -1434,13 +1492,17 @@ void GeminiProvider::_perform_request(const String &user_prompt, const String &c
 	err = http_client->request(HTTPClient::METHOD_POST, path, headers_vector, (const uint8_t *)body_data.get_data(), body_data.length());
 	if (err != OK) {
 		ERR_PRINT(vformat("GeminiProvider: Failed to send request: %d", err));
-		call_deferred("emit_signal", "request_completed", false, "", vformat("Failed to send request: %d", err));
+		_post_request_completed(p_serial, false, "", vformat("Failed to send request: %d", err));
 		memdelete(http_client);
 		return;
 	}
 
 	// Wait for response
 	while (http_client->get_status() == HTTPClient::STATUS_REQUESTING) {
+		if (_is_aborted(p_serial)) {
+			memdelete(http_client);
+			return;
+		}
 		http_client->poll();
 		OS::get_singleton()->delay_usec(10000); // 10ms
 	}
@@ -1448,7 +1510,7 @@ void GeminiProvider::_perform_request(const String &user_prompt, const String &c
 	if (http_client->get_status() != HTTPClient::STATUS_BODY &&
 	    http_client->get_status() != HTTPClient::STATUS_CONNECTED) {
 		ERR_PRINT(vformat("GeminiProvider: Request failed, status: %d", http_client->get_status()));
-		call_deferred("emit_signal", "request_completed", false, "", vformat("Request failed (%s)", _http_transport_status_reason(http_client->get_status())));
+		_post_request_completed(p_serial, false, "", vformat("Request failed (%s)", _http_transport_status_reason(http_client->get_status())));
 		memdelete(http_client);
 		return;
 	}
@@ -1457,7 +1519,7 @@ void GeminiProvider::_perform_request(const String &user_prompt, const String &c
 	int response_code = http_client->get_response_code();
 	if (response_code != 200) {
 		ERR_PRINT(vformat("GeminiProvider: HTTP error code: %d", response_code));
-		call_deferred("emit_signal", "request_completed", false, "", vformat("HTTP error: %d", response_code));
+		_post_request_completed(p_serial, false, "", vformat("HTTP error: %d", response_code));
 		memdelete(http_client);
 		return;
 	}
@@ -1465,6 +1527,10 @@ void GeminiProvider::_perform_request(const String &user_prompt, const String &c
 	// Read response body
 	PackedByteArray response_body;
 	while (http_client->get_status() == HTTPClient::STATUS_BODY) {
+		if (_is_aborted(p_serial)) {
+			memdelete(http_client);
+			return;
+		}
 		http_client->poll();
 		PackedByteArray chunk = http_client->read_response_body_chunk();
 		if (chunk.size() > 0) {
@@ -1474,7 +1540,9 @@ void GeminiProvider::_perform_request(const String &user_prompt, const String &c
 		}
 	}
 
-	_last_request_latency_ms = (int64_t)(Time::get_singleton()->get_ticks_msec() - _req_start_ms);
+	if (!_is_aborted(p_serial)) {
+		_last_request_latency_ms = (int64_t)(Time::get_singleton()->get_ticks_msec() - _req_start_ms);
+	}
 
 	String response_str = String::utf8((const char *)response_body.ptr(), response_body.size());
 
@@ -1483,7 +1551,7 @@ void GeminiProvider::_perform_request(const String &user_prompt, const String &c
 	err = json_parser.parse(response_str);
 	if (err != Error::OK) {
 		ERR_PRINT(vformat("GeminiProvider: Failed to parse response JSON: %s", json_parser.get_error_message()));
-		call_deferred("emit_signal", "request_completed", false, "", "Failed to parse response JSON");
+		_post_request_completed(p_serial, false, "", "Failed to parse response JSON");
 		memdelete(http_client);
 		return;
 	}
@@ -1493,13 +1561,13 @@ void GeminiProvider::_perform_request(const String &user_prompt, const String &c
 	
 	if (ai_response.is_empty()) {
 		ERR_PRINT("GeminiProvider: Empty response from AI");
-		call_deferred("emit_signal", "request_completed", false, "", "Empty response");
+		_post_request_completed(p_serial, false, "", "Empty response");
 		memdelete(http_client);
 		return;
 	}
 	
 	print_line(vformat("GeminiProvider: Received response: %s", ai_response));
-	call_deferred("emit_signal", "request_completed", true, ai_response, "");
+	_post_request_completed(p_serial, true, ai_response, "");
 	
 	// Clean up
 	memdelete(http_client);
@@ -1694,9 +1762,11 @@ Dictionary GeminiProvider::build_request_body_with_messages(const Array &p_messa
 }
 
 void GeminiProvider::send_request_with_messages(const Array &p_messages, const String &context_block) {
+	const uint64_t serial = _begin_request();
+
 	if (api_key.is_empty()) {
 		ERR_PRINT("GeminiProvider::send_request_with_messages() - API key is not set");
-		call_deferred("emit_signal", "request_completed", false, "", "API key is not set");
+		_post_request_completed(serial, false, "", "API key is not set");
 		return;
 	}
 	
@@ -1704,11 +1774,11 @@ void GeminiProvider::send_request_with_messages(const Array &p_messages, const S
 	
 	// Submit task to worker thread pool
 	WorkerThreadPool::get_singleton()->add_task(
-		callable_mp(this, &GeminiProvider::_perform_request_with_messages).bind(p_messages, context_block)
+		callable_mp(this, &GeminiProvider::_perform_request_with_messages).bind(serial, p_messages, context_block)
 	);
 }
 
-void GeminiProvider::_perform_request_with_messages(const Array &p_messages, const String &context_block) {
+void GeminiProvider::_perform_request_with_messages(uint64_t p_serial, const Array &p_messages, const String &context_block) {
 	HTTPClient *http_client = HTTPClient::create();
 	
 	String host = "generativelanguage.googleapis.com";
@@ -1719,7 +1789,7 @@ void GeminiProvider::_perform_request_with_messages(const Array &p_messages, con
 	Error err = http_client->connect_to_host(host, port, tls_options);
 	if (err != OK) {
 		ERR_PRINT(vformat("GeminiProvider: Failed to connect to host: %d", err));
-		call_deferred("emit_signal", "request_completed", false, "", vformat("Failed to connect: %d", err));
+		_post_request_completed(p_serial, false, "", vformat("Failed to connect: %d", err));
 		memdelete(http_client);
 		return;
 	}
@@ -1727,13 +1797,17 @@ void GeminiProvider::_perform_request_with_messages(const Array &p_messages, con
 	// Wait for connection
 	while (http_client->get_status() == HTTPClient::STATUS_CONNECTING ||
 	       http_client->get_status() == HTTPClient::STATUS_RESOLVING) {
+		if (_is_aborted(p_serial)) {
+			memdelete(http_client);
+			return;
+		}
 		http_client->poll();
 		OS::get_singleton()->delay_usec(10000); // 10ms
 	}
 	
 	if (http_client->get_status() != HTTPClient::STATUS_CONNECTED) {
 		ERR_PRINT(vformat("GeminiProvider: Connection failed, status: %d", http_client->get_status()));
-		call_deferred("emit_signal", "request_completed", false, "", "Connection failed");
+		_post_request_completed(p_serial, false, "", "Connection failed");
 		memdelete(http_client);
 		return;
 	}
@@ -1757,13 +1831,17 @@ void GeminiProvider::_perform_request_with_messages(const Array &p_messages, con
 	err = http_client->request(HTTPClient::METHOD_POST, path, headers_vector, (const uint8_t *)body_data.get_data(), body_data.length());
 	if (err != OK) {
 		ERR_PRINT(vformat("GeminiProvider: Failed to send request: %d", err));
-		call_deferred("emit_signal", "request_completed", false, "", vformat("Failed to send request: %d", err));
+		_post_request_completed(p_serial, false, "", vformat("Failed to send request: %d", err));
 		memdelete(http_client);
 		return;
 	}
 
 	// Wait for response
 	while (http_client->get_status() == HTTPClient::STATUS_REQUESTING) {
+		if (_is_aborted(p_serial)) {
+			memdelete(http_client);
+			return;
+		}
 		http_client->poll();
 		OS::get_singleton()->delay_usec(10000); // 10ms
 	}
@@ -1771,7 +1849,7 @@ void GeminiProvider::_perform_request_with_messages(const Array &p_messages, con
 	if (http_client->get_status() != HTTPClient::STATUS_BODY &&
 	    http_client->get_status() != HTTPClient::STATUS_CONNECTED) {
 		ERR_PRINT(vformat("GeminiProvider: Request failed, status: %d", http_client->get_status()));
-		call_deferred("emit_signal", "request_completed", false, "", vformat("Request failed (%s)", _http_transport_status_reason(http_client->get_status())));
+		_post_request_completed(p_serial, false, "", vformat("Request failed (%s)", _http_transport_status_reason(http_client->get_status())));
 		memdelete(http_client);
 		return;
 	}
@@ -1781,6 +1859,10 @@ void GeminiProvider::_perform_request_with_messages(const Array &p_messages, con
 
 	PackedByteArray response_body;
 	while (http_client->get_status() == HTTPClient::STATUS_BODY) {
+		if (_is_aborted(p_serial)) {
+			memdelete(http_client);
+			return;
+		}
 		http_client->poll();
 		PackedByteArray chunk = http_client->read_response_body_chunk();
 		if (chunk.size() > 0) {
@@ -1790,7 +1872,9 @@ void GeminiProvider::_perform_request_with_messages(const Array &p_messages, con
 		}
 	}
 
-	_last_request_latency_ms = (int64_t)(Time::get_singleton()->get_ticks_msec() - _req_start_ms);
+	if (!_is_aborted(p_serial)) {
+		_last_request_latency_ms = (int64_t)(Time::get_singleton()->get_ticks_msec() - _req_start_ms);
+	}
 
 	String response_str = String::utf8((const char *)response_body.ptr(), response_body.size());
 
@@ -1819,7 +1903,7 @@ void GeminiProvider::_perform_request_with_messages(const Array &p_messages, con
 			? vformat("HTTP error: %d", response_code)
 			: vformat("HTTP %d: %s", response_code, error_detail);
 		ERR_PRINT(vformat("GeminiProvider: %s", error_msg));
-		call_deferred("emit_signal", "request_completed", false, "", error_msg);
+		_post_request_completed(p_serial, false, "", error_msg);
 		memdelete(http_client);
 		return;
 	}
@@ -1829,7 +1913,7 @@ void GeminiProvider::_perform_request_with_messages(const Array &p_messages, con
 	err = json_parser.parse(response_str);
 	if (err != Error::OK) {
 		ERR_PRINT(vformat("GeminiProvider: Failed to parse response JSON: %s", json_parser.get_error_message()));
-		call_deferred("emit_signal", "request_completed", false, "", "Failed to parse response JSON");
+		_post_request_completed(p_serial, false, "", "Failed to parse response JSON");
 		memdelete(http_client);
 		return;
 	}
@@ -1906,7 +1990,7 @@ void GeminiProvider::_perform_request_with_messages(const Array &p_messages, con
 
 	String translated_response = JSON::stringify(openai_response);
 	print_line(vformat("GeminiProvider: Translated response to OpenAI format (%d bytes)", translated_response.length()));
-	call_deferred("emit_signal", "request_completed", true, translated_response, "");
+	_post_request_completed(p_serial, true, translated_response, "");
 
 	// Clean up
 	memdelete(http_client);
@@ -2011,9 +2095,11 @@ String XAIProvider::get_request_url() const {
 }
 
 void XAIProvider::send_request(const String &user_prompt, const String &context_block) {
+	const uint64_t serial = _begin_request();
+
 	if (api_key.is_empty()) {
 		ERR_PRINT("XAIProvider::send_request() - API key is not set");
-		call_deferred("emit_signal", "request_completed", false, "", "API key is not set");
+		_post_request_completed(serial, false, "", "API key is not set");
 		return;
 	}
 	
@@ -2021,11 +2107,11 @@ void XAIProvider::send_request(const String &user_prompt, const String &context_
 	
 	// Submit task to worker thread pool
 	WorkerThreadPool::get_singleton()->add_task(
-		callable_mp(this, &XAIProvider::_perform_request).bind(user_prompt, context_block)
+		callable_mp(this, &XAIProvider::_perform_request).bind(serial, user_prompt, context_block)
 	);
 }
 
-void XAIProvider::_perform_request(const String &user_prompt, const String &context_block) {
+void XAIProvider::_perform_request(uint64_t p_serial, const String &user_prompt, const String &context_block) {
 	HTTPClient *http_client = HTTPClient::create();
 	
 	String host = "api.x.ai";
@@ -2036,7 +2122,7 @@ void XAIProvider::_perform_request(const String &user_prompt, const String &cont
 	Error err = http_client->connect_to_host(host, port, tls_options);
 	if (err != OK) {
 		ERR_PRINT(vformat("XAIProvider: Failed to connect to host: %d", err));
-		call_deferred("emit_signal", "request_completed", false, "", vformat("Failed to connect: %d", err));
+		_post_request_completed(p_serial, false, "", vformat("Failed to connect: %d", err));
 		memdelete(http_client);
 		return;
 	}
@@ -2044,13 +2130,17 @@ void XAIProvider::_perform_request(const String &user_prompt, const String &cont
 	// Wait for connection
 	while (http_client->get_status() == HTTPClient::STATUS_CONNECTING ||
 	       http_client->get_status() == HTTPClient::STATUS_RESOLVING) {
+		if (_is_aborted(p_serial)) {
+			memdelete(http_client);
+			return;
+		}
 		http_client->poll();
 		OS::get_singleton()->delay_usec(10000); // 10ms
 	}
 	
 	if (http_client->get_status() != HTTPClient::STATUS_CONNECTED) {
 		ERR_PRINT(vformat("XAIProvider: Connection failed, status: %d", http_client->get_status()));
-		call_deferred("emit_signal", "request_completed", false, "", "Connection failed");
+		_post_request_completed(p_serial, false, "", "Connection failed");
 		memdelete(http_client);
 		return;
 	}
@@ -2071,13 +2161,17 @@ void XAIProvider::_perform_request(const String &user_prompt, const String &cont
 	err = http_client->request(HTTPClient::METHOD_POST, "/v1/chat/completions", headers_vector, (const uint8_t *)body_data.get_data(), body_data.length());
 	if (err != OK) {
 		ERR_PRINT(vformat("XAIProvider: Failed to send request: %d", err));
-		call_deferred("emit_signal", "request_completed", false, "", vformat("Failed to send request: %d", err));
+		_post_request_completed(p_serial, false, "", vformat("Failed to send request: %d", err));
 		memdelete(http_client);
 		return;
 	}
 
 	// Wait for response
 	while (http_client->get_status() == HTTPClient::STATUS_REQUESTING) {
+		if (_is_aborted(p_serial)) {
+			memdelete(http_client);
+			return;
+		}
 		http_client->poll();
 		OS::get_singleton()->delay_usec(10000); // 10ms
 	}
@@ -2085,7 +2179,7 @@ void XAIProvider::_perform_request(const String &user_prompt, const String &cont
 	if (http_client->get_status() != HTTPClient::STATUS_BODY &&
 	    http_client->get_status() != HTTPClient::STATUS_CONNECTED) {
 		ERR_PRINT(vformat("XAIProvider: Request failed, status: %d", http_client->get_status()));
-		call_deferred("emit_signal", "request_completed", false, "", vformat("Request failed (%s)", _http_transport_status_reason(http_client->get_status())));
+		_post_request_completed(p_serial, false, "", vformat("Request failed (%s)", _http_transport_status_reason(http_client->get_status())));
 		memdelete(http_client);
 		return;
 	}
@@ -2094,7 +2188,7 @@ void XAIProvider::_perform_request(const String &user_prompt, const String &cont
 	int response_code = http_client->get_response_code();
 	if (response_code != 200) {
 		ERR_PRINT(vformat("XAIProvider: HTTP error code: %d", response_code));
-		call_deferred("emit_signal", "request_completed", false, "", vformat("HTTP error: %d", response_code));
+		_post_request_completed(p_serial, false, "", vformat("HTTP error: %d", response_code));
 		memdelete(http_client);
 		return;
 	}
@@ -2102,6 +2196,10 @@ void XAIProvider::_perform_request(const String &user_prompt, const String &cont
 	// Read response body
 	PackedByteArray response_body;
 	while (http_client->get_status() == HTTPClient::STATUS_BODY) {
+		if (_is_aborted(p_serial)) {
+			memdelete(http_client);
+			return;
+		}
 		http_client->poll();
 		PackedByteArray chunk = http_client->read_response_body_chunk();
 		if (chunk.size() > 0) {
@@ -2111,7 +2209,9 @@ void XAIProvider::_perform_request(const String &user_prompt, const String &cont
 		}
 	}
 
-	_last_request_latency_ms = (int64_t)(Time::get_singleton()->get_ticks_msec() - _req_start_ms);
+	if (!_is_aborted(p_serial)) {
+		_last_request_latency_ms = (int64_t)(Time::get_singleton()->get_ticks_msec() - _req_start_ms);
+	}
 
 	String response_str = String::utf8((const char *)response_body.ptr(), response_body.size());
 
@@ -2120,7 +2220,7 @@ void XAIProvider::_perform_request(const String &user_prompt, const String &cont
 	err = json_parser.parse(response_str);
 	if (err != Error::OK) {
 		ERR_PRINT(vformat("XAIProvider: Failed to parse response JSON: %s", json_parser.get_error_message()));
-		call_deferred("emit_signal", "request_completed", false, "", "Failed to parse response JSON");
+		_post_request_completed(p_serial, false, "", "Failed to parse response JSON");
 		memdelete(http_client);
 		return;
 	}
@@ -2130,13 +2230,13 @@ void XAIProvider::_perform_request(const String &user_prompt, const String &cont
 	
 	if (ai_response.is_empty()) {
 		ERR_PRINT("XAIProvider: Empty response from AI");
-		call_deferred("emit_signal", "request_completed", false, "", "Empty response");
+		_post_request_completed(p_serial, false, "", "Empty response");
 		memdelete(http_client);
 		return;
 	}
 	
 	print_line(vformat("XAIProvider: Received response: %s", ai_response));
-	call_deferred("emit_signal", "request_completed", true, ai_response, "");
+	_post_request_completed(p_serial, true, ai_response, "");
 	
 	// Clean up
 	memdelete(http_client);
@@ -2266,9 +2366,11 @@ Dictionary XAIProvider::build_request_body_with_messages(const Array &p_messages
 }
 
 void XAIProvider::send_request_with_messages(const Array &p_messages, const String &context_block) {
+	const uint64_t serial = _begin_request();
+
 	if (api_key.is_empty()) {
 		ERR_PRINT("XAIProvider::send_request_with_messages() - API key is not set");
-		call_deferred("emit_signal", "request_completed", false, "", "API key is not set");
+		_post_request_completed(serial, false, "", "API key is not set");
 		return;
 	}
 	
@@ -2276,11 +2378,11 @@ void XAIProvider::send_request_with_messages(const Array &p_messages, const Stri
 	
 	// Submit task to worker thread pool
 	WorkerThreadPool::get_singleton()->add_task(
-		callable_mp(this, &XAIProvider::_perform_request_with_messages).bind(p_messages, context_block)
+		callable_mp(this, &XAIProvider::_perform_request_with_messages).bind(serial, p_messages, context_block)
 	);
 }
 
-void XAIProvider::_perform_request_with_messages(const Array &p_messages, const String &context_block) {
+void XAIProvider::_perform_request_with_messages(uint64_t p_serial, const Array &p_messages, const String &context_block) {
 	HTTPClient *http_client = HTTPClient::create();
 	
 	String host = "api.x.ai";
@@ -2291,7 +2393,7 @@ void XAIProvider::_perform_request_with_messages(const Array &p_messages, const 
 	Error err = http_client->connect_to_host(host, port, tls_options);
 	if (err != OK) {
 		ERR_PRINT(vformat("XAIProvider: Failed to connect to host: %d", err));
-		call_deferred("emit_signal", "request_completed", false, "", vformat("Failed to connect: %d", err));
+		_post_request_completed(p_serial, false, "", vformat("Failed to connect: %d", err));
 		memdelete(http_client);
 		return;
 	}
@@ -2299,13 +2401,17 @@ void XAIProvider::_perform_request_with_messages(const Array &p_messages, const 
 	// Wait for connection
 	while (http_client->get_status() == HTTPClient::STATUS_CONNECTING ||
 	       http_client->get_status() == HTTPClient::STATUS_RESOLVING) {
+		if (_is_aborted(p_serial)) {
+			memdelete(http_client);
+			return;
+		}
 		http_client->poll();
 		OS::get_singleton()->delay_usec(10000); // 10ms
 	}
 	
 	if (http_client->get_status() != HTTPClient::STATUS_CONNECTED) {
 		ERR_PRINT(vformat("XAIProvider: Connection failed, status: %d", http_client->get_status()));
-		call_deferred("emit_signal", "request_completed", false, "", "Connection failed");
+		_post_request_completed(p_serial, false, "", "Connection failed");
 		memdelete(http_client);
 		return;
 	}
@@ -2326,13 +2432,17 @@ void XAIProvider::_perform_request_with_messages(const Array &p_messages, const 
 	err = http_client->request(HTTPClient::METHOD_POST, "/v1/chat/completions", headers_vector, (const uint8_t *)body_data.get_data(), body_data.length());
 	if (err != OK) {
 		ERR_PRINT(vformat("XAIProvider: Failed to send request: %d", err));
-		call_deferred("emit_signal", "request_completed", false, "", vformat("Failed to send request: %d", err));
+		_post_request_completed(p_serial, false, "", vformat("Failed to send request: %d", err));
 		memdelete(http_client);
 		return;
 	}
 
 	// Wait for response
 	while (http_client->get_status() == HTTPClient::STATUS_REQUESTING) {
+		if (_is_aborted(p_serial)) {
+			memdelete(http_client);
+			return;
+		}
 		http_client->poll();
 		OS::get_singleton()->delay_usec(10000); // 10ms
 	}
@@ -2340,7 +2450,7 @@ void XAIProvider::_perform_request_with_messages(const Array &p_messages, const 
 	if (http_client->get_status() != HTTPClient::STATUS_BODY &&
 	    http_client->get_status() != HTTPClient::STATUS_CONNECTED) {
 		ERR_PRINT(vformat("XAIProvider: Request failed, status: %d", http_client->get_status()));
-		call_deferred("emit_signal", "request_completed", false, "", vformat("Request failed (%s)", _http_transport_status_reason(http_client->get_status())));
+		_post_request_completed(p_serial, false, "", vformat("Request failed (%s)", _http_transport_status_reason(http_client->get_status())));
 		memdelete(http_client);
 		return;
 	}
@@ -2350,6 +2460,10 @@ void XAIProvider::_perform_request_with_messages(const Array &p_messages, const 
 
 	PackedByteArray response_body;
 	while (http_client->get_status() == HTTPClient::STATUS_BODY) {
+		if (_is_aborted(p_serial)) {
+			memdelete(http_client);
+			return;
+		}
 		http_client->poll();
 		PackedByteArray chunk = http_client->read_response_body_chunk();
 		if (chunk.size() > 0) {
@@ -2359,7 +2473,9 @@ void XAIProvider::_perform_request_with_messages(const Array &p_messages, const 
 		}
 	}
 
-	_last_request_latency_ms = (int64_t)(Time::get_singleton()->get_ticks_msec() - _req_start_ms);
+	if (!_is_aborted(p_serial)) {
+		_last_request_latency_ms = (int64_t)(Time::get_singleton()->get_ticks_msec() - _req_start_ms);
+	}
 
 	String response_str = String::utf8((const char *)response_body.ptr(), response_body.size());
 
@@ -2388,14 +2504,14 @@ void XAIProvider::_perform_request_with_messages(const Array &p_messages, const 
 			? vformat("HTTP error: %d", response_code)
 			: vformat("HTTP %d: %s", response_code, error_detail);
 		ERR_PRINT(vformat("XAIProvider: %s", error_msg));
-		call_deferred("emit_signal", "request_completed", false, "", error_msg);
+		_post_request_completed(p_serial, false, "", error_msg);
 		memdelete(http_client);
 		return;
 	}
 
 	// Return the full API response JSON — orchestrator needs finish_reason, tool_calls, content
 	print_line(vformat("XAIProvider: Received full API response (%d bytes)", response_str.length()));
-	call_deferred("emit_signal", "request_completed", true, response_str, "");
+	_post_request_completed(p_serial, true, response_str, "");
 
 	// Clean up
 	memdelete(http_client);
@@ -2500,20 +2616,22 @@ String AnthropicProvider::get_request_url() const {
 }
 
 void AnthropicProvider::send_request(const String &user_prompt, const String &context_block) {
+	const uint64_t serial = _begin_request();
+
 	if (api_key.is_empty()) {
 		ERR_PRINT("AnthropicProvider::send_request() - API key is not set");
-		call_deferred("emit_signal", "request_completed", false, "", "API key is not set");
+		_post_request_completed(serial, false, "", "API key is not set");
 		return;
 	}
 
 	print_line(vformat("AnthropicProvider: Sending request to %s", get_request_url()));
 
 	WorkerThreadPool::get_singleton()->add_task(
-		callable_mp(this, &AnthropicProvider::_perform_request).bind(user_prompt, context_block)
+		callable_mp(this, &AnthropicProvider::_perform_request).bind(serial, user_prompt, context_block)
 	);
 }
 
-void AnthropicProvider::_perform_request(const String &user_prompt, const String &context_block) {
+void AnthropicProvider::_perform_request(uint64_t p_serial, const String &user_prompt, const String &context_block) {
 	HTTPClient *http_client = HTTPClient::create();
 
 	String host = "api.anthropic.com";
@@ -2523,20 +2641,24 @@ void AnthropicProvider::_perform_request(const String &user_prompt, const String
 	Error err = http_client->connect_to_host(host, port, tls_options);
 	if (err != OK) {
 		ERR_PRINT(vformat("AnthropicProvider: Failed to connect to host: %d", err));
-		call_deferred("emit_signal", "request_completed", false, "", vformat("Failed to connect: %d", err));
+		_post_request_completed(p_serial, false, "", vformat("Failed to connect: %d", err));
 		memdelete(http_client);
 		return;
 	}
 
 	while (http_client->get_status() == HTTPClient::STATUS_CONNECTING ||
 	       http_client->get_status() == HTTPClient::STATUS_RESOLVING) {
+		if (_is_aborted(p_serial)) {
+			memdelete(http_client);
+			return;
+		}
 		http_client->poll();
 		OS::get_singleton()->delay_usec(10000);
 	}
 
 	if (http_client->get_status() != HTTPClient::STATUS_CONNECTED) {
 		ERR_PRINT(vformat("AnthropicProvider: Connection failed, status: %d", http_client->get_status()));
-		call_deferred("emit_signal", "request_completed", false, "", "Connection failed");
+		_post_request_completed(p_serial, false, "", "Connection failed");
 		memdelete(http_client);
 		return;
 	}
@@ -2555,12 +2677,16 @@ void AnthropicProvider::_perform_request(const String &user_prompt, const String
 	err = http_client->request(HTTPClient::METHOD_POST, "/v1/messages", headers_vector, (const uint8_t *)body_data.get_data(), body_data.length());
 	if (err != OK) {
 		ERR_PRINT(vformat("AnthropicProvider: Failed to send request: %d", err));
-		call_deferred("emit_signal", "request_completed", false, "", vformat("Failed to send request: %d", err));
+		_post_request_completed(p_serial, false, "", vformat("Failed to send request: %d", err));
 		memdelete(http_client);
 		return;
 	}
 
 	while (http_client->get_status() == HTTPClient::STATUS_REQUESTING) {
+		if (_is_aborted(p_serial)) {
+			memdelete(http_client);
+			return;
+		}
 		http_client->poll();
 		OS::get_singleton()->delay_usec(10000);
 	}
@@ -2568,7 +2694,7 @@ void AnthropicProvider::_perform_request(const String &user_prompt, const String
 	if (http_client->get_status() != HTTPClient::STATUS_BODY &&
 	    http_client->get_status() != HTTPClient::STATUS_CONNECTED) {
 		ERR_PRINT(vformat("AnthropicProvider: Request failed, status: %d", http_client->get_status()));
-		call_deferred("emit_signal", "request_completed", false, "", vformat("Request failed (%s)", _http_transport_status_reason(http_client->get_status())));
+		_post_request_completed(p_serial, false, "", vformat("Request failed (%s)", _http_transport_status_reason(http_client->get_status())));
 		memdelete(http_client);
 		return;
 	}
@@ -2578,6 +2704,10 @@ void AnthropicProvider::_perform_request(const String &user_prompt, const String
 		// Read error body for diagnostics
 		PackedByteArray err_body;
 		while (http_client->get_status() == HTTPClient::STATUS_BODY) {
+			if (_is_aborted(p_serial)) {
+				memdelete(http_client);
+				return;
+			}
 			http_client->poll();
 			PackedByteArray chunk = http_client->read_response_body_chunk();
 			if (chunk.size() > 0) {
@@ -2586,7 +2716,9 @@ void AnthropicProvider::_perform_request(const String &user_prompt, const String
 				OS::get_singleton()->delay_usec(10000);
 			}
 		}
-		_last_request_latency_ms = (int64_t)(Time::get_singleton()->get_ticks_msec() - _req_start_ms);
+		if (!_is_aborted(p_serial)) {
+			_last_request_latency_ms = (int64_t)(Time::get_singleton()->get_ticks_msec() - _req_start_ms);
+		}
 		String err_str = String::utf8((const char *)err_body.ptr(), err_body.size());
 		String error_detail;
 		JSON err_json;
@@ -2601,13 +2733,17 @@ void AnthropicProvider::_perform_request(const String &user_prompt, const String
 			? vformat("HTTP error: %d", response_code)
 			: vformat("HTTP %d: %s", response_code, error_detail);
 		ERR_PRINT(vformat("AnthropicProvider: %s", error_msg));
-		call_deferred("emit_signal", "request_completed", false, "", error_msg);
+		_post_request_completed(p_serial, false, "", error_msg);
 		memdelete(http_client);
 		return;
 	}
 
 	PackedByteArray response_body;
 	while (http_client->get_status() == HTTPClient::STATUS_BODY) {
+		if (_is_aborted(p_serial)) {
+			memdelete(http_client);
+			return;
+		}
 		http_client->poll();
 		PackedByteArray chunk = http_client->read_response_body_chunk();
 		if (chunk.size() > 0) {
@@ -2617,7 +2753,9 @@ void AnthropicProvider::_perform_request(const String &user_prompt, const String
 		}
 	}
 
-	_last_request_latency_ms = (int64_t)(Time::get_singleton()->get_ticks_msec() - _req_start_ms);
+	if (!_is_aborted(p_serial)) {
+		_last_request_latency_ms = (int64_t)(Time::get_singleton()->get_ticks_msec() - _req_start_ms);
+	}
 
 	String response_str = String::utf8((const char *)response_body.ptr(), response_body.size());
 
@@ -2625,7 +2763,7 @@ void AnthropicProvider::_perform_request(const String &user_prompt, const String
 	err = json.parse(response_str);
 	if (err != Error::OK) {
 		ERR_PRINT(vformat("AnthropicProvider: Failed to parse response JSON: %s", json.get_error_message()));
-		call_deferred("emit_signal", "request_completed", false, "", "Failed to parse response JSON");
+		_post_request_completed(p_serial, false, "", "Failed to parse response JSON");
 		memdelete(http_client);
 		return;
 	}
@@ -2635,13 +2773,13 @@ void AnthropicProvider::_perform_request(const String &user_prompt, const String
 
 	if (ai_response.is_empty()) {
 		ERR_PRINT("AnthropicProvider: Empty response from AI");
-		call_deferred("emit_signal", "request_completed", false, "", "Empty response");
+		_post_request_completed(p_serial, false, "", "Empty response");
 		memdelete(http_client);
 		return;
 	}
 
 	print_line(vformat("AnthropicProvider: Received response: %s", ai_response));
-	call_deferred("emit_signal", "request_completed", true, ai_response, "");
+	_post_request_completed(p_serial, true, ai_response, "");
 
 	memdelete(http_client);
 }
@@ -2915,20 +3053,22 @@ Dictionary AnthropicProvider::build_request_body_with_messages(const Array &p_me
 }
 
 void AnthropicProvider::send_request_with_messages(const Array &p_messages, const String &context_block) {
+	const uint64_t serial = _begin_request();
+
 	if (api_key.is_empty()) {
 		ERR_PRINT("AnthropicProvider::send_request_with_messages() - API key is not set");
-		call_deferred("emit_signal", "request_completed", false, "", "API key is not set");
+		_post_request_completed(serial, false, "", "API key is not set");
 		return;
 	}
 
 	print_line(vformat("AnthropicProvider: Sending request with %d messages to %s", p_messages.size(), get_request_url()));
 
 	WorkerThreadPool::get_singleton()->add_task(
-		callable_mp(this, &AnthropicProvider::_perform_request_with_messages).bind(p_messages, context_block)
+		callable_mp(this, &AnthropicProvider::_perform_request_with_messages).bind(serial, p_messages, context_block)
 	);
 }
 
-void AnthropicProvider::_perform_request_with_messages(const Array &p_messages, const String &context_block) {
+void AnthropicProvider::_perform_request_with_messages(uint64_t p_serial, const Array &p_messages, const String &context_block) {
 	HTTPClient *http_client = HTTPClient::create();
 
 	String host = "api.anthropic.com";
@@ -2938,20 +3078,24 @@ void AnthropicProvider::_perform_request_with_messages(const Array &p_messages, 
 	Error err = http_client->connect_to_host(host, port, tls_options);
 	if (err != OK) {
 		ERR_PRINT(vformat("AnthropicProvider: Failed to connect to host: %d", err));
-		call_deferred("emit_signal", "request_completed", false, "", vformat("Failed to connect: %d", err));
+		_post_request_completed(p_serial, false, "", vformat("Failed to connect: %d", err));
 		memdelete(http_client);
 		return;
 	}
 
 	while (http_client->get_status() == HTTPClient::STATUS_CONNECTING ||
 	       http_client->get_status() == HTTPClient::STATUS_RESOLVING) {
+		if (_is_aborted(p_serial)) {
+			memdelete(http_client);
+			return;
+		}
 		http_client->poll();
 		OS::get_singleton()->delay_usec(10000);
 	}
 
 	if (http_client->get_status() != HTTPClient::STATUS_CONNECTED) {
 		ERR_PRINT(vformat("AnthropicProvider: Connection failed, status: %d", http_client->get_status()));
-		call_deferred("emit_signal", "request_completed", false, "", "Connection failed");
+		_post_request_completed(p_serial, false, "", "Connection failed");
 		memdelete(http_client);
 		return;
 	}
@@ -2970,12 +3114,16 @@ void AnthropicProvider::_perform_request_with_messages(const Array &p_messages, 
 	err = http_client->request(HTTPClient::METHOD_POST, "/v1/messages", headers_vector, (const uint8_t *)body_data.get_data(), body_data.length());
 	if (err != OK) {
 		ERR_PRINT(vformat("AnthropicProvider: Failed to send request: %d", err));
-		call_deferred("emit_signal", "request_completed", false, "", vformat("Failed to send request: %d", err));
+		_post_request_completed(p_serial, false, "", vformat("Failed to send request: %d", err));
 		memdelete(http_client);
 		return;
 	}
 
 	while (http_client->get_status() == HTTPClient::STATUS_REQUESTING) {
+		if (_is_aborted(p_serial)) {
+			memdelete(http_client);
+			return;
+		}
 		http_client->poll();
 		OS::get_singleton()->delay_usec(10000);
 	}
@@ -2983,7 +3131,7 @@ void AnthropicProvider::_perform_request_with_messages(const Array &p_messages, 
 	if (http_client->get_status() != HTTPClient::STATUS_BODY &&
 	    http_client->get_status() != HTTPClient::STATUS_CONNECTED) {
 		ERR_PRINT(vformat("AnthropicProvider: Request failed, status: %d", http_client->get_status()));
-		call_deferred("emit_signal", "request_completed", false, "", vformat("Request failed (%s)", _http_transport_status_reason(http_client->get_status())));
+		_post_request_completed(p_serial, false, "", vformat("Request failed (%s)", _http_transport_status_reason(http_client->get_status())));
 		memdelete(http_client);
 		return;
 	}
@@ -2993,6 +3141,10 @@ void AnthropicProvider::_perform_request_with_messages(const Array &p_messages, 
 		// Read error body for diagnostics
 		PackedByteArray err_body;
 		while (http_client->get_status() == HTTPClient::STATUS_BODY) {
+			if (_is_aborted(p_serial)) {
+				memdelete(http_client);
+				return;
+			}
 			http_client->poll();
 			PackedByteArray chunk = http_client->read_response_body_chunk();
 			if (chunk.size() > 0) {
@@ -3001,7 +3153,9 @@ void AnthropicProvider::_perform_request_with_messages(const Array &p_messages, 
 				OS::get_singleton()->delay_usec(10000);
 			}
 		}
-		_last_request_latency_ms = (int64_t)(Time::get_singleton()->get_ticks_msec() - _req_start_ms);
+		if (!_is_aborted(p_serial)) {
+			_last_request_latency_ms = (int64_t)(Time::get_singleton()->get_ticks_msec() - _req_start_ms);
+		}
 		String err_str = String::utf8((const char *)err_body.ptr(), err_body.size());
 		// Try to extract error message from response body
 		String error_detail;
@@ -3017,13 +3171,17 @@ void AnthropicProvider::_perform_request_with_messages(const Array &p_messages, 
 			? vformat("HTTP error: %d", response_code)
 			: vformat("HTTP %d: %s", response_code, error_detail);
 		ERR_PRINT(vformat("AnthropicProvider: %s", error_msg));
-		call_deferred("emit_signal", "request_completed", false, "", error_msg);
+		_post_request_completed(p_serial, false, "", error_msg);
 		memdelete(http_client);
 		return;
 	}
 
 	PackedByteArray response_body;
 	while (http_client->get_status() == HTTPClient::STATUS_BODY) {
+		if (_is_aborted(p_serial)) {
+			memdelete(http_client);
+			return;
+		}
 		http_client->poll();
 		PackedByteArray chunk = http_client->read_response_body_chunk();
 		if (chunk.size() > 0) {
@@ -3033,7 +3191,9 @@ void AnthropicProvider::_perform_request_with_messages(const Array &p_messages, 
 		}
 	}
 
-	_last_request_latency_ms = (int64_t)(Time::get_singleton()->get_ticks_msec() - _req_start_ms);
+	if (!_is_aborted(p_serial)) {
+		_last_request_latency_ms = (int64_t)(Time::get_singleton()->get_ticks_msec() - _req_start_ms);
+	}
 
 	String response_str = String::utf8((const char *)response_body.ptr(), response_body.size());
 
@@ -3042,7 +3202,7 @@ void AnthropicProvider::_perform_request_with_messages(const Array &p_messages, 
 	err = json_parser.parse(response_str);
 	if (err != Error::OK) {
 		ERR_PRINT(vformat("AnthropicProvider: Failed to parse response JSON: %s", json_parser.get_error_message()));
-		call_deferred("emit_signal", "request_completed", false, "", "Failed to parse response JSON");
+		_post_request_completed(p_serial, false, "", "Failed to parse response JSON");
 		memdelete(http_client);
 		return;
 	}
@@ -3128,7 +3288,7 @@ void AnthropicProvider::_perform_request_with_messages(const Array &p_messages, 
 
 	String translated_response = JSON::stringify(openai_response);
 	print_line(vformat("AnthropicProvider: Translated response to OpenAI format (%d bytes)", translated_response.length()));
-	call_deferred("emit_signal", "request_completed", true, translated_response, "");
+	_post_request_completed(p_serial, true, translated_response, "");
 
 	memdelete(http_client);
 }
@@ -3400,7 +3560,7 @@ void DummyProvider::send_request(const String &user_prompt, const String &contex
 	// DummyProvider doesn't make real HTTP requests - just immediately return dummy data
 	print_line("DummyProvider: Returning simulated response");
 	String response = get_dummy_response(user_prompt);
-	emit_signal("request_completed", true, response, "");
+	_post_request_completed(_begin_request(), true, response, "");
 }
 
 Dictionary DummyProvider::build_request_body_with_messages(const Array &p_messages, const String &context_block) const {
@@ -3426,7 +3586,7 @@ void DummyProvider::send_request_with_messages(const Array &p_messages, const St
 	}
 	
 	String response = get_dummy_response(last_user_prompt);
-	emit_signal("request_completed", true, response, "");
+	_post_request_completed(_begin_request(), true, response, "");
 }
 
 String DummyProvider::get_dummy_response(const String &user_prompt) const {

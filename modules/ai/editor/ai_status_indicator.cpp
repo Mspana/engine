@@ -1325,6 +1325,9 @@ void AIStatusPanel::_notification(int p_what) {
 						if (!orchestrator->is_connected("scene_diff_ready", callable_mp(this, &AIStatusPanel::_on_scene_diff_ready))) {
 							orchestrator->connect("scene_diff_ready", callable_mp(this, &AIStatusPanel::_on_scene_diff_ready));
 						}
+						if (!orchestrator->is_connected("user_injection_consumed", callable_mp(this, &AIStatusPanel::_on_user_injection_consumed))) {
+							orchestrator->connect("user_injection_consumed", callable_mp(this, &AIStatusPanel::_on_user_injection_consumed));
+						}
 					}
 				}
 			}
@@ -2170,17 +2173,6 @@ void AIStatusPanel::_update_send_button_state() {
 			send_button->add_theme_color_override("font_color", AIColors::TEXT_SECONDARY);
 			send_button->add_theme_color_override("font_hover_color", AIColors::TEXT_PRIMARY);
 		} break;
-
-		case STATE_CANCELLING: {
-			// Stopping...: same plain text style, disabled
-			send_button->set_text(TTR("Stopping..."));
-			send_button->set_disabled(true);
-
-			Ref<StyleBoxEmpty> stop_empty;
-			stop_empty.instantiate();
-			send_button->add_theme_style_override("normal", stop_empty);
-			send_button->add_theme_color_override("font_color", AIColors::TEXT_MUTED);
-		} break;
 	}
 }
 
@@ -2266,7 +2258,7 @@ Control *AIStatusPanel::_create_queue_item(int p_index, const QueuedMessage &p_m
 
 	// Subtitle
 	Label *subtitle_label = memnew(Label);
-	subtitle_label->set_text(TTR("Sends after message finishes"));
+	subtitle_label->set_text(TTR("Will be read at the AI's next step"));
 	subtitle_label->add_theme_color_override("font_color", AIColors::TEXT_MUTED);
 	subtitle_label->add_theme_font_size_override("font_size", 11 * EDSCALE);
 	text_vbox->add_child(subtitle_label);
@@ -2300,7 +2292,8 @@ void AIStatusPanel::_on_queue_item_edit(int p_index) {
 	// Get the message text
 	String text = message_queue[p_index].text;
 
-	// Remove from queue
+	// Remove from queue (and withdraw it from the live run's pending injections)
+	_withdraw_pending_injection(message_queue[p_index].id);
 	message_queue.remove_at(p_index);
 	_update_queue_ui();
 
@@ -2330,7 +2323,7 @@ String AIStatusPanel::_generate_queue_id() {
 	return vformat("queue_%d_%d", OS::get_singleton()->get_ticks_msec(), counter++);
 }
 
-void AIStatusPanel::_enqueue_message(const String &p_text) {
+String AIStatusPanel::_enqueue_message(const String &p_text) {
 	QueuedMessage msg;
 	msg.id = _generate_queue_id();
 	msg.text = p_text;
@@ -2339,6 +2332,7 @@ void AIStatusPanel::_enqueue_message(const String &p_text) {
 
 	print_line(vformat("AI Queue: Enqueued message (queue size: %d)", message_queue.size()));
 	_update_queue_ui();
+	return msg.id;
 }
 
 void AIStatusPanel::_dequeue_and_run_next() {
@@ -2366,8 +2360,44 @@ void AIStatusPanel::_remove_queued_message(int p_index) {
 		return;
 	}
 
+	_withdraw_pending_injection(message_queue[p_index].id);
 	message_queue.remove_at(p_index);
 	print_line(vformat("AI Queue: Removed message at index %d, %d remaining", p_index, message_queue.size()));
+	_update_queue_ui();
+}
+
+void AIStatusPanel::_withdraw_pending_injection(const String &p_queue_id) {
+	if (!Engine::get_singleton()->has_singleton("AI")) {
+		return;
+	}
+	AI *ai = Object::cast_to<AI>(Engine::get_singleton()->get_singleton_object("AI"));
+	if (ai) {
+		Ref<AgenticOrchestrator> orchestrator = ai->get_orchestrator();
+		if (orchestrator.is_valid()) {
+			orchestrator->remove_pending_injection(p_queue_id);
+		}
+	}
+}
+
+void AIStatusPanel::_on_user_injection_consumed(const Array &p_ids) {
+	// The orchestrator just appended these queued messages to the model
+	// conversation (all of this batch's tool results are already persisted,
+	// so appending here keeps store order identical to wire order).
+	for (int i = 0; i < p_ids.size(); i++) {
+		String id = p_ids[i];
+		for (int j = 0; j < message_queue.size(); j++) {
+			if (message_queue[j].id != id) {
+				continue;
+			}
+			if (chat_store.is_valid()) {
+				HistoryItem user_item = chat_store->append_item(AIChatStore::make_user_item(message_queue[j].text, Vector<String>()));
+				_append_message_ui(user_item);
+				should_auto_scroll = true;
+			}
+			message_queue.remove_at(j);
+			break;
+		}
+	}
 	_update_queue_ui();
 }
 
@@ -2381,7 +2411,7 @@ void AIStatusPanel::_set_run_state(RunState p_state) {
 	}
 
 	run_state = p_state;
-	print_line(vformat("AI Run State: %s", p_state == STATE_IDLE ? "IDLE" : (p_state == STATE_RUNNING ? "RUNNING" : "CANCELLING")));
+	print_line(vformat("AI Run State: %s", p_state == STATE_IDLE ? "IDLE" : "RUNNING"));
 	_update_send_button_state();
 }
 
@@ -2505,9 +2535,9 @@ void AIStatusPanel::_request_cancel() {
 		return;
 	}
 
-	_set_run_state(STATE_CANCELLING);
-
-	// Cancel the current agentic run
+	// cancel_run is terminal and instant: it repairs the transcript and emits
+	// run_complete synchronously, which lands in _on_orchestrator_complete and
+	// resets run_state to IDLE before this returns.
 	if (Engine::get_singleton()->has_singleton("AI")) {
 		Object *ai_obj = Engine::get_singleton()->get_singleton_object("AI");
 		AI *ai = Object::cast_to<AI>(ai_obj);
@@ -2516,9 +2546,14 @@ void AIStatusPanel::_request_cancel() {
 			if (orchestrator.is_valid() && orchestrator->is_running()) {
 				print_line("AI Chat Panel: Cancelling agentic run");
 				orchestrator->cancel_run();
-				// UI will update when _on_orchestrator_complete is called
 			}
 		}
+	}
+
+	// Desync fallback: if the orchestrator wasn't actually running (so no
+	// run_complete fired), don't leave the composer stuck in RUNNING.
+	if (run_state == STATE_RUNNING) {
+		_set_run_state(STATE_IDLE);
 	}
 }
 
@@ -2903,10 +2938,6 @@ void AIStatusPanel::_on_send_button_pressed() {
 		case STATE_RUNNING: {
 			// Stop mode: request cancellation
 			_request_cancel();
-		} break;
-
-		case STATE_CANCELLING: {
-			// Already cancelling, ignore
 		} break;
 	}
 }
@@ -3343,10 +3374,25 @@ void AIStatusPanel::_on_prompt_gui_input(const Ref<InputEvent> &p_event) {
 				// Accept the event to prevent newline insertion
 				prompt_edit->accept_event();
 
-				// If running, queue the message instead of trying to send
+				// If running, queue the message and hand it to the orchestrator
+				// as a mid-run injection: the model reads it at its next step
+				// instead of after the whole run. Messages with attached images
+				// stay queue-only (injections are text-only) so the images
+				// travel with a fresh run instead of being silently dropped.
 				if (run_state != STATE_IDLE) {
 					prompt_edit->set_text("");
-					_enqueue_message(prompt_text);
+					String queue_id = _enqueue_message(prompt_text);
+					if (pending_images.is_empty() && Engine::get_singleton()->has_singleton("AI")) {
+						AI *ai = Object::cast_to<AI>(Engine::get_singleton()->get_singleton_object("AI"));
+						if (ai) {
+							Ref<AgenticOrchestrator> orchestrator = ai->get_orchestrator();
+							if (orchestrator.is_valid()) {
+								// A false return means the run just ended; the
+								// message stays queued and drains as a new run.
+								orchestrator->inject_user_message(queue_id, prompt_text);
+							}
+						}
+					}
 					_update_send_button_state();
 				} else {
 					// Idle: trigger normal send
@@ -3990,8 +4036,9 @@ void AIStatusPanel::_on_orchestrator_complete(bool p_success, const String &p_fi
 	_run_token_total = 0;
 
 	// Successful final assistant message was already stored and rendered by _on_orchestrator_assistant_item.
+	const bool was_cancelled = !p_success && p_final_message.begins_with("<turn_cancelled>");
 	if (!p_success && !p_final_message.is_empty()) {
-		if (p_final_message.begins_with("<turn_cancelled>")) {
+		if (was_cancelled) {
 			// Cancelled: persist as user-role message (model-visible context) and show bold inline text.
 			if (chat_store.is_valid()) {
 				Dictionary data;
@@ -4072,11 +4119,36 @@ void AIStatusPanel::_on_orchestrator_complete(bool p_success, const String &p_fi
 	// Update context usage to reflect the new assistant message added to the store
 	_refresh_context_usage();
 
-	// Check for queued messages and process the next one
+	// Queued messages that were never consumed by the run:
+	// - Cancelled run: the user is reconsidering — return their text to the
+	//   composer for editing instead of auto-starting a new run.
+	// - Normal completion (e.g. the model answered before its next request
+	//   could consume them): send the next one as a fresh run, as before.
 	if (!message_queue.is_empty()) {
-		print_line(vformat("AIStatusPanel: Run complete, %d messages in queue. Starting next...", message_queue.size()));
-		// Use call_deferred to avoid re-entrancy issues
-		callable_mp(this, &AIStatusPanel::_dequeue_and_run_next).call_deferred();
+		if (was_cancelled) {
+			if (prompt_edit) {
+				String restored;
+				for (const QueuedMessage &qm : message_queue) {
+					if (!restored.is_empty()) {
+						restored += "\n\n";
+					}
+					restored += qm.text;
+				}
+				String existing = prompt_edit->get_text();
+				prompt_edit->set_text(existing.is_empty() ? restored : restored + "\n\n" + existing);
+				prompt_edit->grab_focus();
+				prompt_edit->set_caret_line(prompt_edit->get_line_count() - 1);
+				prompt_edit->set_caret_column(prompt_edit->get_line(prompt_edit->get_line_count() - 1).length());
+			}
+			print_line(vformat("AIStatusPanel: Run cancelled, returned %d queued message(s) to composer.", message_queue.size()));
+			message_queue.clear();
+			_update_queue_ui();
+			_update_send_button_state();
+		} else {
+			print_line(vformat("AIStatusPanel: Run complete, %d messages in queue. Starting next...", message_queue.size()));
+			// Use call_deferred to avoid re-entrancy issues
+			callable_mp(this, &AIStatusPanel::_dequeue_and_run_next).call_deferred();
+		}
 	}
 }
 
@@ -5301,6 +5373,9 @@ AIStatusPanel::~AIStatusPanel() {
 				}
 				if (orchestrator->is_connected("scene_diff_ready", callable_mp(this, &AIStatusPanel::_on_scene_diff_ready))) {
 					orchestrator->disconnect("scene_diff_ready", callable_mp(this, &AIStatusPanel::_on_scene_diff_ready));
+				}
+				if (orchestrator->is_connected("user_injection_consumed", callable_mp(this, &AIStatusPanel::_on_user_injection_consumed))) {
+					orchestrator->disconnect("user_injection_consumed", callable_mp(this, &AIStatusPanel::_on_user_injection_consumed));
 				}
 				if (orchestrator->is_connected("api_round_started", callable_mp(this, &AIStatusPanel::_on_api_round_started))) {
 					orchestrator->disconnect("api_round_started", callable_mp(this, &AIStatusPanel::_on_api_round_started));
