@@ -228,6 +228,39 @@ private:
 	void _run_and_screenshot_tick();
 	void _on_async_rns_capture_received(const String &p_b64);
 	void _on_async_rns_complete(const Dictionary &p_exec_result);
+
+	// Async install_export_templates state (second instance of the RNS
+	// timer-tick pattern above; see export_actions.h for the download URL).
+	// Download runs on a threaded HTTPRequest node parented under EditorNode;
+	// extraction runs on a WorkerThreadPool task owned by a heap context the
+	// tick polls (so cancel never blocks on the worker).
+	enum AsyncTplPhase { ASYNC_TPL_INACTIVE, ASYNC_TPL_DOWNLOADING, ASYNC_TPL_EXTRACTING };
+	AsyncTplPhase _async_tpl_phase = ASYNC_TPL_INACTIVE;
+	String _async_tpl_tool_call_id;
+	Dictionary _async_tpl_action_args;
+	uint64_t _async_tpl_start_ms = 0;
+	uint64_t _async_tpl_last_progress_ms = 0; // Download stall watchdog.
+	int64_t _async_tpl_last_bytes = 0;
+	uint32_t _tpl_tick_gen = 0;
+	ObjectID _async_tpl_http_id; // HTTPRequest node (lives under EditorNode).
+	String _async_tpl_tmp_path; // Downloaded .tpz in the editor temp dir.
+	struct AITplExtractContext *_async_tpl_extract_ctx = nullptr;
+
+	// export_project / serve_web_build drive EditorProgress internally, which
+	// refuses to start while the message queue is flushing — and tool dispatch
+	// runs from call_deferred. These tools are re-entered from a SceneTreeTimer
+	// callback (outside the flush) and executed synchronously there.
+	String _deferred_tool_call_id;
+	String _deferred_tool_name;
+	Dictionary _deferred_tool_args;
+	void _run_deferred_sync_tool(uint64_t p_run_gen);
+
+	void _tpl_release_extract_ctx(bool p_cancel);
+	void _schedule_tpl_tick(float p_delay = 0.5f);
+	void _install_templates_tick_gen(uint32_t p_gen);
+	void _install_templates_tick();
+	void _on_tpl_download_completed(int p_result, int p_response_code, const PackedStringArray &p_headers, const PackedByteArray &p_body);
+	void _on_async_tpl_complete(const Dictionary &p_exec_result);
 };
 
 #endif // AGENTIC_ORCHESTRATOR_H

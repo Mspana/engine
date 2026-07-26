@@ -32,10 +32,18 @@
 #include "ai.h"
 #include "ai_provider.h"
 #include "scene_diff.h"
+#include "actions/export_actions.h"
 
+#include "core/io/dir_access.h"
+#include "core/io/file_access.h"
 #include "core/io/json.h"
+#include "core/io/zip_io.h"
+#include "core/object/worker_thread_pool.h"
 #include "core/os/os.h"
 #include "core/os/time.h"
+#include "core/templates/safe_refcount.h"
+#include "editor/editor_paths.h"
+#include "scene/main/http_request.h"
 #include "editor/debugger/editor_debugger_node.h"
 #include "editor/debugger/script_editor_debugger.h"
 #include "editor/editor_log.h"
@@ -710,6 +718,93 @@ void AgenticOrchestrator::_process_native_tool_response(const Dictionary &p_api_
 			return;
 		}
 
+		// Handle install_export_templates asynchronously (large background
+		// download + extract). When templates are already installed (and no
+		// force), fall through to the synchronous exec, which returns an
+		// already-installed success immediately.
+		if (tool_name == "install_export_templates" &&
+				(!AIExportActions::templates_installed() || (bool)args.get("force", false))) {
+			_async_tpl_tool_call_id = call_id;
+			_async_tpl_action_args = args;
+			_async_tpl_start_ms = Time::get_singleton()->get_ticks_msec();
+			_async_tpl_last_progress_ms = _async_tpl_start_ms;
+			_async_tpl_last_bytes = 0;
+			_async_tpl_tmp_path = EditorPaths::get_singleton()->get_temp_dir().path_join("ai_export_templates.tpz");
+
+			HTTPRequest *req = memnew(HTTPRequest);
+			req->set_use_threads(true);
+			req->set_download_file(_async_tpl_tmp_path);
+			EditorNode::get_singleton()->add_child(req);
+			req->connect("request_completed", callable_mp(this, &AgenticOrchestrator::_on_tpl_download_completed));
+			_async_tpl_http_id = req->get_instance_id();
+
+			_async_tpl_phase = ASYNC_TPL_DOWNLOADING;
+			Error req_err = req->request(AI_EXPORT_TEMPLATES_URL);
+			if (req_err != OK) {
+				req->queue_free();
+				_async_tpl_http_id = ObjectID();
+				_async_tpl_phase = ASYNC_TPL_INACTIVE;
+				Dictionary err_result;
+				Dictionary ed;
+				ed["code"] = "operation_failed";
+				ed["message"] = vformat("Could not start the template download (HTTPRequest error %d).", (int)req_err);
+				ed["details"] = Dictionary();
+				err_result["status"] = "error";
+				err_result["error"] = ed;
+				// Deferred so the loop resumes from a callback, matching the RNS
+				// synchronous-launch-failure path.
+				callable_mp(this, &AgenticOrchestrator::_on_async_tpl_complete).bind(err_result).call_deferred();
+				return;
+			}
+
+			print_line(vformat("AgenticOrchestrator: Downloading export templates from %s", AI_EXPORT_TEMPLATES_URL));
+			_emit_progress_update("Downloading export templates...", current_run.model_turns);
+			_schedule_tpl_tick(0.5f);
+			// Async — loop will be resumed by _on_async_tpl_complete
+			return;
+		}
+
+		// export_project / serve_web_build use EditorProgress internally, which
+		// refuses to start while the message queue is flushing — and this loop
+		// runs from call_deferred (the failed task then spams task_step errors
+		// for the whole export). Re-enter from a SceneTreeTimer callback,
+		// outside the flush, and continue the loop there.
+		if (tool_name == "export_project" || tool_name == "serve_web_build") {
+			SceneTree *deferred_tree = Object::cast_to<SceneTree>(OS::get_singleton()->get_main_loop());
+			if (deferred_tree) {
+				_deferred_tool_call_id = call_id;
+				_deferred_tool_name = tool_name;
+				_deferred_tool_args = args;
+
+				// Answer any remaining calls in this batch so none are orphaned
+				// (the dispatch loop will not resume after the deferred tool
+				// completes). The model re-issues them next turn.
+				for (int j = i + 1; j < tool_calls.size(); j++) {
+					Dictionary next_tc = tool_calls[j];
+					Dictionary skip_err;
+					skip_err["code"] = "skipped";
+					skip_err["message"] = vformat("Skipped: %s ends the tool batch. Re-issue this call after its result arrives.", tool_name);
+					skip_err["details"] = Dictionary();
+					Dictionary skip_result;
+					skip_result["status"] = "error";
+					skip_result["error"] = skip_err;
+					Dictionary skip_msg;
+					skip_msg["role"] = "tool";
+					skip_msg["tool_call_id"] = (String)next_tc.get("id", "");
+					skip_msg["content"] = JSON::stringify(skip_result);
+					current_run.conversation_history.push_back(skip_msg);
+					current_run.run_messages.push_back(skip_msg);
+				}
+
+				_emit_progress_update(tool_name == "export_project" ? "Exporting project..." : "Exporting and serving web build...", current_run.model_turns);
+				Ref<SceneTreeTimer> deferred_timer = deferred_tree->create_timer(0.05);
+				deferred_timer->connect("timeout", callable_mp(this, &AgenticOrchestrator::_run_deferred_sync_tool).bind(_run_gen), CONNECT_ONE_SHOT);
+				return;
+			}
+			// No SceneTree (shouldn't happen in-editor) — fall through to
+			// synchronous execution, which still works, just noisily.
+		}
+
 		// Execute the tool call
 		Dictionary tool_result_msg = _execute_tool_call(call_id, tool_name, args);
 		current_run.conversation_history.push_back(tool_result_msg);
@@ -1062,6 +1157,22 @@ void AgenticOrchestrator::cancel_run() {
 			ai->call("stop_game");
 		}
 		_async_rns_phase = ASYNC_RNS_INACTIVE;
+	} else if (_async_tpl_phase != ASYNC_TPL_INACTIVE) {
+		// Tear down the async template install: orphan any pending tick, abort
+		// the download, and signal the extraction worker (without blocking on
+		// it — the context outlives us via its refcount if the task is mid-file).
+		_tpl_tick_gen++;
+		HTTPRequest *req = Object::cast_to<HTTPRequest>(ObjectDB::get_instance(_async_tpl_http_id));
+		if (req) {
+			req->cancel_request();
+			req->queue_free();
+		}
+		_async_tpl_http_id = ObjectID();
+		_tpl_release_extract_ctx(/*p_cancel=*/true);
+		if (!_async_tpl_tmp_path.is_empty() && FileAccess::exists(_async_tpl_tmp_path)) {
+			DirAccess::remove_absolute(_async_tpl_tmp_path);
+		}
+		_async_tpl_phase = ASYNC_TPL_INACTIVE;
 	} else if (_waiting_for_response) {
 		// Abandon the in-flight request: its worker thread exits at its next
 		// poll, and the provider's serial gate drops its completion — so it
@@ -1434,6 +1545,372 @@ void AgenticOrchestrator::_on_async_rns_complete(const Dictionary &p_exec_result
 	}
 
 	// Tools that ran before run_and_screenshot in this batch may have mutated scenes.
+	_append_batch_scene_diffs();
+
+	_send_model_request();
+}
+
+// ---------------------------------------------------------------------------
+// Async install_export_templates state machine
+// ---------------------------------------------------------------------------
+
+// Heap context shared between the orchestrator (main thread) and the
+// extraction worker task. Refcounted (2 owners at spawn) so cancel never has
+// to block waiting for the worker: whichever side lets go last frees it.
+struct AITplExtractContext {
+	String tpz_path;
+	String dest_dir;
+	SafeNumeric<int32_t> files_done;
+	SafeNumeric<int32_t> files_total;
+	SafeNumeric<int64_t> bytes_written;
+	SafeFlag cancel;
+	SafeFlag finished; // Set by the task AFTER `error` is final.
+	String error; // Empty = success. Only read after `finished` is set.
+	SafeNumeric<int32_t> refs;
+};
+
+static void _ai_tpl_release_ctx(AITplExtractContext *p_ctx) {
+	if (p_ctx->refs.decrement() == 0) {
+		memdelete(p_ctx);
+	}
+}
+
+// Runs on a WorkerThreadPool thread. Extracts the .tpz (a zip whose entries
+// all live under a single top-level "templates/" dir — the first path segment
+// is stripped, per the layout misc/scripts/install_export_templates.py
+// documents) into dest_dir. The tpz's internal version.txt is deliberately
+// ignored: the destination folder is named after THIS build's version string.
+static void _ai_tpl_extract_task(void *p_userdata) {
+	AITplExtractContext *ctx = (AITplExtractContext *)p_userdata;
+
+	Ref<FileAccess> io_fa;
+	zlib_filefunc_def io = zipio_create_io(&io_fa);
+	unzFile pkg = unzOpen2(ctx->tpz_path.utf8().get_data(), &io);
+	if (!pkg) {
+		ctx->error = "Could not open the downloaded template package (corrupt download?).";
+		ctx->finished.set();
+		_ai_tpl_release_ctx(ctx);
+		return;
+	}
+
+	// First pass: count extractable files for progress reporting.
+	int total = 0;
+	int ret = unzGoToFirstFile(pkg);
+	while (ret == UNZ_OK) {
+		unz_file_info64 info;
+		String source_name;
+		if (godot_unzip_get_current_file_info(pkg, info, source_name) == UNZ_OK) {
+			int slash = source_name.find("/");
+			if (!source_name.ends_with("/") && !source_name.begins_with("__MACOSX") &&
+					slash >= 0 && slash + 1 < source_name.length()) {
+				total++;
+			}
+		}
+		ret = unzGoToNextFile(pkg);
+	}
+	ctx->files_total.set(total);
+	if (total == 0) {
+		unzClose(pkg);
+		ctx->error = "The template package contains no files in the expected layout.";
+		ctx->finished.set();
+		_ai_tpl_release_ctx(ctx);
+		return;
+	}
+
+	// Second pass: extract.
+	ret = unzGoToFirstFile(pkg);
+	while (ret == UNZ_OK) {
+		if (ctx->cancel.is_set()) {
+			break;
+		}
+		unz_file_info64 info;
+		String source_name;
+		if (godot_unzip_get_current_file_info(pkg, info, source_name) != UNZ_OK) {
+			ret = unzGoToNextFile(pkg);
+			continue;
+		}
+		int slash = source_name.find("/");
+		if (source_name.ends_with("/") || source_name.begins_with("__MACOSX") ||
+				slash < 0 || slash + 1 >= source_name.length()) {
+			ret = unzGoToNextFile(pkg);
+			continue;
+		}
+		String rel = source_name.substr(slash + 1);
+		String dest_path = ctx->dest_dir.path_join(rel);
+
+		Error mk = DirAccess::make_dir_recursive_absolute(dest_path.get_base_dir());
+		if (mk != OK && mk != ERR_ALREADY_EXISTS) {
+			ctx->error = vformat("Could not create directory '%s'.", dest_path.get_base_dir());
+			break;
+		}
+
+		Vector<uint8_t> data;
+		data.resize(info.uncompressed_size);
+		unzOpenCurrentFile(pkg);
+		int64_t read = data.is_empty() ? 0 : (int64_t)unzReadCurrentFile(pkg, data.ptrw(), data.size());
+		unzCloseCurrentFile(pkg);
+		if (read != (int64_t)data.size()) {
+			ctx->error = vformat("Failed to read '%s' from the template package.", source_name);
+			break;
+		}
+
+		Ref<FileAccess> out = FileAccess::open(dest_path, FileAccess::WRITE);
+		if (out.is_null()) {
+			ctx->error = vformat("Could not write '%s'.", dest_path);
+			break;
+		}
+		if (!data.is_empty()) {
+			out->store_buffer(data.ptr(), data.size());
+		}
+		ctx->bytes_written.add((int64_t)data.size());
+		ctx->files_done.increment();
+
+		ret = unzGoToNextFile(pkg);
+	}
+	unzClose(pkg);
+	ctx->finished.set();
+	_ai_tpl_release_ctx(ctx);
+}
+
+static Dictionary _ai_tpl_error_result(const String &p_message, const Dictionary &p_details = Dictionary()) {
+	Dictionary err_result;
+	Dictionary ed;
+	ed["code"] = "operation_failed";
+	ed["message"] = p_message;
+	ed["details"] = p_details;
+	err_result["status"] = "error";
+	err_result["error"] = ed;
+	return err_result;
+}
+
+void AgenticOrchestrator::_tpl_release_extract_ctx(bool p_cancel) {
+	if (!_async_tpl_extract_ctx) {
+		return;
+	}
+	if (p_cancel) {
+		_async_tpl_extract_ctx->cancel.set();
+	}
+	_ai_tpl_release_ctx(_async_tpl_extract_ctx);
+	_async_tpl_extract_ctx = nullptr;
+}
+
+void AgenticOrchestrator::_schedule_tpl_tick(float p_delay) {
+	_tpl_tick_gen++;
+	SceneTree *tree = Object::cast_to<SceneTree>(OS::get_singleton()->get_main_loop());
+	ERR_FAIL_NULL(tree);
+	Ref<SceneTreeTimer> timer = tree->create_timer(p_delay);
+	timer->connect("timeout", callable_mp(this, &AgenticOrchestrator::_install_templates_tick_gen).bind(_tpl_tick_gen), CONNECT_ONE_SHOT);
+}
+
+void AgenticOrchestrator::_install_templates_tick_gen(uint32_t p_gen) {
+	if (p_gen != _tpl_tick_gen) {
+		return; // Stale timer from a prior schedule — discard silently
+	}
+	_install_templates_tick();
+}
+
+void AgenticOrchestrator::_install_templates_tick() {
+	if (_async_tpl_phase == ASYNC_TPL_INACTIVE || !_is_running) {
+		return;
+	}
+	uint64_t now_ms = Time::get_singleton()->get_ticks_msec();
+
+	if (_async_tpl_phase == ASYNC_TPL_DOWNLOADING) {
+		HTTPRequest *req = Object::cast_to<HTTPRequest>(ObjectDB::get_instance(_async_tpl_http_id));
+		if (!req) {
+			_async_tpl_phase = ASYNC_TPL_INACTIVE;
+			_on_async_tpl_complete(_ai_tpl_error_result("Template download aborted (request node disappeared)."));
+			return;
+		}
+		int64_t got = req->get_downloaded_bytes();
+		int64_t total = req->get_body_size();
+		if (got > _async_tpl_last_bytes) {
+			_async_tpl_last_bytes = got;
+			_async_tpl_last_progress_ms = now_ms;
+		} else if (now_ms - _async_tpl_last_progress_ms > 60000) {
+			// Stall watchdog: no bytes for 60s.
+			req->cancel_request();
+			req->queue_free();
+			_async_tpl_http_id = ObjectID();
+			if (FileAccess::exists(_async_tpl_tmp_path)) {
+				DirAccess::remove_absolute(_async_tpl_tmp_path);
+			}
+			_async_tpl_phase = ASYNC_TPL_INACTIVE;
+			_on_async_tpl_complete(_ai_tpl_error_result("Template download stalled (no progress for 60 seconds). Check the network connection and retry."));
+			return;
+		}
+		if (total > 0) {
+			_emit_progress_update(vformat("Downloading export templates: %d / %d MB", got / 1000000, total / 1000000), current_run.model_turns);
+		} else {
+			_emit_progress_update(vformat("Downloading export templates: %d MB", got / 1000000), current_run.model_turns);
+		}
+		_schedule_tpl_tick(1.0f);
+		return;
+	}
+
+	// ASYNC_TPL_EXTRACTING
+	AITplExtractContext *ctx = _async_tpl_extract_ctx;
+	if (!ctx) {
+		return;
+	}
+	if (!ctx->finished.is_set()) {
+		_emit_progress_update(vformat("Extracting export templates: %d / %d files", (int)ctx->files_done.get(), (int)ctx->files_total.get()), current_run.model_turns);
+		_schedule_tpl_tick(0.5f);
+		return;
+	}
+
+	String extract_error = ctx->error;
+	int64_t bytes = ctx->bytes_written.get();
+	_tpl_release_extract_ctx(/*p_cancel=*/false);
+	if (FileAccess::exists(_async_tpl_tmp_path)) {
+		DirAccess::remove_absolute(_async_tpl_tmp_path);
+	}
+	_async_tpl_phase = ASYNC_TPL_INACTIVE;
+
+	if (!extract_error.is_empty()) {
+		_on_async_tpl_complete(_ai_tpl_error_result(extract_error));
+		return;
+	}
+
+	Dictionary result_data;
+	result_data["installed_path"] = AIExportActions::get_templates_dir();
+	result_data["release_tag"] = AI_EXPORT_TEMPLATES_RELEASE_TAG;
+	result_data["file_count"] = AIExportActions::count_template_files();
+	result_data["total_bytes"] = bytes;
+	result_data["note"] = "Templates are per-engine-version - this was a one-time install. Exports (and web serving) are now unblocked.";
+	Dictionary ok_result;
+	ok_result["status"] = "success";
+	ok_result["result"] = result_data;
+	print_line(vformat("AgenticOrchestrator: Export templates installed (%d files).", (int)result_data["file_count"]));
+	_on_async_tpl_complete(ok_result);
+}
+
+void AgenticOrchestrator::_on_tpl_download_completed(int p_result, int p_response_code, const PackedStringArray &p_headers, const PackedByteArray &p_body) {
+	if (_async_tpl_phase != ASYNC_TPL_DOWNLOADING || !_is_running) {
+		return; // Cancelled or stale — cancel_run already tore the state down.
+	}
+	HTTPRequest *req = Object::cast_to<HTTPRequest>(ObjectDB::get_instance(_async_tpl_http_id));
+	if (req) {
+		req->queue_free();
+	}
+	_async_tpl_http_id = ObjectID();
+
+	if (p_result != (int)HTTPRequest::RESULT_SUCCESS || p_response_code != 200) {
+		if (FileAccess::exists(_async_tpl_tmp_path)) {
+			DirAccess::remove_absolute(_async_tpl_tmp_path);
+		}
+		_async_tpl_phase = ASYNC_TPL_INACTIVE;
+		Dictionary details;
+		details["hint"] = "Likely a network problem or GitHub being unreachable. Retry later.";
+		_on_async_tpl_complete(_ai_tpl_error_result(
+				vformat("Template download failed (result %d, HTTP %d).", p_result, p_response_code), details));
+		return;
+	}
+
+	_emit_progress_update("Download complete, extracting export templates...", current_run.model_turns);
+	print_line("AgenticOrchestrator: Template download complete, extracting...");
+
+	String dest_dir = AIExportActions::get_templates_dir();
+	Error mk = DirAccess::make_dir_recursive_absolute(dest_dir);
+	if (mk != OK && mk != ERR_ALREADY_EXISTS) {
+		if (FileAccess::exists(_async_tpl_tmp_path)) {
+			DirAccess::remove_absolute(_async_tpl_tmp_path);
+		}
+		_async_tpl_phase = ASYNC_TPL_INACTIVE;
+		_on_async_tpl_complete(_ai_tpl_error_result(vformat("Could not create the templates directory '%s'.", dest_dir)));
+		return;
+	}
+
+	AITplExtractContext *ctx = memnew(AITplExtractContext);
+	ctx->tpz_path = _async_tpl_tmp_path;
+	ctx->dest_dir = dest_dir;
+	ctx->refs.set(2); // Worker task + orchestrator.
+	_async_tpl_extract_ctx = ctx;
+	_async_tpl_phase = ASYNC_TPL_EXTRACTING;
+	WorkerThreadPool::get_singleton()->add_native_task(&_ai_tpl_extract_task, ctx, false, "AI: extract export templates");
+	_schedule_tpl_tick(0.5f);
+}
+
+void AgenticOrchestrator::_on_async_tpl_complete(const Dictionary &p_exec_result) {
+	if (!_is_running) {
+		// Run ended (e.g. instant cancel) while this completion was deferred —
+		// the cancel path already synthesized a result for this tool call.
+		return;
+	}
+	_async_tpl_phase = ASYNC_TPL_INACTIVE;
+
+	Dictionary enriched = p_exec_result.duplicate();
+	String status = enriched.get("status", "error");
+	if (status == "success") {
+		Dictionary rd = ((Dictionary)enriched.get("result", Dictionary())).duplicate();
+		rd["elapsed_ms"] = (int64_t)(Time::get_singleton()->get_ticks_msec() - _async_tpl_start_ms);
+		enriched["result"] = rd;
+	}
+
+	Dictionary tool_result_data;
+	tool_result_data["tool_name"] = "install_export_templates";
+	tool_result_data["action_id"] = _async_tpl_tool_call_id;
+	tool_result_data["type"] = "install_export_templates";
+	tool_result_data["args"] = _async_tpl_action_args;
+	tool_result_data["status"] = status;
+	if (status == "success") {
+		tool_result_data["result"] = enriched.get("result", Dictionary());
+	} else {
+		tool_result_data["error"] = enriched.get("error", Dictionary());
+	}
+
+	Dictionary message;
+	message["role"] = "tool";
+	message["tool_call_id"] = _async_tpl_tool_call_id;
+	message["content"] = JSON::stringify(enriched);
+	message["_tool_result_data"] = tool_result_data;
+
+	current_run.conversation_history.push_back(message);
+	current_run.run_messages.push_back(message);
+	current_run.total_actions++;
+
+	tool_result_data["tokens"] = String(message["content"]).length() / 4;
+	_emit_tool_result(tool_result_data);
+
+	if (current_run.cancelled) {
+		_handle_cancellation();
+		return;
+	}
+
+	// Tools that ran before this one in the batch may have mutated scenes.
+	_append_batch_scene_diffs();
+
+	_send_model_request();
+}
+
+// Runs a tool that must execute outside the message-queue flush (scheduled by
+// the dispatch loop, see the export_project/serve_web_build branch there).
+// The tool itself is synchronous; only the entry point moved.
+void AgenticOrchestrator::_run_deferred_sync_tool(uint64_t p_run_gen) {
+	if (p_run_gen != _run_gen || !_is_running || current_run.cancelled) {
+		// Run ended, was cancelled, or a new run started while this timer was
+		// pending — the cancel path already synthesized a result for the call.
+		return;
+	}
+
+	Dictionary tool_result_msg = _execute_tool_call(_deferred_tool_call_id, _deferred_tool_name, _deferred_tool_args);
+	current_run.conversation_history.push_back(tool_result_msg);
+	current_run.run_messages.push_back(tool_result_msg);
+	current_run.total_actions++;
+
+	if (tool_result_msg.has("_tool_result_data")) {
+		Dictionary trd = tool_result_msg["_tool_result_data"];
+		String tool_content = tool_result_msg.get("content", String());
+		trd["tokens"] = tool_content.length() / 4;
+		_emit_tool_result(trd);
+	}
+
+	if (current_run.cancelled) {
+		_handle_cancellation();
+		return;
+	}
+
+	// Tools that ran before this one in the batch may have mutated scenes.
 	_append_batch_scene_diffs();
 
 	_send_model_request();

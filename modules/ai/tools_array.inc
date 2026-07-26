@@ -555,3 +555,103 @@ const String mutation_scene_path_desc = "Scene to modify, e.g. 'res://main.tscn'
 	req.push_back("todos");
 	tools.push_back(_make_tool("update_todos", "Update the task list displayed to the user. Full replace — send the complete list each call.", props, req));
 }
+
+// ==========================================================================
+// Export actions
+// ==========================================================================
+{
+	Dictionary props;
+	props["platform"] = _make_prop("string", "Optional platform name to filter results (e.g. 'Web')");
+	Array req;
+	tools.push_back(_make_tool("get_export_status",
+		"Read-only overview of export readiness: available platforms, export presets with can-export verdicts, "
+		"template installation state, and misconfiguration warnings the engine itself does NOT surface "
+		"(selective export_filter with an empty file list, filter globs matching zero files — both silently "
+		"produce a near-empty build). Call this FIRST when the user wants to export. Typical workflow: "
+		"get_export_status -> create_export_preset -> (install_export_templates if missing) -> export_project; "
+		"for web builds, serve_web_build to test locally. Export templates are a one-time install per engine version.",
+		props, req));
+}
+{
+	Dictionary props;
+	props["platform"] = _make_prop("string", "Platform name, e.g. 'Web', 'Windows Desktop', 'Linux/X11', 'macOS', 'Android', 'iOS'. See get_export_status for the available list.");
+	props["name"] = _make_prop("string", "Preset name (optional, defaults to the platform name)");
+	props["export_path"] = _make_prop("string", "Output file path, project-relative or res:// (optional but recommended, e.g. 'builds/web/index.html' — extension must match the platform, .html for Web)");
+	props["runnable"] = _make_prop("boolean", "Whether this preset is the platform's runnable/default preset (optional, default true; required true for serve_web_build)");
+	props["export_filter"] = _make_prop("string", "Which resources to export: 'all_resources' (default), 'scenes', 'resources', 'exclude', 'customized'");
+	Array req;
+	req.push_back("platform");
+	tools.push_back(_make_tool("create_export_preset",
+		"Create an export preset for a platform with all option defaults filled in. Rewrites res://export_presets.cfg "
+		"(not undoable). Prefer 'all_resources' export_filter unless the user asks otherwise — selective modes with an "
+		"empty file list silently export a near-empty build.",
+		props, req));
+}
+{
+	Dictionary props;
+	props["preset"] = _make_prop("string", "Name of the export preset to modify");
+	props["option"] = _make_prop("string",
+		"Option to set. Structural keys: name, export_path, runnable, export_filter (all_resources/scenes/resources/exclude/customized), "
+		"include_filter, exclude_filter, export_files (array of res:// paths, full replace). Anything else is treated as a "
+		"platform option (e.g. 'variant/thread_support', 'progressive_web_app/enabled') and validated against the preset's option list.");
+	Dictionary value_prop;
+	value_prop["description"] = "The value to set. Pass raw values — strings as \"hello\", numbers as 1.0, bools as true; export_files as an array of paths.";
+	props["value"] = value_prop;
+	Array req;
+	req.push_back("preset");
+	req.push_back("option");
+	req.push_back("value");
+	tools.push_back(_make_tool("set_export_preset_option",
+		"Set one option on an existing export preset. Rewrites res://export_presets.cfg (not undoable, same as set_project_setting). "
+		"IMPORTANT: include_filter/exclude_filter are comma-separated case-insensitive GLOBS matched against file paths "
+		"(e.g. '*.txt, assets/*.json') — NOT lists of res:// resource paths; a bare path without wildcards matches nothing. "
+		"Results include warnings when a filter setting would silently produce an empty or near-empty export.",
+		props, req));
+}
+{
+	Dictionary props;
+	props["preset"] = _make_prop("string", "Name of the export preset to use");
+	props["output_path"] = _make_prop("string", "Output file path (optional, defaults to the preset's export_path). Project-relative, res://, or absolute; extension must match the platform.");
+	props["debug"] = _make_prop("boolean", "Export a debug build (optional, default false = release)");
+	Array req;
+	req.push_back("preset");
+	tools.push_back(_make_tool("export_project",
+		"Export the project using an existing preset (synchronous; seconds for small projects). Requires export templates "
+		"(install_export_templates). The result includes the full export message log, the output file listing with sizes, "
+		"and the pck's embedded file count — if that count is suspiciously low the export silently contains almost nothing "
+		"(fix export_filter / export_files). Refuses to export a selective-filter preset with an empty file list.",
+		props, req));
+}
+{
+	Dictionary props;
+	props["action"] = _make_prop("string", "'serve_and_open' (default: export, serve, open the user's browser), 'serve' (export + serve, return the URL only), or 'stop' (shut the server down)");
+	props["preset"] = _make_prop("string", "Web preset to serve (optional, defaults to the first runnable Web preset)");
+	Array req;
+	tools.push_back(_make_tool("serve_web_build",
+		"Export a temporary DEBUG web build and serve it on the editor's local HTTP server, which sends the COOP/COEP "
+		"headers Godot web builds require — opening the exported .html directly or via a naive server will NOT boot. "
+		"Returns the localhost URL. The served build is separate from export_project output. Requires a runnable Web "
+		"preset and installed templates (debug included). The server keeps running until action 'stop' or the editor closes. "
+		"This is the fastest way to let the user actually play a web build.",
+		props, req));
+}
+{
+	Dictionary props;
+	props["force"] = _make_prop("boolean", "Reinstall even if templates are already present (optional, default false)");
+	Array req;
+	tools.push_back(_make_tool("install_export_templates",
+		"Download and install the export templates matching this engine version (era-matched upstream package). "
+		"One-time per engine version; required before any export. This is a LARGE background download (hundreds of MB, "
+		"takes minutes) with progress shown to the user — call it ON ITS OWN, not batched with other tool calls. "
+		"If templates are already installed it returns immediately.",
+		props, req));
+}
+{
+	Dictionary props;
+	Array req;
+	tools.push_back(_make_tool("open_template_manager",
+		"Open the editor's Manage Export Templates dialog. NOTE: on this engine build the dialog's online download "
+		"cannot find a matching package — use install_export_templates to install templates. Only useful for letting "
+		"the user inspect or uninstall installed templates.",
+		props, req));
+}

@@ -11,6 +11,7 @@
 #include "actions/read_actions.h"
 #include "actions/signal_actions.h"
 #include "actions/project_actions.h"
+#include "actions/export_actions.h"
 
 #include "core/core_bind.h"     // For ClassDB bindings (D_METHOD)
 #include "core/error/error_macros.h" // For ERR_FAIL_* macros
@@ -667,6 +668,20 @@ Dictionary AI::execute_single_action(const Dictionary &p_action) {
         action_result = AISignalActions::exec_connect_signal(action_args);
     } else if (action_name == "disconnect_signal") {
         action_result = AISignalActions::exec_disconnect_signal(action_args);
+    } else if (action_name == "get_export_status") {
+        action_result = AIExportActions::exec_get_export_status(action_args);
+    } else if (action_name == "create_export_preset") {
+        action_result = AIExportActions::exec_create_export_preset(action_args);
+    } else if (action_name == "set_export_preset_option") {
+        action_result = AIExportActions::exec_set_export_preset_option(action_args);
+    } else if (action_name == "export_project") {
+        action_result = AIExportActions::exec_export_project(action_args);
+    } else if (action_name == "serve_web_build") {
+        action_result = AIExportActions::exec_serve_web_build(action_args);
+    } else if (action_name == "install_export_templates") {
+        action_result = AIExportActions::exec_install_export_templates(action_args);
+    } else if (action_name == "open_template_manager") {
+        action_result = AIExportActions::exec_open_template_manager(action_args);
     } else {
         Dictionary error_dict;
         error_dict["code"] = "unknown_action";

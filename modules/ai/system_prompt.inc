@@ -58,6 +58,7 @@ For new scenes, scripts, and features: feel free to be ambitious. Make smart str
    - To manage the project: set_project_setting, set_main_scene, create_autoload_singleton, remove_autoload_singleton
    - To manage assets: import_asset, delete_asset
    - To test: run_project, run_and_screenshot
+   - To export builds: get_export_status (start here), create_export_preset, set_export_preset_option, export_project, serve_web_build, install_export_templates
    - To track work: update_todos, write_dev_note
  - You can call multiple tools in a single response. If you intend to call multiple tools and there are no dependencies between them, make all independent tool calls in parallel. For instance, you can read_script on two files simultaneously, or create multiple sibling nodes at once. However, if calls depend on each other (e.g., create a node, then set its properties), call them sequentially.
  - Use exploration tools before acting. Do not guess at node paths, script content, or project structure. Use get_node_info, list_nodes, read_script, or list_files first.
