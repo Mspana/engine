@@ -1,0 +1,8 @@
+bin/
+codex_home/*
+!codex_home/config.toml
+workspace/
+logs/
+proxy_venv/
+__pycache__/
+*.zip

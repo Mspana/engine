@@ -1,0 +1,180 @@
+data: {"type":"response.created","response":{"id":"resp_Fw30v3dq9dLH4nQAmyoyDl64X_xoq5x5nvvB3L1XxGCHrez9cCxefUfP573lK0Oj-vjnlti1rESN-V1bcH-_wOlbqwSjLoLLcHE1d07KksiSX_5qqotNqU2mBocFNKLxbe23ah-D7MQEth_NdqEi1PP7qb62WlITmzR0_dy8RDztc8_QOEWcoMPX24caBYohlU5GdupccYDICA==","created_at":1785181637,"instructions":"You are a test assistant inside an automated fixture capture. Be terse.","model":"kimi-k2.6","object":"response","output":[],"parallel_tool_calls":true,"tool_choice":"auto","tools":[{"name":"capture_test_screenshot","parameters":{"type":"object","properties":{},"additionalProperties":false},"strict":false,"type":"function","description":"Captures a screenshot of the test viewport and returns it as an image."}],"top_p":1.0,"reasoning":{"effort":null,"summary":null},"status":"in_progress","store":true},"model":"kimi-k2.6"}
+
+data: {"type":"response.in_progress","response":{"id":"resp_Fw30v3dq9dLH4nQAmyoyDl64X_xoq5x5nvvB3L1XxGCHrez9cCxefUfP573lK0Oj-vjnlti1rESN-V1bcH-_wOlbqwSjLoLLcHE1d07KksiSX_5qqotNqU2mBocFNKLxbe23ah-D7MQEth_NdqEi1PP7qb62WlITmzR0_dy8RDztc8_QOEWcoMPX24caBYohlU5GdupccYDICA==","created_at":1785181637,"instructions":"You are a test assistant inside an automated fixture capture. Be terse.","model":"kimi-k2.6","object":"response","output":[],"parallel_tool_calls":true,"tool_choice":"auto","tools":[{"name":"capture_test_screenshot","parameters":{"type":"object","properties":{},"additionalProperties":false},"strict":false,"type":"function","description":"Captures a screenshot of the test viewport and returns it as an image."}],"top_p":1.0,"reasoning":{"effort":null,"summary":null},"status":"in_progress","store":true},"model":"kimi-k2.6"}
+
+data: {"type":"response.output_item.added","output_index":0,"item":{"id":"msg_3b059778-f3f4-49b7-b794-4f606c3b8348","type":"message","role":"assistant","status":"in_progress","content":[]},"model":"kimi-k2.6"}
+
+data: {"type":"response.content_part.added","item_id":"msg_3b059778-f3f4-49b7-b794-4f606c3b8348","output_index":0,"content_index":0,"part":{"type":"output_text","text":"","annotations":[]},"model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-1695341875398834102","output_index":0,"delta":"The","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-524131629091312326","output_index":0,"delta":" user","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_5746928654796709615","output_index":0,"delta":" asked","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_7836188943542008006","output_index":0,"delta":" me","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-8234235734149617160","output_index":0,"delta":" to","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_4909881728562178988","output_index":0,"delta":" call","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_1414178447806946169","output_index":0,"delta":" the","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_1965429271313434020","output_index":0,"delta":" capture","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_8418236676341806438","output_index":0,"delta":"_test","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-1902687164133095172","output_index":0,"delta":"_s","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-2782744708438224160","output_index":0,"delta":"creenshot","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-2488756566249399620","output_index":0,"delta":" tool","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-4651387546974704009","output_index":0,"delta":",","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_431284128143931730","output_index":0,"delta":" then","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_2657160518125624312","output_index":0,"delta":" state","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_1414178447806946169","output_index":0,"delta":" the","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-1924147419208358043","output_index":0,"delta":" dominant","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-4020802374326615856","output_index":0,"delta":" color","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-9219636556803423920","output_index":0,"delta":" it","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-9002507324197600653","output_index":0,"delta":" returned","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_4907090047856656699","output_index":0,"delta":".\n\n","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-1695341875398834102","output_index":0,"delta":"The","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-2488756566249399620","output_index":0,"delta":" tool","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-1887226336798951772","output_index":0,"delta":" result","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_3530063931347394242","output_index":0,"delta":" says","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-8957701679109953857","output_index":0,"delta":":","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_7587266919727362805","output_index":0,"delta":" \"","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-7358773170630423363","output_index":0,"delta":"Screenshot","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-4178792784777417251","output_index":0,"delta":" captured","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-6535441080363826412","output_index":0,"delta":" (","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-4468787085302667512","output_index":0,"delta":"96","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_4308501974028591603","output_index":0,"delta":"x","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-4468787085302667512","output_index":0,"delta":"96","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-8506118528639920208","output_index":0,"delta":").","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_3616029433040422018","output_index":0,"delta":" Domin","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_1868814166670176402","output_index":0,"delta":"ant","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-4020802374326615856","output_index":0,"delta":" color","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-8957701679109953857","output_index":0,"delta":":","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-4366451076654604188","output_index":0,"delta":" red","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-5375687563009341293","output_index":0,"delta":" field","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_2963553594379030750","output_index":0,"delta":" with","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-8579424040089540211","output_index":0,"delta":" a","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-8448716171831181815","output_index":0,"delta":" green","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_361707417256180902","output_index":0,"delta":" horizontal","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_4698034986194361665","output_index":0,"delta":" stripe","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_6292450801871749941","output_index":0,"delta":" and","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-8579424040089540211","output_index":0,"delta":" a","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-3836918534362381934","output_index":0,"delta":" white","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_9145692705061461456","output_index":0,"delta":" square","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_8482788554441506829","output_index":0,"delta":" in","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_1414178447806946169","output_index":0,"delta":" the","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-2111577369734426522","output_index":0,"delta":" top","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_2272975984791293091","output_index":0,"delta":"-left","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-6817945686979951779","output_index":0,"delta":" corner","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-6114388841644391345","output_index":0,"delta":".\"\n\n","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-1695341875398834102","output_index":0,"delta":"The","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-1924147419208358043","output_index":0,"delta":" dominant","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-4020802374326615856","output_index":0,"delta":" color","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-6178510242714818261","output_index":0,"delta":" appears","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-8234235734149617160","output_index":0,"delta":" to","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-8783388197748547301","output_index":0,"delta":" be","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-4366451076654604188","output_index":0,"delta":" red","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-6535441080363826412","output_index":0,"delta":" (","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-1989809602690089312","output_index":0,"delta":"desc","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-4719577407246691200","output_index":0,"delta":"ribed","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_7577208277815742105","output_index":0,"delta":" as","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_7587266919727362805","output_index":0,"delta":" \"","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_695417308074837620","output_index":0,"delta":"red","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-5375687563009341293","output_index":0,"delta":" field","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-5391659557957876654","output_index":0,"delta":"\").","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-6517465405903582976","output_index":0,"delta":" I","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_2125372277977351042","output_index":0,"delta":" should","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_2657160518125624312","output_index":0,"delta":" state","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_4683766093859284468","output_index":0,"delta":" this","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_2444369635183791604","output_index":0,"delta":" conc","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_1414099438329143391","output_index":0,"delta":"isely","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_7577208277815742105","output_index":0,"delta":" as","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_306114838243897567","output_index":0,"delta":" requested","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_2705702465126599499","output_index":0,"delta":".","model":"kimi-k2.6"}
+
+data: {"type":"response.output_text.delta","item_id":"msg_3b059778-f3f4-49b7-b794-4f606c3b8348","output_index":0,"content_index":0,"delta":"Red","model":"kimi-k2.6"}
+
+data: {"type":"response.output_text.delta","item_id":"msg_3b059778-f3f4-49b7-b794-4f606c3b8348","output_index":0,"content_index":0,"delta":".","model":"kimi-k2.6"}
+
+data: {"type":"response.output_text.done","item_id":"msg_3b059778-f3f4-49b7-b794-4f606c3b8348","output_index":0,"content_index":0,"text":"Red.","model":"kimi-k2.6"}
+
+data: {"type":"response.content_part.done","item_id":"msg_3b059778-f3f4-49b7-b794-4f606c3b8348","output_index":0,"content_index":0,"part":{"type":"reasoning_text","reasoning":"The user asked me to call the capture_test_screenshot tool, then state the dominant color it returned.\n\nThe tool result says: \"Screenshot captured (96x96). Dominant color: red field with a green horizontal stripe and a white square in the top-left corner.\"\n\nThe dominant color appears to be red (described as \"red field\"). I should state this concisely as requested."},"model":"kimi-k2.6"}
+
+data: {"type":"response.output_item.done","output_index":0,"sequence_number":1,"item":{"id":"msg_3b059778-f3f4-49b7-b794-4f606c3b8348","status":"completed","type":"message","role":"assistant","content":[{"type":"output_text","text":"Red.","annotations":[]}]},"model":"kimi-k2.6"}
+
+data: {"type":"response.completed","response":{"id":"resp_XfNH2QinA7OG4sv6fKrbGo13YVQWeEgNW-65WpAXvhnYY0eQeB61_ZfquHQLQJjS4LnpzP33NBrHEgirjkcN9p0NI1PPJaTtOmwIJhS_sG6Zbjz-vltwmsLlKGwJNmvLHO48IkafvGIEX3M5fUh_cPCjnIuk-NRns5PxwJWf2Y9cTRxk-9qcustptWjReSY7JNsWTzt4PvQq3JEd0VyNfd8tT3nmo-WjXIPOhmvYG_0o5bhuFZCJfMAyQqPdzTyLJL121MuSC5xmS9c1WL0HqBVX9s5EQYmeA06V9ued7YZzdikIZCFxCtwI97WhDL9Q2jd_HatIpcWvay9SDvyhlmLD-h1yq3rqfwxZ_zo05YhmN1Mk5JqjdvntFSigrocrvn7PHp7IdkWkMNmOGtsjNkOEW123kDZV47cl2Uj_vT1JaCsDAjgqoq933WDfB8kBwv0=","created_at":1785181637,"metadata":{},"model":"moonshot/kimi-k2.6","object":"response","output":[{"type":"reasoning","id":"rs_-5867961190553268436","status":"completed","role":"assistant","content":[{"type":"output_text","text":"The user asked me to call the capture_test_screenshot tool, then state the dominant color it returned.\n\nThe tool result says: \"Screenshot captured (96x96). Dominant color: red field with a green horizontal stripe and a white square in the top-left corner.\"\n\nThe dominant color appears to be red (described as \"red field\"). I should state this concisely as requested.","annotations":[]}]},{"type":"message","id":"chatcmpl-6a67b5c57be96903b46bbad4","status":"completed","role":"assistant","content":[{"type":"output_text","text":"Red.","annotations":[]}]}],"parallel_tool_calls":false,"temperature":0.0,"tool_choice":"auto","tools":[],"status":"completed","text":{},"usage":{"input_tokens":157,"output_tokens":84,"output_tokens_details":{"reasoning_tokens":80},"total_tokens":241}},"model":"kimi-k2.6"}
+
+data: [DONE]
+

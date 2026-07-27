@@ -1,0 +1,88 @@
+data: {"model":"kimi-k2.6","response":{"created_at":1785183736,"id":"resp_aristotle_81545904","metadata":{},"model":"kimi-k2.6","object":"response","output":[],"status":"in_progress"},"sequence_number":0,"type":"response.created"}
+
+data: {"model":"kimi-k2.6","response":{"created_at":1785183736,"id":"resp_aristotle_81545904","metadata":{},"model":"kimi-k2.6","object":"response","output":[],"status":"in_progress"},"sequence_number":1,"type":"response.in_progress"}
+
+data: {"item":{"content":[],"id":"msg_aristotle_81546111","role":"assistant","status":"in_progress","type":"message"},"model":"kimi-k2.6","output_index":0,"sequence_number":2,"type":"response.output_item.added"}
+
+data: {"content_index":0,"item_id":"msg_aristotle_81546111","model":"kimi-k2.6","output_index":0,"part":{"annotations":[],"text":"","type":"output_text"},"sequence_number":3,"type":"response.content_part.added"}
+
+data: {"delta":"The","item_id":"msg_aristotle_81546111","model":"kimi-k2.6","output_index":0,"sequence_number":4,"summary_index":0,"type":"response.reasoning_summary_text.delta"}
+
+data: {"delta":" user","item_id":"msg_aristotle_81546111","model":"kimi-k2.6","output_index":0,"sequence_number":5,"summary_index":0,"type":"response.reasoning_summary_text.delta"}
+
+data: {"delta":" wants","item_id":"msg_aristotle_81546111","model":"kimi-k2.6","output_index":0,"sequence_number":6,"summary_index":0,"type":"response.reasoning_summary_text.delta"}
+
+data: {"delta":" me","item_id":"msg_aristotle_81546111","model":"kimi-k2.6","output_index":0,"sequence_number":7,"summary_index":0,"type":"response.reasoning_summary_text.delta"}
+
+data: {"delta":" to","item_id":"msg_aristotle_81546111","model":"kimi-k2.6","output_index":0,"sequence_number":8,"summary_index":0,"type":"response.reasoning_summary_text.delta"}
+
+data: {"delta":" reply","item_id":"msg_aristotle_81546111","model":"kimi-k2.6","output_index":0,"sequence_number":9,"summary_index":0,"type":"response.reasoning_summary_text.delta"}
+
+data: {"delta":" with","item_id":"msg_aristotle_81546111","model":"kimi-k2.6","output_index":0,"sequence_number":10,"summary_index":0,"type":"response.reasoning_summary_text.delta"}
+
+data: {"delta":" exactly","item_id":"msg_aristotle_81546111","model":"kimi-k2.6","output_index":0,"sequence_number":11,"summary_index":0,"type":"response.reasoning_summary_text.delta"}
+
+data: {"delta":" the","item_id":"msg_aristotle_81546111","model":"kimi-k2.6","output_index":0,"sequence_number":12,"summary_index":0,"type":"response.reasoning_summary_text.delta"}
+
+data: {"delta":" single","item_id":"msg_aristotle_81546111","model":"kimi-k2.6","output_index":0,"sequence_number":13,"summary_index":0,"type":"response.reasoning_summary_text.delta"}
+
+data: {"delta":" word","item_id":"msg_aristotle_81546111","model":"kimi-k2.6","output_index":0,"sequence_number":14,"summary_index":0,"type":"response.reasoning_summary_text.delta"}
+
+data: {"delta":" \"","item_id":"msg_aristotle_81546111","model":"kimi-k2.6","output_index":0,"sequence_number":15,"summary_index":0,"type":"response.reasoning_summary_text.delta"}
+
+data: {"delta":"ready","item_id":"msg_aristotle_81546111","model":"kimi-k2.6","output_index":0,"sequence_number":16,"summary_index":0,"type":"response.reasoning_summary_text.delta"}
+
+data: {"delta":"\".","item_id":"msg_aristotle_81546111","model":"kimi-k2.6","output_index":0,"sequence_number":17,"summary_index":0,"type":"response.reasoning_summary_text.delta"}
+
+data: {"delta":" I","item_id":"msg_aristotle_81546111","model":"kimi-k2.6","output_index":0,"sequence_number":18,"summary_index":0,"type":"response.reasoning_summary_text.delta"}
+
+data: {"delta":" should","item_id":"msg_aristotle_81546111","model":"kimi-k2.6","output_index":0,"sequence_number":19,"summary_index":0,"type":"response.reasoning_summary_text.delta"}
+
+data: {"delta":" not","item_id":"msg_aristotle_81546111","model":"kimi-k2.6","output_index":0,"sequence_number":20,"summary_index":0,"type":"response.reasoning_summary_text.delta"}
+
+data: {"delta":" add","item_id":"msg_aristotle_81546111","model":"kimi-k2.6","output_index":0,"sequence_number":21,"summary_index":0,"type":"response.reasoning_summary_text.delta"}
+
+data: {"delta":" any","item_id":"msg_aristotle_81546111","model":"kimi-k2.6","output_index":0,"sequence_number":22,"summary_index":0,"type":"response.reasoning_summary_text.delta"}
+
+data: {"delta":" punctuation","item_id":"msg_aristotle_81546111","model":"kimi-k2.6","output_index":0,"sequence_number":23,"summary_index":0,"type":"response.reasoning_summary_text.delta"}
+
+data: {"delta":",","item_id":"msg_aristotle_81546111","model":"kimi-k2.6","output_index":0,"sequence_number":24,"summary_index":0,"type":"response.reasoning_summary_text.delta"}
+
+data: {"delta":" extra","item_id":"msg_aristotle_81546111","model":"kimi-k2.6","output_index":0,"sequence_number":25,"summary_index":0,"type":"response.reasoning_summary_text.delta"}
+
+data: {"delta":" spaces","item_id":"msg_aristotle_81546111","model":"kimi-k2.6","output_index":0,"sequence_number":26,"summary_index":0,"type":"response.reasoning_summary_text.delta"}
+
+data: {"delta":",","item_id":"msg_aristotle_81546111","model":"kimi-k2.6","output_index":0,"sequence_number":27,"summary_index":0,"type":"response.reasoning_summary_text.delta"}
+
+data: {"delta":" or","item_id":"msg_aristotle_81546111","model":"kimi-k2.6","output_index":0,"sequence_number":28,"summary_index":0,"type":"response.reasoning_summary_text.delta"}
+
+data: {"delta":" other","item_id":"msg_aristotle_81546111","model":"kimi-k2.6","output_index":0,"sequence_number":29,"summary_index":0,"type":"response.reasoning_summary_text.delta"}
+
+data: {"delta":" text","item_id":"msg_aristotle_81546111","model":"kimi-k2.6","output_index":0,"sequence_number":30,"summary_index":0,"type":"response.reasoning_summary_text.delta"}
+
+data: {"delta":".","item_id":"msg_aristotle_81546111","model":"kimi-k2.6","output_index":0,"sequence_number":31,"summary_index":0,"type":"response.reasoning_summary_text.delta"}
+
+data: {"delta":" Just","item_id":"msg_aristotle_81546111","model":"kimi-k2.6","output_index":0,"sequence_number":32,"summary_index":0,"type":"response.reasoning_summary_text.delta"}
+
+data: {"delta":" the","item_id":"msg_aristotle_81546111","model":"kimi-k2.6","output_index":0,"sequence_number":33,"summary_index":0,"type":"response.reasoning_summary_text.delta"}
+
+data: {"delta":" word","item_id":"msg_aristotle_81546111","model":"kimi-k2.6","output_index":0,"sequence_number":34,"summary_index":0,"type":"response.reasoning_summary_text.delta"}
+
+data: {"delta":" \"","item_id":"msg_aristotle_81546111","model":"kimi-k2.6","output_index":0,"sequence_number":35,"summary_index":0,"type":"response.reasoning_summary_text.delta"}
+
+data: {"delta":"ready","item_id":"msg_aristotle_81546111","model":"kimi-k2.6","output_index":0,"sequence_number":36,"summary_index":0,"type":"response.reasoning_summary_text.delta"}
+
+data: {"delta":"\".","item_id":"msg_aristotle_81546111","model":"kimi-k2.6","output_index":0,"sequence_number":37,"summary_index":0,"type":"response.reasoning_summary_text.delta"}
+
+data: {"content_index":0,"delta":"ready","item_id":"msg_aristotle_81546111","model":"kimi-k2.6","output_index":0,"sequence_number":38,"type":"response.output_text.delta"}
+
+data: {"content_index":0,"item_id":"msg_aristotle_81546111","model":"kimi-k2.6","output_index":0,"sequence_number":39,"text":"ready","type":"response.output_text.done"}
+
+data: {"content_index":0,"item_id":"msg_aristotle_81546111","model":"kimi-k2.6","output_index":0,"part":{"annotations":[],"text":"ready","type":"output_text"},"sequence_number":40,"type":"response.content_part.done"}
+
+data: {"item":{"content":[{"annotations":[],"text":"ready","type":"output_text"}],"id":"msg_aristotle_81546111","role":"assistant","status":"completed","type":"message"},"model":"kimi-k2.6","output_index":0,"sequence_number":41,"type":"response.output_item.done"}
+
+data: {"model":"kimi-k2.6","response":{"created_at":1785183736,"id":"resp_aristotle_81545904","metadata":{},"model":"kimi-k2.6","object":"response","output":[],"status":"completed","usage":{"input_tokens":33.0,"output_tokens":38.0,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":71.0}},"sequence_number":42,"type":"response.completed"}
+
+data: [DONE]
+

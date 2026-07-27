@@ -1,0 +1,35 @@
+{
+  "model": "kimi-k2.6",
+  "instructions": "You are a test assistant inside an automated fixture capture. Be terse.",
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [{ "type": "input_text", "text": "Call the capture_test_screenshot tool, then state the dominant color it returned." }]
+    },
+    {
+      "type": "function_call",
+      "name": "capture_test_screenshot",
+      "call_id": "capture_test_screenshot_0",
+      "arguments": "{}"
+    },
+    {
+      "type": "function_call_output",
+      "call_id": "capture_test_screenshot_0",
+      "output": "Screenshot captured (96x96). Dominant color: red field with a green horizontal stripe and a white square in the top-left corner."
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "name": "capture_test_screenshot",
+      "description": "Captures a screenshot of the test viewport and returns it as an image.",
+      "strict": false,
+      "parameters": { "type": "object", "properties": {}, "additionalProperties": false }
+    }
+  ],
+  "tool_choice": "auto",
+  "parallel_tool_calls": false,
+  "store": false,
+  "stream": true
+}

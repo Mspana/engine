@@ -1,0 +1,44 @@
+# Spike config for codex app-server (pinned rust-v0.145.0).
+# unified exec is serialized as a `namespace`-type tool, which third-party
+# Responses implementations (xAI, LiteLLM) reject with 422 — force it off.
+experimental_use_unified_exec_tool = false
+# multi_agent_v1 is also serialized as a namespace-type tool; disable the
+# feature for third-party providers (and Aristotle doesn't want codex-side
+# sub-agents anyway).
+[features]
+multi_agent = false
+multi_agent_v2 = false
+# xAI rejects codex's web_search serialization (external_web_access argument).
+web_search_request = false
+web_search_cached = false
+
+# kimi_proxy: Moonshot Kimi K2.6 through a local LiteLLM proxy that translates
+# the Responses API (codex's only wire format) to Moonshot's Chat Completions.
+# xai: native /v1/responses endpoint (early access), validated fallback.
+
+# Native in-editor translator (modules/ai/harness/responses_translator.cpp).
+# Requires the editor running with ARISTOTLE_TRANSLATOR_PORT=4123.
+[model_providers.aristotle]
+name = "Kimi via Aristotle native translator"
+base_url = "http://127.0.0.1:4123/v1"
+env_key = "LITELLM_SPIKE_KEY" # dummy; translator ignores auth, codex requires the key to exist
+wire_api = "responses"
+
+# MCP test server disabled while testing dynamicTools (same tool name would
+# duplicate). Re-enable to compare transports.
+# [mcp_servers.aristotle_test]
+# command = "c:\\Users\\Matthew\\Documents\\engine\\venv\\Scripts\\python.exe"
+# args = ["c:\\Users\\Matthew\\Documents\\engine\\modules\\ai\\harness_spike\\mcp_test_server.py"]
+# tool_timeout_sec = 120
+
+[model_providers.sink]
+name = "Local request sink (debug)"
+base_url = "http://localhost:4141/v1"
+env_key = "LITELLM_SPIKE_KEY"
+wire_api = "responses"
+
+[model_providers.xai]
+name = "xAI Grok"
+base_url = "https://api.x.ai/v1"
+env_key = "XAI_API_KEY"
+wire_api = "responses"

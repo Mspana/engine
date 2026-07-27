@@ -1,0 +1,136 @@
+data: {"type":"response.created","response":{"id":"resp_7N9ft24Kemxlb9RJRODQihXCUA9i_W4AjkK8SLN0LB-TG8RVCoMOg2S6gSu42LxmDUXW0L3Zv_DKBIoBNdngGRgukjAyvtT57xeK_3hp2iCKuAKvBspI0gWUeQguv11XuQQfGwNxXpTXD625pmI6OWSR2rY82tAX4yvtkE89RPRcsftueUeB6FQAcoMnKJg95lJbzEodk3-jAA==","created_at":1785181632,"instructions":"You are a test assistant inside an automated fixture capture. Be terse.","model":"kimi-k2.6","object":"response","output":[],"parallel_tool_calls":true,"tool_choice":"auto","tools":[],"top_p":1.0,"reasoning":{"effort":null,"summary":null},"status":"in_progress","store":true},"model":"kimi-k2.6"}
+
+data: {"type":"response.in_progress","response":{"id":"resp_7N9ft24Kemxlb9RJRODQihXCUA9i_W4AjkK8SLN0LB-TG8RVCoMOg2S6gSu42LxmDUXW0L3Zv_DKBIoBNdngGRgukjAyvtT57xeK_3hp2iCKuAKvBspI0gWUeQguv11XuQQfGwNxXpTXD625pmI6OWSR2rY82tAX4yvtkE89RPRcsftueUeB6FQAcoMnKJg95lJbzEodk3-jAA==","created_at":1785181632,"instructions":"You are a test assistant inside an automated fixture capture. Be terse.","model":"kimi-k2.6","object":"response","output":[],"parallel_tool_calls":true,"tool_choice":"auto","tools":[],"top_p":1.0,"reasoning":{"effort":null,"summary":null},"status":"in_progress","store":true},"model":"kimi-k2.6"}
+
+data: {"type":"response.output_item.added","output_index":0,"item":{"id":"msg_0ee12a21-a7df-4908-bc8d-331e517196ff","type":"message","role":"assistant","status":"in_progress","content":[]},"model":"kimi-k2.6"}
+
+data: {"type":"response.content_part.added","item_id":"msg_0ee12a21-a7df-4908-bc8d-331e517196ff","output_index":0,"content_index":0,"part":{"type":"output_text","text":"","annotations":[]},"model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-1695341875398834102","output_index":0,"delta":"The","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-524131629091312326","output_index":0,"delta":" user","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_3289304882928946326","output_index":0,"delta":" wants","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_7836188943542008006","output_index":0,"delta":" me","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-8234235734149617160","output_index":0,"delta":" to","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-5273961557905219656","output_index":0,"delta":" reply","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_2963553594379030750","output_index":0,"delta":" with","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_4853376112265115920","output_index":0,"delta":" exactly","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_1414178447806946169","output_index":0,"delta":" the","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-4218273475890434345","output_index":0,"delta":" single","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_9165923881347716189","output_index":0,"delta":" word","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_7587266919727362805","output_index":0,"delta":" \"","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_6099060925386362892","output_index":0,"delta":"ready","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-7968124864342519036","output_index":0,"delta":"\".","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-6517465405903582976","output_index":0,"delta":" I","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_2125372277977351042","output_index":0,"delta":" should","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_1416915987381982627","output_index":0,"delta":" output","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-6993183433085600622","output_index":0,"delta":" just","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-3873168985600029704","output_index":0,"delta":" that","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_9165923881347716189","output_index":0,"delta":" word","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-4651387546974704009","output_index":0,"delta":",","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-301698471011819410","output_index":0,"delta":" nothing","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-1990646270106025891","output_index":0,"delta":" else","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_2705702465126599499","output_index":0,"delta":".","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-7225960154527697061","output_index":0,"delta":" No","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_7220812784381488664","output_index":0,"delta":" punctuation","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-4651387546974704009","output_index":0,"delta":",","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_676646107620940795","output_index":0,"delta":" no","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-3042524234908206866","output_index":0,"delta":" extra","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-242986007342921668","output_index":0,"delta":" spaces","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-4651387546974704009","output_index":0,"delta":",","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_676646107620940795","output_index":0,"delta":" no","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_5368492437574874337","output_index":0,"delta":" new","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-1509054802564417940","output_index":0,"delta":"lines","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_8107581996758342643","output_index":0,"delta":" if","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-7288539825729897948","output_index":0,"delta":" possible","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-6535441080363826412","output_index":0,"delta":" (","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-6485863335714139920","output_index":0,"delta":"though","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-8579424040089540211","output_index":0,"delta":" a","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_2747434054382655819","output_index":0,"delta":" newline","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-5876148860262013679","output_index":0,"delta":" might","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-8783388197748547301","output_index":0,"delta":" be","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-3655890961897077504","output_index":0,"delta":" added","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_7313463523925959240","output_index":0,"delta":" by","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_1414178447806946169","output_index":0,"delta":" the","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_5428957747330618779","output_index":0,"delta":" system","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-4651387546974704009","output_index":0,"delta":",","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-3589521970900958398","output_index":0,"delta":" but","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-6517465405903582976","output_index":0,"delta":" I","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_2125372277977351042","output_index":0,"delta":" should","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_6442660577130364208","output_index":0,"delta":" minimize","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-8506118528639920208","output_index":0,"delta":").","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_2368998276489866253","output_index":0,"delta":" Let","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_7836188943542008006","output_index":0,"delta":" me","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_1416915987381982627","output_index":0,"delta":" output","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_4853376112265115920","output_index":0,"delta":" exactly","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-8957701679109953857","output_index":0,"delta":":","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_6567228207416572598","output_index":0,"delta":" ready","model":"kimi-k2.6"}
+
+data: {"type":"response.output_text.delta","item_id":"msg_0ee12a21-a7df-4908-bc8d-331e517196ff","output_index":0,"content_index":0,"delta":"ready","model":"kimi-k2.6"}
+
+data: {"type":"response.output_text.done","item_id":"msg_0ee12a21-a7df-4908-bc8d-331e517196ff","output_index":0,"content_index":0,"text":"ready","model":"kimi-k2.6"}
+
+data: {"type":"response.content_part.done","item_id":"msg_0ee12a21-a7df-4908-bc8d-331e517196ff","output_index":0,"content_index":0,"part":{"type":"reasoning_text","reasoning":"The user wants me to reply with exactly the single word \"ready\". I should output just that word, nothing else. No punctuation, no extra spaces, no newlines if possible (though a newline might be added by the system, but I should minimize). Let me output exactly: ready"},"model":"kimi-k2.6"}
+
+data: {"type":"response.output_item.done","output_index":0,"sequence_number":1,"item":{"id":"msg_0ee12a21-a7df-4908-bc8d-331e517196ff","status":"completed","type":"message","role":"assistant","content":[{"type":"output_text","text":"ready","annotations":[]}]},"model":"kimi-k2.6"}
+
+data: {"type":"response.completed","response":{"id":"resp_BhJp5AXn0EfDplDe3kyNowyuIlU5WvMxSYnWk9uCFmlVkd0rZhPPQt9OLeW3JxxaLaq36aiLAcWdsankw8akHYmsU0_0OJhs-ld1nnfz0VCOQ7WlaK1ptPmoFG7WAmk_pPPJPSSmRXSCToARHuirZOvQKaOP9cYsFvcsLt8oEHQvdjUIgJS0Bqdt8U5-W1V2MQ6M3yo3gbwQozxLya5xsVSmXIbILlXovT-pKxKM1agF9PpVPJyI0nlBCtWIzoL_Lb65Jf3dKwutY1FwDnNQ27mgGZZosbbw2ox7wOO1P-qNl6mQ-UI30_Z8BUnUok__lm54Yv9KFn3muD14vtUvM-EkZzn2NYzaAvj2Iwx7eOSueyBKodGM8pUlF3Z14bzfhje527aU9bV8HwgHi-JogYTnQ9WPBbWTQEBCfi956JpKsXfqoAbcRoK6AKvqT4hTdZo=","created_at":1785181632,"metadata":{},"model":"moonshot/kimi-k2.6","object":"response","output":[{"type":"reasoning","id":"rs_7832511706944982564","status":"completed","role":"assistant","content":[{"type":"output_text","text":"The user wants me to reply with exactly the single word \"ready\". I should output just that word, nothing else. No punctuation, no extra spaces, no newlines if possible (though a newline might be added by the system, but I should minimize). Let me output exactly: ready","annotations":[]}]},{"type":"message","id":"chatcmpl-6a67b5c10ce2aadf0c2d4ced","status":"completed","role":"assistant","content":[{"type":"output_text","text":"ready","annotations":[]}]}],"parallel_tool_calls":false,"temperature":0.0,"tool_choice":"auto","tools":[],"status":"completed","text":{},"usage":{"input_tokens":33,"output_tokens":62,"output_tokens_details":{"reasoning_tokens":59},"total_tokens":95}},"model":"kimi-k2.6"}
+
+data: [DONE]
+

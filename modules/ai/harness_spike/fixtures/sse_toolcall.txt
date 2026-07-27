@@ -1,0 +1,76 @@
+data: {"type":"response.created","response":{"id":"resp_7yfSo6mX7hgztF-LSumGpMP4abbQudSPzppUXbeq5HIMm3_JuTdCM00AlQEFMuAmwXU9KRBGIhEif1EKsuwF5-Jetvp_Bl_nhTFsppaBzfYwCxXf8tTIa9-kA5NlAhEoygFia7jlKF8lH-TfCD_PLKzW25352T_EWcohgSPsUBfSRiN0ryleqgMTNI--1ht0VsO_gq6BXG36XA==","created_at":1785181635,"instructions":"You are a test assistant inside an automated fixture capture. Use tools when asked.","model":"kimi-k2.6","object":"response","output":[],"parallel_tool_calls":true,"tool_choice":"auto","tools":[{"name":"capture_test_screenshot","parameters":{"type":"object","properties":{},"additionalProperties":false},"strict":false,"type":"function","description":"Captures a screenshot of the test viewport and returns it as an image."}],"top_p":1.0,"reasoning":{"effort":null,"summary":null},"status":"in_progress","store":true},"model":"kimi-k2.6"}
+
+data: {"type":"response.in_progress","response":{"id":"resp_7yfSo6mX7hgztF-LSumGpMP4abbQudSPzppUXbeq5HIMm3_JuTdCM00AlQEFMuAmwXU9KRBGIhEif1EKsuwF5-Jetvp_Bl_nhTFsppaBzfYwCxXf8tTIa9-kA5NlAhEoygFia7jlKF8lH-TfCD_PLKzW25352T_EWcohgSPsUBfSRiN0ryleqgMTNI--1ht0VsO_gq6BXG36XA==","created_at":1785181635,"instructions":"You are a test assistant inside an automated fixture capture. Use tools when asked.","model":"kimi-k2.6","object":"response","output":[],"parallel_tool_calls":true,"tool_choice":"auto","tools":[{"name":"capture_test_screenshot","parameters":{"type":"object","properties":{},"additionalProperties":false},"strict":false,"type":"function","description":"Captures a screenshot of the test viewport and returns it as an image."}],"top_p":1.0,"reasoning":{"effort":null,"summary":null},"status":"in_progress","store":true},"model":"kimi-k2.6"}
+
+data: {"type":"response.output_item.added","output_index":0,"item":{"id":"msg_72ac4fb9-c66e-4195-ad01-2ea01c785ff3","type":"message","role":"assistant","status":"in_progress","content":[]},"model":"kimi-k2.6"}
+
+data: {"type":"response.content_part.added","item_id":"msg_72ac4fb9-c66e-4195-ad01-2ea01c785ff3","output_index":0,"content_index":0,"part":{"type":"output_text","text":"","annotations":[]},"model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-1695341875398834102","output_index":0,"delta":"The","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-524131629091312326","output_index":0,"delta":" user","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-6233888852742030754","output_index":0,"delta":" explicitly","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_5746928654796709615","output_index":0,"delta":" asked","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_7836188943542008006","output_index":0,"delta":" me","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-8234235734149617160","output_index":0,"delta":" to","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_4909881728562178988","output_index":0,"delta":" call","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_1414178447806946169","output_index":0,"delta":" the","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_1965429271313434020","output_index":0,"delta":" capture","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_8418236676341806438","output_index":0,"delta":"_test","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-1902687164133095172","output_index":0,"delta":"_s","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-2782744708438224160","output_index":0,"delta":"creenshot","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-2488756566249399620","output_index":0,"delta":" tool","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_6292450801871749941","output_index":0,"delta":" and","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-2645410927808894836","output_index":0,"delta":" not","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-8513559407567419538","output_index":0,"delta":" answer","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_8482788554441506829","output_index":0,"delta":" in","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_3352963653638748750","output_index":0,"delta":" text","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_2705702465126599499","output_index":0,"delta":".","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-6517465405903582976","output_index":0,"delta":" I","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_2125372277977351042","output_index":0,"delta":" should","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_4909881728562178988","output_index":0,"delta":" call","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_1414178447806946169","output_index":0,"delta":" the","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_-2488756566249399620","output_index":0,"delta":" tool","model":"kimi-k2.6"}
+
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_2705702465126599499","output_index":0,"delta":".","model":"kimi-k2.6"}
+
+data: {"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","id":"capture_test_screenshot_0","call_id":"capture_test_screenshot_0","name":"capture_test_screenshot","status":"in_progress","arguments":""},"model":"kimi-k2.6"}
+
+data: {"type":"response.function_call_arguments.delta","item_id":"capture_test_screenshot_0","output_index":1,"delta":"{}","model":"kimi-k2.6"}
+
+data: {"type":"response.function_call_arguments.done","item_id":"capture_test_screenshot_0","output_index":1,"arguments":"{}","model":"kimi-k2.6"}
+
+data: {"type":"response.output_item.done","output_index":1,"sequence_number":8,"item":{"type":"function_call","id":"capture_test_screenshot_0","call_id":"capture_test_screenshot_0","name":"capture_test_screenshot","status":"completed","arguments":"{}"},"model":"kimi-k2.6"}
+
+data: {"type":"response.output_text.done","item_id":"msg_72ac4fb9-c66e-4195-ad01-2ea01c785ff3","output_index":0,"content_index":0,"text":"","model":"kimi-k2.6"}
+
+data: {"type":"response.content_part.done","item_id":"msg_72ac4fb9-c66e-4195-ad01-2ea01c785ff3","output_index":0,"content_index":0,"part":{"type":"reasoning_text","reasoning":"The user explicitly asked me to call the capture_test_screenshot tool and not answer in text. I should call the tool."},"model":"kimi-k2.6"}
+
+data: {"type":"response.output_item.done","output_index":0,"sequence_number":1,"item":{"id":"msg_72ac4fb9-c66e-4195-ad01-2ea01c785ff3","status":"completed","type":"message","role":"assistant","content":[{"type":"output_text","text":"","annotations":[]}]},"model":"kimi-k2.6"}
+
+data: {"type":"response.completed","response":{"id":"resp_cbExvXg4z6uF-uw35WOWRdGBIwmYQRy4NucMl7DNxPm0LIkaK-Nn447ah4e73TpVvWgYYYPW0r4830jTKSQtZJpacagxaL-7vgw9h_d1PPWXRteB7eqL3g59XlEREgzzswjX-r6EI3OMFIvTF0qCLCvch9JBhgx9VZQRAbY8lji4aZMwtiZ_FXmra-YTZBfq_CRXxLffjo3WPg06YWbTuFvO0HPcSuty1h-8INWqDl6NTRKDFNg5q-DzfBhwN7jGin_hcI2hejTAxj6PhWYzsqlsu3UamZd1d-eajII8NNxE1Xi0CHYohxOVw5O44HPQAX_JltzFz48dXx56VlNXpzmqvr16I9QRMNuLBRCRc3zfGVCG8uUH-lZmOJ0fw2l1iHfVBLfEAQ05xMrbVGCkXShdWhxzMG5T5qH5qqzStDam9LZK4FzZERWMAzTRrDVnBJM=","created_at":1785181635,"metadata":{},"model":"moonshot/kimi-k2.6","object":"response","output":[{"type":"reasoning","id":"rs_-2269019988043482460","status":"completed","role":"assistant","content":[{"type":"output_text","text":"The user explicitly asked me to call the capture_test_screenshot tool and not answer in text. I should call the tool.","annotations":[]}]},{"type":"message","id":"chatcmpl-6a67b5c34f105442397ad97a","status":"completed","role":"assistant","content":[{"type":"output_text","text":"","annotations":[]}]},{"arguments":"{}","call_id":"capture_test_screenshot_0","name":"capture_test_screenshot","type":"function_call","id":"capture_test_screenshot_0","status":"completed"}],"parallel_tool_calls":false,"temperature":0.0,"tool_choice":"auto","tools":[],"status":"completed","text":{},"usage":{"input_tokens":95,"output_tokens":40,"output_tokens_details":{"reasoning_tokens":26},"total_tokens":135}},"model":"kimi-k2.6"}
+
+data: [DONE]
+
