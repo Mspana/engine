@@ -2,10 +2,12 @@
 
 #include "ai.h" // Include the header for the class we are registering
 #include "ai_provider.h" // Include provider classes
+#include "harness/responses_translator.h"
 #include "retrieval.h" // Include retrieval class
 
 #include "core/config/engine.h" // Required for Engine singleton
 #include "core/object/class_db.h" // Required for ClassDB
+#include "core/os/os.h"
 
 #ifdef TOOLS_ENABLED
 #include "editor/ai_chat_store.h"
@@ -42,6 +44,14 @@ void initialize_ai_module(ModuleInitializationLevel p_level) {
 		// Register the singleton with the Engine's singleton map.
 		// This makes it globally accessible, e.g., `AI` in GDScript.
 		Engine::get_singleton()->add_singleton(Engine::Singleton("AI", AI::get_singleton()));
+
+		// Native Responses->Chat translator for the codex harness (replaces the
+		// LiteLLM sidecar). Spike-gated by env var until the harness driver
+		// owns its lifecycle: set ARISTOTLE_TRANSLATOR_PORT=4123 to enable.
+		String translator_port = OS::get_singleton()->get_environment("ARISTOTLE_TRANSLATOR_PORT");
+		if (!translator_port.is_empty()) {
+			AIResponsesTranslator::get_singleton()->start(translator_port.to_int());
+		}
 	}
 
 #ifdef TOOLS_ENABLED
@@ -70,6 +80,8 @@ void uninitialize_ai_module(ModuleInitializationLevel p_level) {
 
 	// Remove the singleton from the Engine.
 	Engine::get_singleton()->remove_singleton("AI");
+
+	AIResponsesTranslator::get_singleton()->stop();
 
 	// Clean up the singleton instance using the class's own method.
 	AI::finalize_singleton();

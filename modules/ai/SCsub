@@ -12,6 +12,9 @@ env_ai.add_source_files(env.modules_sources, "*.cpp")
 # Action implementations
 env_ai.add_source_files(env.modules_sources, "actions/*.cpp")
 
+# Harness integration (codex app-server driver components)
+env_ai.add_source_files(env.modules_sources, "harness/*.cpp")
+
 # Editor-only sources (status indicator plugin)
 if env.editor_build:
     env_ai.add_source_files(env.modules_sources, "editor/*.cpp")
