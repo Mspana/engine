@@ -86,6 +86,8 @@ state. Playback on scene start is the node's `autoplay` property (set separately
 - `modules/ai/tools_array.inc` — native tool schema
 - `modules/ai/ai.cpp` — allow-list, arg validation, dispatch, scene-mutation registration
 - `modules/ai/ai_provider.cpp` — legacy prompt catalog entry
+- `modules/ai/system_prompt.inc` — native-prompt animation guidance (steers frame
+  animation to this tool and away from script-driven texture swapping)
 
 ### Limitations
 
