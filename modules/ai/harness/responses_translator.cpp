@@ -45,7 +45,7 @@ struct UpstreamEntry {
 };
 
 // Chat Completions providers reachable through the translator. Models with
-// native Responses endpoints (OpenAI, xAI) don't come through here at all —
+// native Responses endpoints (OpenAI, xAI) don't come through here at all -
 // codex talks to them directly.
 static const UpstreamEntry UPSTREAMS[] = {
 	{ "kimi-k2.6", "api.moonshot.ai", "/v1/chat/completions", "MOONSHOT_API_KEY" },
@@ -53,7 +53,7 @@ static const UpstreamEntry UPSTREAMS[] = {
 	{ "kimi-k3", "api.moonshot.ai", "/v1/chat/completions", "MOONSHOT_API_KEY" },
 };
 
-String AIResponsesTranslator::_load_key(const String &p_env_var) {
+String AIResponsesTranslator::load_key(const String &p_env_var) {
 	String v = OS::get_singleton()->get_environment(p_env_var);
 	if (!v.is_empty()) {
 		return v;
@@ -96,7 +96,7 @@ bool AIResponsesTranslator::_resolve_upstream(const String &p_model, String &r_h
 		if (p_model == e.model) {
 			r_host = e.host;
 			r_path = e.path;
-			r_api_key = _load_key(e.env_key);
+			r_api_key = load_key(e.env_key);
 			if (r_api_key.is_empty()) {
 				r_err = vformat("API key env var '%s' is not set for model '%s'.", e.env_key, p_model);
 				return false;
@@ -387,7 +387,7 @@ static Array _repair_tool_adjacency(const Array &p_messages) {
 			}
 		}
 	}
-	// Orphan tool results (no matching call in this window) are dropped —
+	// Orphan tool results (no matching call in this window) are dropped -
 	// forwarding them would trip the same strict validation we're repairing.
 	return out;
 }
@@ -477,7 +477,7 @@ Dictionary AIResponsesTranslator::_translate_request(const Dictionary &p_req, St
 			messages.push_back(msg);
 			// Chat providers reject images inside tool messages; hoist them into
 			// a follow-up user message so vision content survives (same strategy
-			// the LiteLLM bridge used — verified against Kimi in the spike).
+			// the LiteLLM bridge used - verified against Kimi in the spike).
 			if (!image_urls.is_empty()) {
 				Array parts;
 				Dictionary tp;
@@ -667,7 +667,7 @@ void AIResponsesTranslator::_handle_responses(Ref<StreamPeerTCP> p_client, const
 
 	int upstream_code = http->get_response_code();
 	if (upstream_code != 200) {
-		// Forward the provider's error body verbatim — codex surfaces it.
+		// Forward the provider's error body verbatim - codex surfaces it.
 		PackedByteArray err_body;
 		while (http->get_status() == HTTPClient::STATUS_BODY) {
 			http->poll();
@@ -853,7 +853,7 @@ void AIResponsesTranslator::_handle_responses(Ref<StreamPeerTCP> p_client, const
 		PackedByteArray chunk = http->read_response_body_chunk();
 		if (chunk.size() == 0) {
 			if (!_client_alive(p_client)) {
-				break; // codex aborted (interrupt/steer) — drop upstream.
+				break; // codex aborted (interrupt/steer) - drop upstream.
 			}
 			OS::get_singleton()->delay_usec(4000);
 			continue;

@@ -2,6 +2,7 @@
 
 #include "ai.h" // Include the header for the class we are registering
 #include "ai_provider.h" // Include provider classes
+#include "harness/codex_harness_driver.h"
 #include "harness/responses_translator.h"
 #include "retrieval.h" // Include retrieval class
 
@@ -16,6 +17,9 @@
 #include "editor/gif_import_handler.h"
 #include "editor/plugins/editor_plugin.h"
 #endif
+
+// Keeps the smoke-test driver alive for the editor session (see below).
+static Ref<CodexHarnessDriver> _harness_smoke_driver;
 
 // Module initialization function.
 void initialize_ai_module(ModuleInitializationLevel p_level) {
@@ -45,12 +49,26 @@ void initialize_ai_module(ModuleInitializationLevel p_level) {
 		// This makes it globally accessible, e.g., `AI` in GDScript.
 		Engine::get_singleton()->add_singleton(Engine::Singleton("AI", AI::get_singleton()));
 
+		ClassDB::register_class<CodexHarnessDriver>();
+
 		// Native Responses->Chat translator for the codex harness (replaces the
 		// LiteLLM sidecar). Spike-gated by env var until the harness driver
 		// owns its lifecycle: set ARISTOTLE_TRANSLATOR_PORT=4123 to enable.
 		String translator_port = OS::get_singleton()->get_environment("ARISTOTLE_TRANSLATOR_PORT");
 		if (!translator_port.is_empty()) {
 			AIResponsesTranslator::get_singleton()->start(translator_port.to_int());
+		}
+
+		// Headless smoke path for the harness driver: set ARISTOTLE_HARNESS_SMOKE
+		// to a prompt and the driver runs one turn at startup, printing events.
+		String smoke_prompt = OS::get_singleton()->get_environment("ARISTOTLE_HARNESS_SMOKE");
+		if (!smoke_prompt.is_empty()) {
+			_harness_smoke_driver.instantiate();
+			if (_harness_smoke_driver->start_session()) {
+				_harness_smoke_driver->send_user_message(smoke_prompt, 1);
+			} else {
+				_harness_smoke_driver.unref();
+			}
 		}
 	}
 
@@ -81,6 +99,10 @@ void uninitialize_ai_module(ModuleInitializationLevel p_level) {
 	// Remove the singleton from the Engine.
 	Engine::get_singleton()->remove_singleton("AI");
 
+	if (_harness_smoke_driver.is_valid()) {
+		_harness_smoke_driver->shutdown();
+		_harness_smoke_driver.unref();
+	}
 	AIResponsesTranslator::get_singleton()->stop();
 
 	// Clean up the singleton instance using the class's own method.

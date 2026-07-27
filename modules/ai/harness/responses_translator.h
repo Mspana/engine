@@ -34,6 +34,9 @@ public:
 	bool is_running() const { return running.is_set(); }
 	int get_port() const { return port; }
 
+	// Env-or-.env secret lookup (shared with the harness driver).
+	static String load_key(const String &p_env_var);
+
 private:
 	static AIResponsesTranslator *singleton;
 
@@ -75,7 +78,6 @@ private:
 	Dictionary _translate_request(const Dictionary &p_req, String &r_err);
 	void _handle_responses(Ref<StreamPeerTCP> p_client, const Dictionary &p_req);
 
-	// Upstream registry + secrets.
+	// Upstream registry.
 	bool _resolve_upstream(const String &p_model, String &r_host, String &r_path, String &r_api_key, String &r_err);
-	static String _load_key(const String &p_env_var);
 };
