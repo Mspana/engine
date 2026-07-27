@@ -455,6 +455,27 @@ void CodexHarnessDriver::_handle_notification(const String &p_method, const Dict
 		}
 		return;
 	}
+	if (p_method == "item/started") {
+		Dictionary item = p_params.get("item", Dictionary());
+		if (String(item.get("type", "")) == "dynamicToolCall") {
+			// Announce the tool call as a canonical assistant item so the
+			// panel creates its pending tool card (resolved by
+			// tool_result_ready when item/completed arrives).
+			Dictionary block;
+			block["type"] = "tool_call";
+			block["id"] = item.get("id", "");
+			block["name"] = item.get("tool", "");
+			Variant args = item.get("arguments", Dictionary());
+			block["args"] = args.get_type() == Variant::STRING ? Variant(JSON::parse_string(args)) : args;
+			Array content;
+			content.push_back(block);
+			Dictionary assistant_item;
+			assistant_item["role"] = "assistant";
+			assistant_item["content"] = content;
+			emit_signal("assistant_item_ready", assistant_item);
+		}
+		return;
+	}
 	if (p_method == "item/completed") {
 		Dictionary item = p_params.get("item", Dictionary());
 		String type = item.get("type", "");

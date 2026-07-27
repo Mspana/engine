@@ -57,6 +57,8 @@
 #include "scene/resources/image_texture.h"
 #include "scene/resources/style_box_flat.h"
 
+class CodexHarnessDriver;
+
 // Lightweight collapsible entry for agent thinking text between tool calls
 class ThinkingCollapsibleEntry : public VBoxContainer {
 	GDCLASS(ThinkingCollapsibleEntry, VBoxContainer);
@@ -487,6 +489,14 @@ private:
 	void _on_prompt_text_changed();
 	void _on_prompt_gui_input(const Ref<InputEvent> &p_event);
 	void _on_ai_response(bool p_success, const String &p_response, const String &p_error);
+
+	// Codex harness loop (experimental replacement for the orchestrator;
+	// toggled via the model dropdown's "Codex Harness" entry). The driver
+	// re-emits the orchestrator signal contract, so it shares the callbacks
+	// below.
+	Ref<CodexHarnessDriver> harness_driver;
+	bool use_harness_mode = false;
+	void _ensure_harness_driver();
 
 	// Agentic orchestrator callbacks
 	void _on_orchestrator_started();

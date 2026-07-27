@@ -33,6 +33,7 @@
 #include "../ai.h"
 #include "core/templates/hash_map.h"
 #include "../agentic_orchestrator.h"
+#include "../harness/codex_harness_driver.h"
 #include "core/config/engine.h"
 #include "core/core_bind.h"
 #include "core/input/input_event.h"
@@ -2482,12 +2483,16 @@ void AIStatusPanel::_start_run(const String &p_message) {
 
 	// Persist which model is handling this turn
 	if (chat_store.is_valid()) {
-		AI *ai_pre = AI::get_singleton();
-		if (ai_pre) {
-			Ref<AIProvider> prov = ai_pre->get_provider();
-			if (prov.is_valid()) {
-				chat_store->append_item(AIChatStore::make_model_info_item(
-						prov->get_model(), prov->get_provider_name()));
+		if (use_harness_mode) {
+			chat_store->append_item(AIChatStore::make_model_info_item("kimi-k2.6", "codex-harness"));
+		} else {
+			AI *ai_pre = AI::get_singleton();
+			if (ai_pre) {
+				Ref<AIProvider> prov = ai_pre->get_provider();
+				if (prov.is_valid()) {
+					chat_store->append_item(AIChatStore::make_model_info_item(
+							prov->get_model(), prov->get_provider_name()));
+				}
 			}
 		}
 	}
@@ -2498,6 +2503,26 @@ void AIStatusPanel::_start_run(const String &p_message) {
 	// Update state
 	_set_run_state(STATE_RUNNING);
 	is_waiting_for_response = true;
+
+	if (use_harness_mode) {
+		// Codex harness loop: the child process owns history and context;
+		// only the new user text is sent (no _build_model_messages).
+		_ensure_harness_driver();
+		if (harness_driver.is_valid() && harness_driver->is_session_ready()) {
+			print_line("AI Chat Panel: Starting codex harness run");
+			harness_driver->send_user_message(p_message, current_run_user_message_id);
+		} else if (harness_driver.is_valid()) {
+			// Session still coming up: the driver queues the message itself.
+			print_line("AI Chat Panel: Harness session starting; message queued");
+			harness_driver->send_user_message(p_message, current_run_user_message_id);
+		} else {
+			ERR_PRINT("AI Chat Panel: Codex harness driver unavailable.");
+			_remove_pending_message();
+			is_waiting_for_response = false;
+			_set_run_state(STATE_IDLE);
+		}
+		return;
+	}
 
 	// Build full message history for context
 	Array messages = _build_model_messages();
@@ -2538,7 +2563,14 @@ void AIStatusPanel::_request_cancel() {
 	// cancel_run is terminal and instant: it repairs the transcript and emits
 	// run_complete synchronously, which lands in _on_orchestrator_complete and
 	// resets run_state to IDLE before this returns.
-	if (Engine::get_singleton()->has_singleton("AI")) {
+	if (use_harness_mode) {
+		// Harness: turn/interrupt round-trips through codex; run_complete
+		// arrives asynchronously (~10ms measured), after the IDLE fallback.
+		if (harness_driver.is_valid() && harness_driver->is_running()) {
+			print_line("AI Chat Panel: Interrupting codex harness run");
+			harness_driver->cancel_run();
+		}
+	} else if (Engine::get_singleton()->has_singleton("AI")) {
 		Object *ai_obj = Engine::get_singleton()->get_singleton_object("AI");
 		AI *ai = Object::cast_to<AI>(ai_obj);
 		if (ai) {
@@ -3391,6 +3423,19 @@ void AIStatusPanel::_on_prompt_gui_input(const Ref<InputEvent> &p_event) {
 				// stay queue-only (injections are text-only) so the images
 				// travel with a fresh run instead of being silently dropped.
 				if (run_state != STATE_IDLE) {
+					if (use_harness_mode && pending_images.is_empty() && harness_driver.is_valid() && harness_driver->is_running()) {
+						// Harness: steer the in-flight turn directly. The
+						// message shows in the transcript as a user item.
+						prompt_edit->set_text("");
+						if (chat_store.is_valid()) {
+							HistoryItem steer_item = chat_store->append_item(AIChatStore::make_user_item(prompt_text, Vector<String>()));
+							_append_message_ui(steer_item);
+						}
+						harness_driver->steer(prompt_text);
+						_update_send_button_state();
+						prompt_edit->accept_event();
+						return;
+					}
 					prompt_edit->set_text("");
 					String queue_id = _enqueue_message(prompt_text);
 					if (pending_images.is_empty() && Engine::get_singleton()->has_singleton("AI")) {
@@ -4613,6 +4658,27 @@ void AIStatusPanel::_cancel_pending_edit() {
 	}
 }
 
+void AIStatusPanel::_ensure_harness_driver() {
+	if (harness_driver.is_valid()) {
+		return;
+	}
+	harness_driver.instantiate();
+	// The driver re-emits the orchestrator signal contract; reuse the
+	// existing handlers wholesale.
+	harness_driver->connect("run_started", callable_mp(this, &AIStatusPanel::_on_orchestrator_started));
+	harness_driver->connect("api_round_started", callable_mp(this, &AIStatusPanel::_on_api_round_started));
+	harness_driver->connect("progress_update", callable_mp(this, &AIStatusPanel::_on_orchestrator_progress));
+	harness_driver->connect("assistant_item_ready", callable_mp(this, &AIStatusPanel::_on_orchestrator_assistant_item));
+	harness_driver->connect("tool_result_ready", callable_mp(this, &AIStatusPanel::_on_orchestrator_tool_result));
+	harness_driver->connect("turn_tokens_ready", callable_mp(this, &AIStatusPanel::_on_turn_tokens_ready));
+	harness_driver->connect("run_complete", callable_mp(this, &AIStatusPanel::_on_orchestrator_complete));
+	harness_driver->connect("checkpoint_recommended", callable_mp(this, &AIStatusPanel::_on_checkpoint_recommended));
+	if (!harness_driver->start_session()) {
+		ERR_PRINT("AI Chat Panel: failed to start codex harness session.");
+		harness_driver.unref();
+	}
+}
+
 void AIStatusPanel::_on_provider_changed(int p_index) {
 	AI *ai = AI::get_singleton();
 	if (!ai) {
@@ -4623,6 +4689,14 @@ void AIStatusPanel::_on_provider_changed(int p_index) {
 	if (model_id.is_empty()) {
 		return;
 	}
+
+	if (model_id == "codex-harness") {
+		use_harness_mode = true;
+		EditorSettings::get_singleton()->set_project_metadata("ai", "selected_model", model_id);
+		print_line("AI: Switched to Codex Harness loop (Kimi K2.6)");
+		return;
+	}
+	use_harness_mode = false;
 
 	// Find the provider type for this model
 	Vector<AIProvider::ModelEntry> models = AIProvider::get_available_models();
@@ -5184,6 +5258,15 @@ AIStatusPanel::AIStatusPanel() {
 		provider_dropdown->set_item_metadata(i, models[i].model_id);
 		if (models[i].model_id == saved_model) {
 			default_idx = i;
+		}
+	}
+	// Experimental codex-harness loop (Phase 2 of the harness replacement).
+	{
+		int harness_idx = models.size();
+		provider_dropdown->add_item("Kimi K2.6 (Codex Harness)", harness_idx);
+		provider_dropdown->set_item_metadata(harness_idx, "codex-harness");
+		if (saved_model == "codex-harness") {
+			default_idx = harness_idx;
 		}
 	}
 	provider_dropdown->select(default_idx);
