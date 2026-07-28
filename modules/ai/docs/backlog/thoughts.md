@@ -2,6 +2,10 @@
 
 ## Ideas / Future Features
 
+Harness streaming renders in provider-sized chunks and looks choppy. Smooth it with a
+small reveal buffer (drain accumulated deltas on a ~30-60ms tick, or per-word reveal)
+like modern agent UIs do. Cosmetic; deferred 7/28.
+
 Enhanced AI Panel UI
 1. Input/output, colorized. Same color on success, red output on failure
 2. Debug Button + shortcut to see full input/output (current approach)

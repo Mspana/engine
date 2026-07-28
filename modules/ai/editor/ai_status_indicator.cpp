@@ -3817,7 +3817,7 @@ void AIStatusPanel::_on_orchestrator_assistant_item(const Dictionary &p_item) {
 		chat_store->append_item(p_item);
 	}
 
-	// Render text content as an assistant bubble
+	// Render text content
 	if (!message_list) {
 		return;
 	}
@@ -3827,9 +3827,29 @@ void AIStatusPanel::_on_orchestrator_assistant_item(const Dictionary &p_item) {
 		if (String(block.get("type", "")) == "text") {
 			String text = block.get("text", "");
 			if (text.strip_edges().is_empty()) {
+				_reset_harness_stream();
 				break;
 			}
-			// Build a temporary HistoryItem for bubble rendering
+			if (use_harness_mode && harness_streaming && pending_label && pending_message) {
+				// Modern agent style: the streamed plaintext IS the final
+				// rendering. Finalize the label in place (authoritative text
+				// from the item), detach it from the pending lifecycle, and
+				// start fresh dots below for the rest of the turn.
+				pending_label->set_text(text);
+				pending_message->set_meta("_bubble_plain_text", text);
+				pending_message->connect("gui_input", callable_mp(this, &AIStatusPanel::_on_message_bubble_gui_input).bind(pending_message));
+				if (thinking_dot_timer) {
+					thinking_dot_timer->stop();
+				}
+				pending_message = nullptr;
+				pending_label = nullptr;
+				harness_streaming = false;
+				harness_stream_text = String();
+				_show_pending_message();
+				should_auto_scroll = true;
+				break;
+			}
+			// Legacy loop: render as an assistant bubble.
 			HistoryItem temp_item;
 			temp_item.ts = 0; // no ts — ephemeral render (already persisted above)
 			temp_item.data = p_item;
@@ -4265,6 +4285,8 @@ void AIStatusPanel::_remove_pending_message() {
 	if (thinking_dot_timer) {
 		thinking_dot_timer->stop();
 	}
+	harness_streaming = false;
+	harness_stream_text = String();
 	pending_label = nullptr;
 	if (pending_message && message_list) {
 		message_list->remove_child(pending_message);
@@ -4658,6 +4680,44 @@ void AIStatusPanel::_cancel_pending_edit() {
 	}
 }
 
+void AIStatusPanel::_on_harness_assistant_delta(const String &p_delta) {
+	if (!pending_message) {
+		_show_pending_message();
+	}
+	if (!pending_label) {
+		return;
+	}
+	if (!harness_streaming) {
+		harness_streaming = true;
+		harness_stream_text = String();
+		if (thinking_dot_timer) {
+			thinking_dot_timer->stop();
+		}
+		pending_label->add_theme_color_override("font_color", AIColors::TEXT_PRIMARY);
+		pending_label->set_autowrap_mode(TextServer::AUTOWRAP_WORD_SMART);
+		pending_label->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	}
+	harness_stream_text += p_delta;
+	pending_label->set_text(harness_stream_text);
+	_scroll_to_bottom();
+}
+
+void AIStatusPanel::_reset_harness_stream() {
+	if (!harness_streaming) {
+		return;
+	}
+	harness_streaming = false;
+	harness_stream_text = String();
+	if (pending_label) {
+		pending_label->set_text("Thinking");
+		pending_label->add_theme_color_override("font_color", AIColors::TEXT_MUTED);
+		thinking_dot_state = 0;
+		if (thinking_dot_timer) {
+			thinking_dot_timer->start();
+		}
+	}
+}
+
 void AIStatusPanel::_ensure_harness_driver() {
 	if (harness_driver.is_valid()) {
 		return;
@@ -4673,6 +4733,7 @@ void AIStatusPanel::_ensure_harness_driver() {
 	harness_driver->connect("turn_tokens_ready", callable_mp(this, &AIStatusPanel::_on_turn_tokens_ready));
 	harness_driver->connect("run_complete", callable_mp(this, &AIStatusPanel::_on_orchestrator_complete));
 	harness_driver->connect("checkpoint_recommended", callable_mp(this, &AIStatusPanel::_on_checkpoint_recommended));
+	harness_driver->connect("assistant_delta", callable_mp(this, &AIStatusPanel::_on_harness_assistant_delta));
 	if (!harness_driver->start_session()) {
 		ERR_PRINT("AI Chat Panel: failed to start codex harness session.");
 		harness_driver.unref();

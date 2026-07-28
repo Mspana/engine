@@ -498,6 +498,13 @@ private:
 	bool use_harness_mode = false;
 	void _ensure_harness_driver();
 
+	// Streaming state: the pending "Thinking..." label doubles as the live
+	// stream target; it reverts to the dots between message items.
+	String harness_stream_text;
+	bool harness_streaming = false;
+	void _on_harness_assistant_delta(const String &p_delta);
+	void _reset_harness_stream();
+
 	// Agentic orchestrator callbacks
 	void _on_orchestrator_started();
 	void _on_orchestrator_progress(const String &p_status, int p_turn);

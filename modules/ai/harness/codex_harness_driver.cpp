@@ -38,6 +38,9 @@ void CodexHarnessDriver::_bind_methods() {
 	ADD_SIGNAL(MethodInfo("turn_tokens_ready", PropertyInfo(Variant::INT, "tokens")));
 	ADD_SIGNAL(MethodInfo("run_complete", PropertyInfo(Variant::BOOL, "success"), PropertyInfo(Variant::STRING, "final_message")));
 	ADD_SIGNAL(MethodInfo("checkpoint_recommended", PropertyInfo(Variant::INT, "user_message_id")));
+	// Streaming extensions beyond the orchestrator contract (harness-only).
+	ADD_SIGNAL(MethodInfo("assistant_delta", PropertyInfo(Variant::STRING, "delta")));
+	ADD_SIGNAL(MethodInfo("thinking_delta", PropertyInfo(Variant::STRING, "delta")));
 }
 
 void CodexHarnessDriver::_smoke(const String &p_line) {
@@ -448,10 +451,19 @@ void CodexHarnessDriver::_handle_notification(const String &p_method, const Dict
 		return;
 	}
 	if (p_method == "item/agentMessage/delta") {
+		String delta = p_params.get("delta", "");
+		if (!delta.is_empty()) {
+			emit_signal("assistant_delta", delta);
+		}
 		if (smoke_mode) {
-			// Deltas are too chatty for a signal each; the panel will consume
-			// them in the streaming increment. Print raw in smoke mode.
-			OS::get_singleton()->print("%s", String(p_params.get("delta", "")).utf8().get_data());
+			OS::get_singleton()->print("%s", delta.utf8().get_data());
+		}
+		return;
+	}
+	if (p_method == "item/reasoning/summaryTextDelta" || p_method == "item/reasoning/textDelta") {
+		String delta = p_params.get("delta", "");
+		if (!delta.is_empty()) {
+			emit_signal("thinking_delta", delta);
 		}
 		return;
 	}
@@ -497,11 +509,8 @@ void CodexHarnessDriver::_handle_notification(const String &p_method, const Dict
 				OS::get_singleton()->print("\n");
 			}
 		} else if (type == "dynamicToolCall") {
-			Dictionary tool_result;
-			tool_result["tool_call_id"] = item.get("id", "");
-			tool_result["name"] = item.get("tool", "");
-			tool_result["status"] = String(item.get("status", "")) == "completed" ? "success" : "error";
-			emit_signal("tool_result_ready", tool_result);
+			// tool_result_ready is emitted from _execute_dynamic_tool, where
+			// args and the exec result are in hand (legacy payload shape).
 			_smoke(vformat("tool %s -> %s", String(item.get("tool", "")), String(item.get("status", ""))));
 		}
 		return;
@@ -568,11 +577,80 @@ Dictionary CodexHarnessDriver::_execute_dynamic_tool(const Dictionary &p_params)
 	Dictionary result = AI::get_singleton()->execute_single_action(action);
 
 	bool success = String(result.get("status", "")) == "success";
+
+	// Image-returning tools (capture_*_viewport, preview_asset, screenshots):
+	// same result contract the legacy loop used — result._images: [b64, ...]
+	// and/or result.screenshot_b64. Strip the payloads from the JSON text
+	// (base64 inflates token count) and attach them as real image content.
+	Array image_b64s;
+	if (success) {
+		Dictionary result_inner = result.get("result", Dictionary());
+		bool has_images_field = result_inner.has("_images");
+		bool has_screenshot_field = result_inner.has("screenshot_b64");
+		if (has_images_field || has_screenshot_field) {
+			if (has_images_field) {
+				image_b64s = result_inner["_images"];
+			}
+			if (has_screenshot_field) {
+				image_b64s.push_back(result_inner["screenshot_b64"]);
+			}
+			Dictionary clean = result.duplicate();
+			Dictionary r = result_inner.duplicate();
+			if (has_images_field) {
+				r.erase("_images");
+			}
+			if (has_screenshot_field) {
+				r.erase("screenshot_b64");
+				r["screenshot"] = "<see attached image>";
+			}
+			clean["result"] = r;
+			result = clean;
+		}
+	}
+
+	// Emit the panel/store payload in the exact shape the legacy loop used
+	// (matched to the pending tool card by action_id == the codex call id).
+	{
+		Dictionary trd;
+		trd["tool_name"] = tool;
+		trd["action_id"] = p_params.get("callId", "");
+		trd["type"] = tool;
+		Dictionary display_args = args;
+		Dictionary result_inner = result.get("result", Dictionary());
+		if (success && result_inner.has("_display_args")) {
+			display_args = result_inner["_display_args"];
+			result_inner.erase("_display_args");
+		}
+		trd["args"] = display_args;
+		trd["status"] = result.get("status", "error");
+		if (success) {
+			trd["result"] = result_inner;
+		} else {
+			trd["error"] = result.get("error", Dictionary());
+		}
+		// Same token heuristic as the legacy loop: captures count as ~1000.
+		if (tool == "run_and_screenshot" || tool == "capture_2d_viewport" || tool == "capture_3d_viewport") {
+			trd["tokens"] = 1000;
+		} else {
+			trd["tokens"] = (int64_t)(JSON::stringify(result).length() / 4);
+		}
+		emit_signal("tool_result_ready", trd);
+	}
+
 	Dictionary text_item;
 	text_item["type"] = "inputText";
 	text_item["text"] = JSON::stringify(result);
 	Array content_items;
 	content_items.push_back(text_item);
+	for (int i = 0; i < image_b64s.size(); i++) {
+		Dictionary img_item;
+		img_item["type"] = "inputImage";
+		img_item["imageUrl"] = "data:image/png;base64," + String(image_b64s[i]);
+		content_items.push_back(img_item);
+	}
+	if (!image_b64s.is_empty()) {
+		_smoke(vformat("attached %d image(s) to tool result", image_b64s.size()));
+	}
 	Dictionary resp;
 	resp["success"] = success;
 	resp["contentItems"] = content_items;
