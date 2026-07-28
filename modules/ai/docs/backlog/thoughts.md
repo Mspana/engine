@@ -6,6 +6,12 @@ Harness streaming renders in provider-sized chunks and looks choppy. Smooth it w
 small reveal buffer (drain accumulated deltas on a ~30-60ms tick, or per-word reveal)
 like modern agent UIs do. Cosmetic; deferred 7/28.
 
+Game screenshot capture returns an empty image with `display_server_windows.cpp:1420 -
+Index p_screen = -1 is out of bounds (get_screen_count() = 1)` — observed 7/28 right
+after a monitor was disconnected (screen count 2 -> 1). Likely a stale screen index in
+the GameView capture path; -1 should resolve to SCREEN_OF_MAIN_WINDOW. run_and_screenshot
+surfaces the failure correctly; the capture itself needs the fix.
+
 Enhanced AI Panel UI
 1. Input/output, colorized. Same color on success, red output on failure
 2. Debug Button + shortcut to see full input/output (current approach)

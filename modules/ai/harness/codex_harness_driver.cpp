@@ -13,6 +13,11 @@
 #include "core/os/os.h"
 #include "core/os/time.h"
 #include "core/string/print_string.h"
+#include "editor/debugger/editor_debugger_node.h"
+#include "editor/debugger/script_editor_debugger.h"
+#include "editor/editor_log.h"
+#include "editor/editor_node.h"
+#include "scene/main/scene_tree.h"
 
 /* -------------------------------------------------------------------- */
 /*  Bindings                                                             */
@@ -26,6 +31,8 @@ void CodexHarnessDriver::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("cancel_run"), &CodexHarnessDriver::cancel_run);
 	ClassDB::bind_method(D_METHOD("is_running"), &CodexHarnessDriver::is_running);
 	ClassDB::bind_method(D_METHOD("is_session_ready"), &CodexHarnessDriver::is_session_ready);
+	ClassDB::bind_method(D_METHOD("set_resume_thread_id", "thread_id"), &CodexHarnessDriver::set_resume_thread_id);
+	ClassDB::bind_method(D_METHOD("get_thread_id"), &CodexHarnessDriver::get_thread_id);
 	ClassDB::bind_method(D_METHOD("_handle_frame", "frame"), &CodexHarnessDriver::_handle_frame);
 	ClassDB::bind_method(D_METHOD("_handle_child_exit"), &CodexHarnessDriver::_handle_child_exit);
 
@@ -38,9 +45,11 @@ void CodexHarnessDriver::_bind_methods() {
 	ADD_SIGNAL(MethodInfo("turn_tokens_ready", PropertyInfo(Variant::INT, "tokens")));
 	ADD_SIGNAL(MethodInfo("run_complete", PropertyInfo(Variant::BOOL, "success"), PropertyInfo(Variant::STRING, "final_message")));
 	ADD_SIGNAL(MethodInfo("checkpoint_recommended", PropertyInfo(Variant::INT, "user_message_id")));
+	ADD_SIGNAL(MethodInfo("todos_updated", PropertyInfo(Variant::ARRAY, "todos")));
 	// Streaming extensions beyond the orchestrator contract (harness-only).
 	ADD_SIGNAL(MethodInfo("assistant_delta", PropertyInfo(Variant::STRING, "delta")));
 	ADD_SIGNAL(MethodInfo("thinking_delta", PropertyInfo(Variant::STRING, "delta")));
+	ADD_SIGNAL(MethodInfo("thinking_done"));
 }
 
 void CodexHarnessDriver::_smoke(const String &p_line) {
@@ -144,6 +153,9 @@ void CodexHarnessDriver::shutdown() {
 
 void CodexHarnessDriver::_handle_child_exit() {
 	child_alive.clear();
+	// A held-open tool call can't be answered anymore; drop the state.
+	rns_phase = RNS_INACTIVE;
+	rns_request_id = -1;
 	if (turn_active) {
 		turn_active = false;
 		emit_signal("run_complete", false, "The agent process exited unexpectedly.");
@@ -241,6 +253,14 @@ void CodexHarnessDriver::_handle_response(int p_id, const Dictionary &p_result, 
 	if (p_id == pending_phase_request) {
 		pending_phase_request = -1;
 		if (!p_error.is_empty()) {
+			if (phase == PHASE_STARTING_THREAD && !resume_thread_id.is_empty()) {
+				// The saved thread is gone (deleted rollout, codex upgrade...):
+				// fall back to a fresh thread rather than failing the session.
+				print_line("CodexHarnessDriver: thread/resume failed, starting fresh thread");
+				resume_thread_id = String();
+				_start_thread_request();
+				return;
+			}
 			ERR_PRINT("CodexHarnessDriver: session bring-up failed: " + JSON::stringify(p_error));
 			_smoke("bring-up error: " + JSON::stringify(p_error));
 			return;
@@ -327,7 +347,15 @@ void CodexHarnessDriver::_start_thread_request() {
 	params["model"] = model.is_empty() ? String("kimi-k2.6") : model;
 	String provider = OS::get_singleton()->get_environment("ARISTOTLE_HARNESS_PROVIDER");
 	params["modelProvider"] = provider.is_empty() ? String("aristotle") : provider;
-	pending_phase_request = _send_request("thread/start", params);
+	if (!resume_thread_id.is_empty()) {
+		// Resume the chat's existing codex thread: history survives editor
+		// restarts. Overrides (tools/instructions/model) are re-applied so a
+		// changed toolset isn't stale-restored from the rollout.
+		params["threadId"] = resume_thread_id;
+		pending_phase_request = _send_request("thread/resume", params);
+	} else {
+		pending_phase_request = _send_request("thread/start", params);
+	}
 }
 
 String CodexHarnessDriver::_developer_instructions() {
@@ -356,6 +384,11 @@ Array CodexHarnessDriver::_build_dynamic_tools() {
 		Dictionary fn = t.has("function") ? Dictionary(t["function"]) : t;
 		String name = fn.get("name", "");
 		if (name.is_empty()) {
+			continue;
+		}
+		if (name == "update_todos") {
+			// Legacy: codex's native plan tool (turn/plan/updated) drives the
+			// todo panel instead.
 			continue;
 		}
 		Dictionary spec;
@@ -427,6 +460,11 @@ void CodexHarnessDriver::steer(const String &p_text) {
 }
 
 void CodexHarnessDriver::cancel_run() {
+	if (rns_phase != RNS_INACTIVE || rns_request_id >= 0) {
+		// Stop the game and answer the held-open call so codex isn't left
+		// waiting on a tool that will never respond.
+		_abort_async_rns("user_cancelled_run");
+	}
 	if (!turn_active || current_turn_id.is_empty()) {
 		return;
 	}
@@ -512,7 +550,31 @@ void CodexHarnessDriver::_handle_notification(const String &p_method, const Dict
 			// tool_result_ready is emitted from _execute_dynamic_tool, where
 			// args and the exec result are in hand (legacy payload shape).
 			_smoke(vformat("tool %s -> %s", String(item.get("tool", "")), String(item.get("status", ""))));
+		} else if (type == "reasoning") {
+			// A reasoning item finished: back-to-back thinking phases must
+			// render (and persist) as separate blocks.
+			emit_signal("thinking_done");
 		}
+		return;
+	}
+	if (p_method == "turn/plan/updated") {
+		// Codex's native plan tool drives the panel's todo widget directly
+		// (replaces the legacy update_todos tool, which is no longer declared).
+		Array plan = p_params.get("plan", Array());
+		Array todos;
+		for (int i = 0; i < plan.size(); i++) {
+			if (plan[i].get_type() != Variant::DICTIONARY) {
+				continue;
+			}
+			Dictionary step = plan[i];
+			Dictionary todo;
+			todo["id"] = itos(i + 1);
+			todo["content"] = step.get("step", "");
+			String status = step.get("status", "pending");
+			todo["status"] = status == "inProgress" ? String("in_progress") : status;
+			todos.push_back(todo);
+		}
+		emit_signal("todos_updated", todos);
 		return;
 	}
 	if (p_method == "turn/completed") {
@@ -542,6 +604,23 @@ void CodexHarnessDriver::_handle_notification(const String &p_method, const Dict
 
 void CodexHarnessDriver::_handle_server_request(int p_id, const String &p_method, const Dictionary &p_params) {
 	if (p_method == "item/tool/call") {
+		String tool = p_params.get("tool", "");
+		if (tool == "run_and_screenshot") {
+			// Held-open call: the response is sent when captures complete.
+			_begin_async_rns(p_id, p_params);
+			return;
+		}
+		if (tool == "install_export_templates" || tool == "export_project" || tool == "serve_web_build") {
+			// Async export machinery not yet ported to harness mode.
+			Dictionary err;
+			err["code"] = "not_supported_in_harness";
+			err["message"] = vformat("'%s' is not available in Codex Harness mode yet. Ask the user to switch to a legacy model for export operations.", tool);
+			Dictionary exec_result;
+			exec_result["status"] = "error";
+			exec_result["error"] = err;
+			_send_response(p_id, _tool_response_from_result(tool, Dictionary(), p_params.get("callId", ""), exec_result));
+			return;
+		}
 		_send_response(p_id, _execute_dynamic_tool(p_params));
 		return;
 	}
@@ -575,47 +654,26 @@ Dictionary CodexHarnessDriver::_execute_dynamic_tool(const Dictionary &p_params)
 	action["action"] = tool;
 	action["args"] = args;
 	Dictionary result = AI::get_singleton()->execute_single_action(action);
+	return _tool_response_from_result(tool, args, p_params.get("callId", ""), result);
+}
 
+// Shared tail for every dynamic tool response (sync and held-open async):
+// emits tool_result_ready for the panel (full result, images included so the
+// screenshot widget renders), then builds the codex response with base64
+// payloads stripped from the JSON text and attached as inputImage content.
+// Image contract (same as the legacy loop): result._images: [b64, ...],
+// result.screenshot_b64: b64, result.screenshots: [{at_seconds, screenshot_b64}].
+Dictionary CodexHarnessDriver::_tool_response_from_result(const String &p_tool, const Dictionary &p_args, const String &p_call_id, const Dictionary &p_exec_result) {
+	Dictionary result = p_exec_result;
 	bool success = String(result.get("status", "")) == "success";
 
-	// Image-returning tools (capture_*_viewport, preview_asset, screenshots):
-	// same result contract the legacy loop used — result._images: [b64, ...]
-	// and/or result.screenshot_b64. Strip the payloads from the JSON text
-	// (base64 inflates token count) and attach them as real image content.
-	Array image_b64s;
-	if (success) {
-		Dictionary result_inner = result.get("result", Dictionary());
-		bool has_images_field = result_inner.has("_images");
-		bool has_screenshot_field = result_inner.has("screenshot_b64");
-		if (has_images_field || has_screenshot_field) {
-			if (has_images_field) {
-				image_b64s = result_inner["_images"];
-			}
-			if (has_screenshot_field) {
-				image_b64s.push_back(result_inner["screenshot_b64"]);
-			}
-			Dictionary clean = result.duplicate();
-			Dictionary r = result_inner.duplicate();
-			if (has_images_field) {
-				r.erase("_images");
-			}
-			if (has_screenshot_field) {
-				r.erase("screenshot_b64");
-				r["screenshot"] = "<see attached image>";
-			}
-			clean["result"] = r;
-			result = clean;
-		}
-	}
-
-	// Emit the panel/store payload in the exact shape the legacy loop used
-	// (matched to the pending tool card by action_id == the codex call id).
+	// Panel/store payload, matched to the pending card by action_id.
 	{
 		Dictionary trd;
-		trd["tool_name"] = tool;
-		trd["action_id"] = p_params.get("callId", "");
-		trd["type"] = tool;
-		Dictionary display_args = args;
+		trd["tool_name"] = p_tool;
+		trd["action_id"] = p_call_id;
+		trd["type"] = p_tool;
+		Dictionary display_args = p_args;
 		Dictionary result_inner = result.get("result", Dictionary());
 		if (success && result_inner.has("_display_args")) {
 			display_args = result_inner["_display_args"];
@@ -629,12 +687,49 @@ Dictionary CodexHarnessDriver::_execute_dynamic_tool(const Dictionary &p_params)
 			trd["error"] = result.get("error", Dictionary());
 		}
 		// Same token heuristic as the legacy loop: captures count as ~1000.
-		if (tool == "run_and_screenshot" || tool == "capture_2d_viewport" || tool == "capture_3d_viewport") {
+		if (p_tool == "run_and_screenshot" || p_tool == "capture_2d_viewport" || p_tool == "capture_3d_viewport") {
 			trd["tokens"] = 1000;
 		} else {
 			trd["tokens"] = (int64_t)(JSON::stringify(result).length() / 4);
 		}
 		emit_signal("tool_result_ready", trd);
+	}
+
+	Array image_b64s;
+	if (success) {
+		Dictionary result_inner = result.get("result", Dictionary());
+		bool has_images_field = result_inner.has("_images");
+		bool has_screenshot_field = result_inner.has("screenshot_b64");
+		bool has_screenshots_array = result_inner.has("screenshots");
+		if (has_images_field || has_screenshot_field || has_screenshots_array) {
+			Dictionary clean = result.duplicate();
+			Dictionary r = result_inner.duplicate();
+			if (has_images_field) {
+				image_b64s = r["_images"];
+				r.erase("_images");
+			}
+			if (has_screenshot_field) {
+				image_b64s.push_back(r["screenshot_b64"]);
+				r.erase("screenshot_b64");
+				r["screenshot"] = "<see attached image>";
+			}
+			if (has_screenshots_array) {
+				// Multi-shot run_and_screenshot shape.
+				Array shots = r["screenshots"];
+				Array shot_meta;
+				for (int i = 0; i < shots.size(); i++) {
+					Dictionary shot = shots[i];
+					image_b64s.push_back(shot.get("screenshot_b64", String()));
+					Dictionary meta;
+					meta["at_seconds"] = shot.get("at_seconds", 0.0f);
+					meta["screenshot"] = vformat("<see attached image %d>", i + 1);
+					shot_meta.push_back(meta);
+				}
+				r["screenshots"] = shot_meta;
+			}
+			clean["result"] = r;
+			result = clean;
+		}
 	}
 
 	Dictionary text_item;
@@ -643,9 +738,13 @@ Dictionary CodexHarnessDriver::_execute_dynamic_tool(const Dictionary &p_params)
 	Array content_items;
 	content_items.push_back(text_item);
 	for (int i = 0; i < image_b64s.size(); i++) {
+		String b64 = image_b64s[i];
+		if (b64.is_empty()) {
+			continue;
+		}
 		Dictionary img_item;
 		img_item["type"] = "inputImage";
-		img_item["imageUrl"] = "data:image/png;base64," + String(image_b64s[i]);
+		img_item["imageUrl"] = "data:image/png;base64," + b64;
 		content_items.push_back(img_item);
 	}
 	if (!image_b64s.is_empty()) {
@@ -655,6 +754,318 @@ Dictionary CodexHarnessDriver::_execute_dynamic_tool(const Dictionary &p_params)
 	resp["success"] = success;
 	resp["contentItems"] = content_items;
 	return resp;
+}
+
+/* -------------------------------------------------------------------- */
+/*  run_and_screenshot: held-open call (ported from AgenticOrchestrator)  */
+/* -------------------------------------------------------------------- */
+
+void CodexHarnessDriver::_begin_async_rns(int p_request_id, const Dictionary &p_params) {
+	String call_id = p_params.get("callId", "");
+	if (rns_phase != RNS_INACTIVE) {
+		Dictionary err;
+		err["code"] = "operation_failed";
+		err["message"] = "run_and_screenshot is already in progress.";
+		Dictionary exec_result;
+		exec_result["status"] = "error";
+		exec_result["error"] = err;
+		_send_response(p_request_id, _tool_response_from_result("run_and_screenshot", Dictionary(), call_id, exec_result));
+		return;
+	}
+
+	Variant args_v = p_params.get("arguments", Dictionary());
+	Dictionary args;
+	if (args_v.get_type() == Variant::STRING) {
+		Variant parsed = JSON::parse_string(args_v);
+		if (parsed.get_type() == Variant::DICTIONARY) {
+			args = parsed;
+		}
+	} else if (args_v.get_type() == Variant::DICTIONARY) {
+		args = args_v;
+	}
+
+	rns_request_id = p_request_id;
+	rns_call_id = call_id;
+	rns_args = args;
+
+	// Capture-time list: prefer `screenshot_times_seconds`, fall back to
+	// single `wait_seconds`, default one capture at 2.0s (legacy rules).
+	rns_capture_times.clear();
+	if (args.has("screenshot_times_seconds")) {
+		Array raw = args["screenshot_times_seconds"];
+		for (int t = 0; t < raw.size(); t++) {
+			Variant v = raw[t];
+			float seconds = 0.0f;
+			if (v.get_type() == Variant::INT) {
+				seconds = (float)(int64_t)v;
+			} else if (v.get_type() == Variant::FLOAT) {
+				seconds = (float)v;
+			} else {
+				continue;
+			}
+			if (seconds <= 0.0f) {
+				continue;
+			}
+			rns_capture_times.push_back(seconds);
+		}
+		rns_capture_times.sort();
+		for (int t = rns_capture_times.size() - 1; t > 0; t--) {
+			if (Math::is_equal_approx(rns_capture_times[t], rns_capture_times[t - 1])) {
+				rns_capture_times.remove_at(t);
+			}
+		}
+	}
+	if (rns_capture_times.is_empty()) {
+		float legacy = (float)args.get("wait_seconds", 2.0f);
+		if (legacy <= 0.0f) {
+			legacy = 2.0f;
+		}
+		rns_capture_times.push_back(legacy);
+	}
+	rns_next_capture_index = 0;
+	rns_captured = Array();
+	rns_phase = RNS_POLL_START;
+	rns_phase_start_ms = Time::get_singleton()->get_ticks_msec();
+	rns_action_start_ms = rns_phase_start_ms;
+	rns_game_running_ms = 0;
+	rns_run_generation = run_generation;
+
+	Dictionary action;
+	action["action"] = "run_and_screenshot";
+	action["args"] = args;
+	Dictionary run_result = AI::get_singleton()->execute_single_action(action);
+	_smoke(vformat("rns launch status=%s", String(run_result.get("status", "?"))));
+	if (String(run_result.get("status", "")) != "success") {
+		if (run_result.is_empty()) {
+			Dictionary ed;
+			ed["code"] = "internal_error";
+			ed["message"] = "AI singleton not available to launch the game.";
+			run_result["status"] = "error";
+			run_result["error"] = ed;
+		}
+		rns_phase = RNS_INACTIVE;
+		int req = rns_request_id;
+		rns_request_id = -1;
+		_send_response(req, _tool_response_from_result("run_and_screenshot", args, call_id, run_result));
+		return;
+	}
+	emit_signal("progress_update", "Running the game...", turn_counter);
+	_schedule_rns_tick(0.1f);
+}
+
+void CodexHarnessDriver::_schedule_rns_tick(float p_delay) {
+	rns_tick_gen++;
+	SceneTree *tree = Object::cast_to<SceneTree>(OS::get_singleton()->get_main_loop());
+	ERR_FAIL_NULL(tree);
+	Ref<SceneTreeTimer> timer = tree->create_timer(p_delay);
+	timer->connect("timeout", callable_mp(this, &CodexHarnessDriver::_rns_tick_gen_cb).bind(rns_tick_gen), CONNECT_ONE_SHOT);
+}
+
+void CodexHarnessDriver::_rns_tick_gen_cb(uint32_t p_gen) {
+	if (p_gen != rns_tick_gen) {
+		return; // Stale timer from a prior schedule.
+	}
+	_rns_tick();
+}
+
+void CodexHarnessDriver::_rns_tick() {
+	if (rns_phase == RNS_INACTIVE) {
+		return;
+	}
+	AI *ai = AI::get_singleton();
+	uint64_t now_ms = Time::get_singleton()->get_ticks_msec();
+
+	if (rns_phase == RNS_POLL_START) {
+		bool game_running = ai && (bool)ai->call("get_game_is_running");
+		if (game_running) {
+			rns_phase = RNS_WAIT_VISUAL;
+			rns_phase_start_ms = now_ms;
+			rns_game_running_ms = now_ms;
+			_schedule_rns_tick(0.1f);
+		} else if (now_ms - rns_phase_start_ms > 8000) {
+			rns_phase = RNS_INACTIVE;
+			Dictionary err;
+			err["status"] = "error";
+			Dictionary ed;
+			ed["code"] = "operation_failed";
+			ed["message"] = "Game did not start within 8 seconds.";
+			err["error"] = ed;
+			_finish_async_rns(err);
+		} else {
+			_schedule_rns_tick(0.15f);
+		}
+	} else if (rns_phase == RNS_WAIT_VISUAL) {
+		float elapsed = (now_ms - rns_game_running_ms) / 1000.0f;
+		float next_deadline = (rns_next_capture_index < rns_capture_times.size())
+				? rns_capture_times[rns_next_capture_index]
+				: 0.0f;
+		if (elapsed >= next_deadline) {
+			rns_phase = RNS_AWAIT_CAPTURE;
+			rns_phase_start_ms = now_ms;
+			Callable cb = callable_mp(this, &CodexHarnessDriver::_on_rns_capture_received);
+			ai->connect("game_screenshot_ready", cb, CONNECT_ONE_SHOT);
+			ai->trigger_game_screenshot();
+			_schedule_rns_tick(10.0f); // Capture timeout.
+		} else {
+			_schedule_rns_tick(0.1f);
+		}
+	} else if (rns_phase == RNS_AWAIT_CAPTURE) {
+		Callable cb = callable_mp(this, &CodexHarnessDriver::_on_rns_capture_received);
+		if (ai && ai->is_connected("game_screenshot_ready", cb)) {
+			ai->disconnect("game_screenshot_ready", cb);
+		}
+		rns_phase = RNS_INACTIVE;
+		Dictionary err;
+		err["status"] = "error";
+		Dictionary ed;
+		ed["code"] = "operation_failed";
+		ed["message"] = "Screenshot capture timed out (10s).";
+		err["error"] = ed;
+		_finish_async_rns(err);
+	}
+}
+
+void CodexHarnessDriver::_on_rns_capture_received(const String &p_b64) {
+	if (rns_phase == RNS_INACTIVE) {
+		return;
+	}
+	const int idx = rns_next_capture_index;
+	const float at_seconds = (idx < rns_capture_times.size()) ? rns_capture_times[idx] : 0.0f;
+	AI *ai = AI::get_singleton();
+
+	if (p_b64.is_empty()) {
+		rns_phase = RNS_INACTIVE;
+		if (ai) {
+			ai->call("stop_game");
+		}
+		Dictionary exec_result;
+		exec_result["status"] = "error";
+		Dictionary ed;
+		ed["code"] = "operation_failed";
+		ed["message"] = vformat("Screenshot capture %d of %d failed: empty image.", idx + 1, rns_capture_times.size());
+		exec_result["error"] = ed;
+		_finish_async_rns(exec_result);
+		return;
+	}
+
+	Dictionary entry;
+	entry["at_seconds"] = at_seconds;
+	entry["screenshot_b64"] = p_b64;
+	rns_captured.push_back(entry);
+	rns_next_capture_index++;
+
+	if (rns_next_capture_index < rns_capture_times.size()) {
+		rns_phase = RNS_WAIT_VISUAL;
+		rns_phase_start_ms = Time::get_singleton()->get_ticks_msec();
+		_schedule_rns_tick(0.05f);
+		return;
+	}
+
+	rns_phase = RNS_INACTIVE;
+	if (ai) {
+		ai->call("stop_game");
+	}
+	Dictionary exec_result;
+	exec_result["status"] = "success";
+	Dictionary rd;
+	rd["format"] = "png";
+	if (rns_captured.size() == 1) {
+		Dictionary first = rns_captured[0];
+		rd["screenshot_b64"] = first.get("screenshot_b64", String());
+		rd["at_seconds"] = first.get("at_seconds", 0.0f);
+	} else {
+		rd["screenshots"] = rns_captured;
+		rd["screenshot_count"] = rns_captured.size();
+	}
+	exec_result["result"] = rd;
+	_finish_async_rns(exec_result);
+}
+
+void CodexHarnessDriver::_finish_async_rns(const Dictionary &p_exec_result) {
+	if (rns_request_id < 0) {
+		return;
+	}
+	uint64_t elapsed_to_screenshot_ms = Time::get_singleton()->get_ticks_msec() - rns_action_start_ms;
+
+	// Enrich with game errors and output (same as the legacy loop) — they
+	// explain crashes and timeouts to the model.
+	Array game_errors;
+	String game_output;
+	EditorDebuggerNode *edn = EditorDebuggerNode::get_singleton();
+	if (edn) {
+		ScriptEditorDebugger *dbg = edn->get_default_debugger();
+		if (dbg) {
+			game_errors = dbg->get_structured_errors(20, 8);
+		}
+	}
+	EditorLog *editor_log = EditorNode::get_log();
+	if (editor_log) {
+		game_output = editor_log->get_recent_messages_text(200);
+	}
+	if (game_errors.size() > 0) {
+		AI *ai_flag = AI::get_singleton();
+		if (ai_flag) {
+			ai_flag->set_errors_consumed_by_tool(true);
+		}
+	}
+	String requested_scene = rns_args.get("scene_path", String());
+	String main_scene = ProjectSettings::get_singleton()->get_setting("application/run/main_scene", "");
+
+	Dictionary enriched = p_exec_result.duplicate();
+	if (String(enriched.get("status", "error")) == "success") {
+		Dictionary rd = ((Dictionary)enriched.get("result", Dictionary())).duplicate();
+		if (!requested_scene.is_empty()) {
+			rd["scene_path"] = requested_scene;
+		} else if (!main_scene.is_empty()) {
+			rd["main_scene"] = main_scene;
+		}
+		if (game_errors.size() > 0) {
+			rd["game_crashed"] = true;
+			rd["errors"] = game_errors;
+		}
+		if (!game_output.is_empty()) {
+			rd["game_output"] = game_output;
+		}
+		rd["elapsed_to_screenshot_ms"] = (int64_t)elapsed_to_screenshot_ms;
+		enriched["result"] = rd;
+	} else {
+		Dictionary ed = ((Dictionary)enriched.get("error", Dictionary())).duplicate();
+		if (game_errors.size() > 0) {
+			ed["game_errors"] = game_errors;
+		}
+		if (!game_output.is_empty()) {
+			ed["game_output"] = game_output;
+		}
+		ed["elapsed_to_screenshot_ms"] = (int64_t)elapsed_to_screenshot_ms;
+		enriched["error"] = ed;
+	}
+
+	int req = rns_request_id;
+	rns_request_id = -1;
+	rns_phase = RNS_INACTIVE;
+	_send_response(req, _tool_response_from_result("run_and_screenshot", rns_args, rns_call_id, enriched));
+}
+
+void CodexHarnessDriver::_abort_async_rns(const String &p_reason) {
+	if (rns_phase == RNS_INACTIVE && rns_request_id < 0) {
+		return;
+	}
+	AI *ai = AI::get_singleton();
+	Callable cb = callable_mp(this, &CodexHarnessDriver::_on_rns_capture_received);
+	if (ai && ai->is_connected("game_screenshot_ready", cb)) {
+		ai->disconnect("game_screenshot_ready", cb);
+	}
+	if (ai) {
+		ai->call("stop_game");
+	}
+	rns_phase = RNS_INACTIVE;
+	Dictionary exec_result;
+	exec_result["status"] = "cancelled";
+	Dictionary ed;
+	ed["code"] = "cancelled";
+	ed["message"] = p_reason;
+	exec_result["error"] = ed;
+	_finish_async_rns(exec_result);
 }
 
 /* -------------------------------------------------------------------- */

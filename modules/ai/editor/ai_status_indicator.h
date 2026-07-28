@@ -59,27 +59,6 @@
 
 class CodexHarnessDriver;
 
-// Lightweight collapsible entry for agent thinking text between tool calls
-class ThinkingCollapsibleEntry : public VBoxContainer {
-	GDCLASS(ThinkingCollapsibleEntry, VBoxContainer);
-
-private:
-	bool is_collapsed = true;
-	Button *toggle_button = nullptr;
-	RichTextLabel *body_label = nullptr;
-	Ref<Tween> _collapse_tween;
-	void _on_collapse_finished();
-
-	void _on_toggle_pressed();
-
-protected:
-	static void _bind_methods();
-
-public:
-	void set_text(const String &p_text);
-	ThinkingCollapsibleEntry();
-};
-
 // Collapsible entry for tool results in the chat transcript
 class ToolCollapsibleEntry : public VBoxContainer {
 	GDCLASS(ToolCollapsibleEntry, VBoxContainer);
@@ -502,8 +481,23 @@ private:
 	// stream target; it reverts to the dots between message items.
 	String harness_stream_text;
 	bool harness_streaming = false;
+	Control *harness_stream_block = nullptr;
+	RichTextLabel *harness_stream_rich = nullptr;
 	void _on_harness_assistant_delta(const String &p_delta);
 	void _reset_harness_stream();
+
+	// Thinking stream: italic, lighter, one point smaller than body text.
+	// Finalized blocks stay in the transcript as plain styled text.
+	Control *harness_thinking_block = nullptr;
+	RichTextLabel *harness_thinking_label = nullptr;
+	String harness_thinking_text;
+	Control *_create_thinking_block(RichTextLabel **r_label);
+	// Shared assistant-text renderer (live finalization AND chat reload):
+	// borderless rich text with markdown rendering — the single source of
+	// truth for how assistant prose looks.
+	Control *_create_assistant_text_block(const String &p_text, RichTextLabel **r_label = nullptr);
+	void _on_harness_thinking_delta(const String &p_delta);
+	void _finalize_harness_thinking();
 
 	// Agentic orchestrator callbacks
 	void _on_orchestrator_started();

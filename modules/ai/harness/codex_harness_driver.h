@@ -39,6 +39,11 @@ public:
 	bool is_running() const { return turn_active; }
 	bool is_session_ready() const { return session_ready; }
 
+	// Session continuity: when set before start_session(), the driver resumes
+	// the existing codex thread (history intact) instead of starting fresh.
+	void set_resume_thread_id(const String &p_id) { resume_thread_id = p_id; }
+	String get_thread_id() const { return thread_id; }
+
 protected:
 	static void _bind_methods();
 
@@ -68,6 +73,7 @@ private:
 	SessionPhase phase = PHASE_IDLE;
 	bool session_ready = false;
 	String thread_id;
+	String resume_thread_id;
 	String current_turn_id;
 	bool turn_active = false;
 	int turn_counter = 0;
@@ -100,6 +106,38 @@ private:
 	Dictionary _execute_dynamic_tool(const Dictionary &p_params);
 	Array _build_dynamic_tools();
 	String _developer_instructions();
+
+	// --- run_and_screenshot: held-open dynamic tool call. The JSON-RPC
+	// response to codex's item/tool/call is deferred until the game has
+	// launched and every requested capture has arrived (ported from the
+	// orchestrator's timer state machine). ---
+	enum AsyncRnsPhase {
+		RNS_INACTIVE,
+		RNS_POLL_START,
+		RNS_WAIT_VISUAL,
+		RNS_AWAIT_CAPTURE,
+	};
+	AsyncRnsPhase rns_phase = RNS_INACTIVE;
+	int rns_request_id = -1; // codex's item/tool/call id, answered at the end
+	String rns_call_id;
+	Dictionary rns_args;
+	Vector<float> rns_capture_times;
+	int rns_next_capture_index = 0;
+	Array rns_captured;
+	uint64_t rns_phase_start_ms = 0;
+	uint64_t rns_action_start_ms = 0;
+	uint64_t rns_game_running_ms = 0;
+	uint32_t rns_tick_gen = 0;
+	uint64_t rns_run_generation = 0;
+
+	void _begin_async_rns(int p_request_id, const Dictionary &p_params);
+	void _schedule_rns_tick(float p_delay);
+	void _rns_tick_gen_cb(uint32_t p_gen);
+	void _rns_tick();
+	void _on_rns_capture_received(const String &p_b64);
+	void _finish_async_rns(const Dictionary &p_exec_result);
+	void _abort_async_rns(const String &p_reason);
+	Dictionary _tool_response_from_result(const String &p_tool, const Dictionary &p_args, const String &p_call_id, const Dictionary &p_exec_result);
 
 	int _send_request(const String &p_method, const Dictionary &p_params);
 	void _send_notification(const String &p_method, const Dictionary &p_params);

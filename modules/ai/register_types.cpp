@@ -78,7 +78,6 @@ void initialize_ai_module(ModuleInitializationLevel p_level) {
 		GDREGISTER_CLASS(AIChatStore);
 		GDREGISTER_CLASS(AIImageStack);
 		GDREGISTER_CLASS(AIImageViewer);
-		GDREGISTER_CLASS(ThinkingCollapsibleEntry);
 		GDREGISTER_CLASS(ToolCollapsibleEntry);
 GDREGISTER_CLASS(AIStatusIndicator);
 		GDREGISTER_CLASS(AIStatusPanel);

@@ -153,121 +153,6 @@ namespace AIColors {
 }
 
 // ============================================================================
-// ThinkingCollapsibleEntry - Lightweight collapsible for agent reasoning text
-// ============================================================================
-
-void ThinkingCollapsibleEntry::_bind_methods() {
-	ClassDB::bind_method(D_METHOD("_on_toggle_pressed"), &ThinkingCollapsibleEntry::_on_toggle_pressed);
-}
-
-void ThinkingCollapsibleEntry::_on_toggle_pressed() {
-	is_collapsed = !is_collapsed;
-	toggle_button->set_text(is_collapsed ? String::utf8("\xe2\x96\xb8 Thinking") : String::utf8("\xe2\x96\xbe Thinking"));
-
-	if (!body_label) {
-		return;
-	}
-
-	if (_collapse_tween.is_valid() && _collapse_tween->is_valid()) {
-		Ref<Tween> prev = _collapse_tween;
-		prev->kill();
-		_collapse_tween.unref();
-	}
-
-	const float duration = 0.15f;
-
-	if (!is_collapsed) {
-		// Expanding — show first so layout can measure, then animate from 0.
-		body_label->show();
-		body_label->set_custom_minimum_size(Size2(0, 0));
-		const float target_h = body_label->get_combined_minimum_size().y;
-		body_label->set_clip_contents(true);
-		body_label->set_modulate(Color(1, 1, 1, 0));
-	} else {
-		body_label->set_clip_contents(true);
-	}
-
-	_collapse_tween = create_tween();
-	_collapse_tween->set_parallel(true);
-	_collapse_tween->set_trans(Tween::TRANS_CUBIC);
-	_collapse_tween->set_ease(Tween::EASE_OUT);
-	const float a_target = is_collapsed ? 0.0f : 1.0f;
-	float h_target;
-	if (!is_collapsed) {
-		body_label->set_custom_minimum_size(Size2(0, 0));
-		h_target = body_label->get_combined_minimum_size().y;
-	} else {
-		h_target = 0.0f;
-	}
-	_collapse_tween->tween_property(body_label, NodePath("modulate:a"), a_target, duration);
-	_collapse_tween->tween_property(body_label, NodePath("custom_minimum_size:y"), h_target, duration);
-	_collapse_tween->chain()->tween_callback(callable_mp(this, &ThinkingCollapsibleEntry::_on_collapse_finished));
-}
-
-void ThinkingCollapsibleEntry::_on_collapse_finished() {
-	if (body_label) {
-		body_label->set_clip_contents(false);
-		body_label->set_modulate(Color(1, 1, 1, 1));
-		body_label->set_custom_minimum_size(Size2(0, 0));
-		if (is_collapsed) {
-			body_label->hide();
-		}
-	}
-	_collapse_tween.unref();
-}
-
-void ThinkingCollapsibleEntry::set_text(const String &p_text) {
-	body_label->set_text(p_text);
-}
-
-ThinkingCollapsibleEntry::ThinkingCollapsibleEntry() {
-	set_h_size_flags(SIZE_EXPAND_FILL);
-	add_theme_constant_override("separation", AIColors::PADDING_XS * EDSCALE);
-
-	// Outer padding
-	Ref<StyleBoxFlat> outer_style;
-	outer_style.instantiate();
-	outer_style.ptr()->set_content_margin(SIDE_LEFT, AIColors::PADDING_MD * EDSCALE);
-	outer_style.ptr()->set_content_margin(SIDE_TOP, AIColors::PADDING_SM * EDSCALE);
-	outer_style.ptr()->set_content_margin(SIDE_BOTTOM, AIColors::PADDING_SM * EDSCALE);
-	outer_style.ptr()->set_content_margin(SIDE_RIGHT, 0);
-	outer_style.ptr()->set_bg_color(Color(0, 0, 0, 0));
-	add_theme_style_override("panel", outer_style);
-
-	// Toggle button - plain text, no border, muted color
-	toggle_button = memnew(Button);
-	toggle_button->set_text(String::utf8("\xe2\x96\xb8 Thinking"));
-	toggle_button->set_flat(true);
-	toggle_button->set_h_size_flags(SIZE_SHRINK_BEGIN);
-	toggle_button->add_theme_color_override("font_color", AIColors::TEXT_MUTED);
-	toggle_button->add_theme_color_override("font_hover_color", AIColors::TEXT_SECONDARY);
-	toggle_button->add_theme_color_override("font_pressed_color", AIColors::TEXT_SECONDARY);
-	toggle_button->add_theme_font_size_override("font_size", 14 * EDSCALE);
-	toggle_button->connect(SceneStringNames::get_singleton()->pressed, callable_mp(this, &ThinkingCollapsibleEntry::_on_toggle_pressed));
-	add_child(toggle_button);
-
-	// Body label - hidden by default, muted color, selectable via RichTextLabel
-	body_label = memnew(RichTextLabel);
-	body_label->set_visible(false);
-	body_label->set_use_bbcode(false);
-	body_label->set_fit_content(true);
-	body_label->set_scroll_active(false);
-	body_label->set_selection_enabled(true);
-	body_label->set_autowrap_mode(TextServer::AUTOWRAP_WORD_SMART);
-	body_label->add_theme_color_override("default_color", AIColors::TEXT_MUTED);
-	body_label->add_theme_font_size_override("normal_font_size", 13 * EDSCALE);
-	body_label->add_theme_constant_override("line_separation", 4);
-	body_label->add_theme_color_override("selection_color", Color(0.3f, 0.6f, 1.0f, 0.3f));
-	Ref<StyleBoxFlat> body_style;
-	body_style.instantiate();
-	body_style.ptr()->set_content_margin_all(AIColors::PADDING_SM * EDSCALE);
-	body_style.ptr()->set_content_margin(SIDE_LEFT, AIColors::PADDING_MD * EDSCALE);
-	body_style.ptr()->set_bg_color(Color(0, 0, 0, 0));
-	body_label->add_theme_style_override("normal", body_style);
-	add_child(body_label);
-}
-
-// ============================================================================
 // ToolCollapsibleEntry - Collapsible widget for tool results
 // ============================================================================
 
@@ -1426,6 +1311,13 @@ void AIStatusPanel::_rebuild_message_list() {
 								ERROR_BUBBLE_RUNTIME);
 						message_list->add_child(bubble);
 					}
+				} else if (item_type == "thinking") {
+					// Reasoning text persisted by the harness loop — rendered
+					// with the same italic style as the live stream.
+					String thinking_text = item.data.get("text", "");
+					if (!thinking_text.is_empty()) {
+						_append_thinking_ui(thinking_text);
+					}
 				} else if (item_type == "parse_error_state") {
 					Array errors = item.data.get("errors", Array());
 					String file_path = item.data.get("file_path", "");
@@ -1493,18 +1385,16 @@ void AIStatusPanel::_rebuild_message_list() {
 					message_list->add_child(sep);
 				}
 
-				// Render text blocks as assistant bubble (one bubble per assistant item)
+				// Render text blocks with the shared assistant renderer — same
+				// borderless rich text as live runs (no legacy bubbles).
 				Array content = item.data.get("content", Array());
 				for (int j = 0; j < content.size(); j++) {
 					Dictionary block = content[j];
 					if (String(block.get("type", "")) == "text") {
 						String text = block.get("text", "");
 						if (!text.is_empty()) {
-							Control *bubble = _create_message_bubble(item);
-							if (bubble) {
-								message_list->add_child(bubble);
-							}
-							break; // one text bubble per assistant item
+							message_list->add_child(_create_assistant_text_block(text));
+							break; // one text block per assistant item
 						}
 					}
 				}
@@ -3055,6 +2945,19 @@ void AIStatusPanel::_new_chat() {
 	_update_queue_ui();
 	context_exhausted = false;
 
+	// Harness: a new chat must get its own codex thread. Without this reset
+	// the new chat silently shares the previous chat's thread — and both
+	// chats' histories bleed together (observed 7/28).
+	if (harness_driver.is_valid()) {
+		harness_driver->shutdown();
+		harness_driver.unref();
+	}
+	harness_streaming = false;
+	harness_stream_text = String();
+	harness_stream_block = nullptr;
+	harness_stream_rich = nullptr;
+	_finalize_harness_thinking();
+
 	if (chat_store.is_valid()) {
 		String new_id = AIChatStore::generate_chat_id();
 		chat_store->set_file_path(AIChatStore::make_chat_path(new_id));
@@ -3127,6 +3030,18 @@ void AIStatusPanel::_switch_to_chat(const String &p_id) {
 	message_queue.clear();
 	_update_queue_ui();
 	context_exhausted = false;
+
+	// Harness: each chat maps to its own codex thread; drop the driver so the
+	// next run brings up (or resumes) the selected chat's thread.
+	if (harness_driver.is_valid()) {
+		harness_driver->shutdown();
+		harness_driver.unref();
+	}
+	harness_streaming = false;
+	harness_stream_text = String();
+	harness_stream_block = nullptr;
+	harness_stream_rich = nullptr;
+	_finalize_harness_thinking();
 
 	if (chat_store.is_valid()) {
 		chat_store->set_file_path(AIChatStore::make_chat_path(p_id));
@@ -3782,27 +3697,126 @@ Control *AIStatusPanel::_create_parse_error_bubble() {
 			ERROR_BUBBLE_PARSE);
 }
 
+Control *AIStatusPanel::_create_thinking_block(RichTextLabel **r_label) {
+	// Thinking style (decided 7/28): italic, slightly lighter than body text,
+	// one point smaller. Plain text in the transcript flow — no collapsible.
+	// Vertical rhythm comes from message_list's separation, not per-block
+	// margins, so every transcript element spaces identically.
+	MarginContainer *wrapper = memnew(MarginContainer);
+	wrapper->add_theme_constant_override("margin_left", AIColors::PADDING_SM * EDSCALE);
+	wrapper->add_theme_constant_override("margin_right", 0);
+	wrapper->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+
+	RichTextLabel *label = memnew(RichTextLabel);
+	label->set_use_bbcode(false);
+	label->set_fit_content(true);
+	label->set_scroll_active(false);
+	label->set_selection_enabled(true);
+	label->set_autowrap_mode(TextServer::AUTOWRAP_WORD_SMART);
+	label->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	Ref<Font> italic_font = get_theme_font(SNAME("doc_italic"), SNAME("EditorFonts"));
+	if (italic_font.is_valid()) {
+		label->add_theme_font_override("normal_font", italic_font);
+	}
+	label->add_theme_color_override("default_color", AIColors::TEXT_SECONDARY);
+	int base_size = get_theme_font_size(SNAME("font_size"), SNAME("Label"));
+	if (base_size <= 0) {
+		base_size = 13;
+	}
+	label->add_theme_font_size_override("normal_font_size", MAX(8, base_size - 1));
+	wrapper->add_child(label);
+
+	// Copy menu: the RichTextLabel consumes clicks (selection), so listen on
+	// both the label and the wrapper; the menu reads the wrapper's meta.
+	label->connect("gui_input", callable_mp(this, &AIStatusPanel::_on_message_bubble_gui_input).bind(wrapper));
+	wrapper->connect("gui_input", callable_mp(this, &AIStatusPanel::_on_message_bubble_gui_input).bind(wrapper));
+
+	if (r_label) {
+		*r_label = label;
+	}
+	return wrapper;
+}
+
+Control *AIStatusPanel::_create_assistant_text_block(const String &p_text, RichTextLabel **r_label) {
+	MarginContainer *wrapper = memnew(MarginContainer);
+	wrapper->add_theme_constant_override("margin_left", AIColors::PADDING_SM * EDSCALE);
+	wrapper->add_theme_constant_override("margin_right", 0);
+	wrapper->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+
+	RichTextLabel *label = memnew(RichTextLabel);
+	label->set_use_bbcode(true);
+	label->set_fit_content(true);
+	label->set_scroll_active(false);
+	label->set_selection_enabled(true);
+	label->set_autowrap_mode(TextServer::AUTOWRAP_WORD_SMART);
+	label->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	label->add_theme_color_override("default_color", AIColors::TEXT_PRIMARY);
+	label->set_text(_markdown_to_bbcode(p_text));
+	wrapper->add_child(label);
+
+	wrapper->set_meta("_bubble_plain_text", p_text);
+	// The RichTextLabel consumes clicks for selection; listen on both it and
+	// the wrapper so right-click copy works anywhere on the block.
+	label->connect("gui_input", callable_mp(this, &AIStatusPanel::_on_message_bubble_gui_input).bind(wrapper));
+	wrapper->connect("gui_input", callable_mp(this, &AIStatusPanel::_on_message_bubble_gui_input).bind(wrapper));
+	if (r_label) {
+		*r_label = label;
+	}
+	return wrapper;
+}
+
+void AIStatusPanel::_on_harness_thinking_delta(const String &p_delta) {
+	if (!message_list) {
+		return;
+	}
+	if (!harness_thinking_block) {
+		harness_thinking_text = String();
+		harness_thinking_block = _create_thinking_block(&harness_thinking_label);
+		if (pending_message) {
+			int idx = pending_message->get_index();
+			message_list->add_child(harness_thinking_block);
+			message_list->move_child(harness_thinking_block, idx);
+		} else {
+			message_list->add_child(harness_thinking_block);
+		}
+	}
+	harness_thinking_text += p_delta;
+	harness_thinking_label->set_text(harness_thinking_text);
+	harness_thinking_block->set_meta("_bubble_plain_text", harness_thinking_text);
+	_scroll_to_bottom();
+}
+
+void AIStatusPanel::_finalize_harness_thinking() {
+	// Persist the finished thinking phase so it survives chat switches and
+	// editor restarts (rendered on reload by the injection branch).
+	if (!harness_thinking_text.is_empty() && chat_store.is_valid()) {
+		Dictionary thinking_item;
+		thinking_item["type"] = "thinking";
+		thinking_item["text"] = harness_thinking_text;
+		chat_store->append_item(thinking_item);
+	}
+	// The block stays in the transcript as styled text; just detach it from
+	// the streaming lifecycle so the next thinking phase gets a fresh one.
+	harness_thinking_block = nullptr;
+	harness_thinking_label = nullptr;
+	harness_thinking_text = String();
+}
+
 void AIStatusPanel::_append_thinking_ui(const String &p_text) {
+	// Note: thinking content is not persisted in v2.1 — it's ephemeral UI only
 	if (!message_list || p_text.is_empty()) {
 		return;
 	}
-
-	// Note: thinking content is not persisted in v2.1 — it's ephemeral UI only
-	ThinkingCollapsibleEntry *entry = memnew(ThinkingCollapsibleEntry);
-	entry->set_text(p_text);
-
-	// Indent slightly to sit inside the chat flow without being prominent
-	Ref<StyleBoxEmpty> margin_style;
-	margin_style.instantiate();
-	entry->add_theme_style_override("panel", margin_style);
-
-	// Insert before the pending message if present, otherwise append
+	RichTextLabel *label = nullptr;
+	Control *block = _create_thinking_block(&label);
+	label->set_text(p_text);
+	block->set_meta("_bubble_plain_text", p_text);
 	if (pending_message) {
 		int idx = pending_message->get_index();
-		message_list->add_child(entry);
-		message_list->move_child(entry, idx);
+		message_list->add_child(block);
+		message_list->move_child(block, idx);
 	} else {
-		message_list->add_child(entry);
+		message_list->add_child(block);
 	}
 }
 
@@ -3812,6 +3826,11 @@ void AIStatusPanel::_on_orchestrator_narration(const String &p_text) {
 }
 
 void AIStatusPanel::_on_orchestrator_assistant_item(const Dictionary &p_item) {
+	// Any completed item (text or tool call) ends the current thinking phase;
+	// the next reasoning delta starts a fresh block BELOW this item, keeping
+	// the transcript in true chronological order (thinking→tool→thinking→...).
+	_finalize_harness_thinking();
+
 	// Persist the canonical assistant item (text + tool_call blocks)
 	if (chat_store.is_valid()) {
 		chat_store->append_item(p_item);
@@ -3830,41 +3849,32 @@ void AIStatusPanel::_on_orchestrator_assistant_item(const Dictionary &p_item) {
 				_reset_harness_stream();
 				break;
 			}
-			if (use_harness_mode && harness_streaming && pending_label && pending_message) {
-				// Modern agent style: the streamed plaintext IS the final
-				// rendering. Finalize the label in place (authoritative text
-				// from the item), detach it from the pending lifecycle, and
-				// start fresh dots below for the rest of the turn.
-				pending_label->set_text(text);
-				pending_message->set_meta("_bubble_plain_text", text);
-				pending_message->connect("gui_input", callable_mp(this, &AIStatusPanel::_on_message_bubble_gui_input).bind(pending_message));
-				if (thinking_dot_timer) {
-					thinking_dot_timer->stop();
-				}
-				pending_message = nullptr;
-				pending_label = nullptr;
+			if (use_harness_mode && harness_streaming && harness_stream_block && harness_stream_rich) {
+				// The streamed block IS the final rendering: set the
+				// authoritative text, release it to the transcript, and put
+				// the dots back for the rest of the turn.
+				harness_stream_rich->set_text(_markdown_to_bbcode(text));
+				harness_stream_block->set_meta("_bubble_plain_text", text);
+				harness_stream_block = nullptr;
+				harness_stream_rich = nullptr;
 				harness_streaming = false;
 				harness_stream_text = String();
 				_show_pending_message();
 				should_auto_scroll = true;
 				break;
 			}
-			// Legacy loop: render as an assistant bubble.
-			HistoryItem temp_item;
-			temp_item.ts = 0; // no ts — ephemeral render (already persisted above)
-			temp_item.data = p_item;
-			Control *bubble = _create_message_bubble(temp_item);
-			if (bubble) {
-				if (pending_message) {
-					int idx = pending_message->get_index();
-					message_list->add_child(bubble);
-					message_list->move_child(bubble, idx);
-				} else {
-					message_list->add_child(bubble);
-				}
-				should_auto_scroll = true;
+			// No live stream to finalize (legacy loop, or a raced item):
+			// append the shared assistant text block directly.
+			Control *rich = _create_assistant_text_block(text);
+			if (pending_message) {
+				int idx = pending_message->get_index();
+				message_list->add_child(rich);
+				message_list->move_child(rich, idx);
+			} else {
+				message_list->add_child(rich);
 			}
-			break; // one text bubble per assistant item
+			should_auto_scroll = true;
+			break; // one text block per assistant item
 		}
 	}
 
@@ -4105,6 +4115,16 @@ void AIStatusPanel::_on_orchestrator_tool_result(const Dictionary &p_tool_result
 void AIStatusPanel::_on_orchestrator_complete(bool p_success, const String &p_final_message) {
 	print_line(vformat("AIStatusPanel: _on_orchestrator_complete called - success=%s, message_length=%d", p_success ? "true" : "false", p_final_message.length()));
 
+	// Session continuity: remember which codex thread backs this chat so a
+	// restarted editor resumes it (history intact) instead of starting fresh.
+	if (use_harness_mode && harness_driver.is_valid() && chat_store.is_valid()) {
+		String thread_id = harness_driver->get_thread_id();
+		if (!thread_id.is_empty()) {
+			EditorSettings::get_singleton()->set_project_metadata(
+					"ai_harness_threads", chat_store->get_chat_id(), thread_id);
+		}
+	}
+
 	// Remove pending message
 	_remove_pending_message();
 
@@ -4287,6 +4307,9 @@ void AIStatusPanel::_remove_pending_message() {
 	}
 	harness_streaming = false;
 	harness_stream_text = String();
+	harness_stream_block = nullptr; // Block stays in the transcript (partial text kept on cancel).
+	harness_stream_rich = nullptr;
+	_finalize_harness_thinking();
 	pending_label = nullptr;
 	if (pending_message && message_list) {
 		message_list->remove_child(pending_message);
@@ -4681,24 +4704,25 @@ void AIStatusPanel::_cancel_pending_edit() {
 }
 
 void AIStatusPanel::_on_harness_assistant_delta(const String &p_delta) {
-	if (!pending_message) {
-		_show_pending_message();
-	}
-	if (!pending_label) {
+	// Answer text starting means the thinking phase (if any) is over.
+	_finalize_harness_thinking();
+	if (!message_list) {
 		return;
 	}
-	if (!harness_streaming) {
+	if (!harness_stream_block) {
+		// Swap the dots for a live rich-text block: markdown renders
+		// best-effort as it streams (unclosed markers stay literal until
+		// their closing pair arrives).
+		_remove_pending_message();
+		harness_stream_block = _create_assistant_text_block(String(), &harness_stream_rich);
+		message_list->add_child(harness_stream_block);
 		harness_streaming = true;
 		harness_stream_text = String();
-		if (thinking_dot_timer) {
-			thinking_dot_timer->stop();
-		}
-		pending_label->add_theme_color_override("font_color", AIColors::TEXT_PRIMARY);
-		pending_label->set_autowrap_mode(TextServer::AUTOWRAP_WORD_SMART);
-		pending_label->set_h_size_flags(Control::SIZE_EXPAND_FILL);
 	}
 	harness_stream_text += p_delta;
-	pending_label->set_text(harness_stream_text);
+	if (harness_stream_rich) {
+		harness_stream_rich->set_text(_markdown_to_bbcode(harness_stream_text));
+	}
 	_scroll_to_bottom();
 }
 
@@ -4706,15 +4730,14 @@ void AIStatusPanel::_reset_harness_stream() {
 	if (!harness_streaming) {
 		return;
 	}
+	// Abandon the stream block as-is (it holds whatever streamed) and put the
+	// dots back for whatever the turn does next.
 	harness_streaming = false;
 	harness_stream_text = String();
-	if (pending_label) {
-		pending_label->set_text("Thinking");
-		pending_label->add_theme_color_override("font_color", AIColors::TEXT_MUTED);
-		thinking_dot_state = 0;
-		if (thinking_dot_timer) {
-			thinking_dot_timer->start();
-		}
+	harness_stream_block = nullptr;
+	harness_stream_rich = nullptr;
+	if (!pending_message) {
+		_show_pending_message();
 	}
 }
 
@@ -4734,6 +4757,17 @@ void AIStatusPanel::_ensure_harness_driver() {
 	harness_driver->connect("run_complete", callable_mp(this, &AIStatusPanel::_on_orchestrator_complete));
 	harness_driver->connect("checkpoint_recommended", callable_mp(this, &AIStatusPanel::_on_checkpoint_recommended));
 	harness_driver->connect("assistant_delta", callable_mp(this, &AIStatusPanel::_on_harness_assistant_delta));
+	harness_driver->connect("thinking_delta", callable_mp(this, &AIStatusPanel::_on_harness_thinking_delta));
+	harness_driver->connect("thinking_done", callable_mp(this, &AIStatusPanel::_finalize_harness_thinking));
+	harness_driver->connect("todos_updated", callable_mp(this, &AIStatusPanel::_on_todos_updated));
+	// Session continuity: resume this chat's codex thread if we have one.
+	if (chat_store.is_valid()) {
+		String saved_thread = EditorSettings::get_singleton()->get_project_metadata(
+				"ai_harness_threads", chat_store->get_chat_id(), "");
+		if (!saved_thread.is_empty()) {
+			harness_driver->set_resume_thread_id(saved_thread);
+		}
+	}
 	if (!harness_driver->start_session()) {
 		ERR_PRINT("AI Chat Panel: failed to start codex harness session.");
 		harness_driver.unref();
