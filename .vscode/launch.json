@@ -1,0 +1,21 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Build and Launch Godot (F5)",
+            "type": "node-terminal",
+            "request": "launch",
+            "command": ".\\bin\\godot.windows.editor.x86_64.exe --editor",
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "Build Godot (Windows Editor)"
+        },
+        {
+            "name": "Launch Godot Only (F6)",
+            "type": "node-terminal",
+            "request": "launch",
+            "command": ".\\bin\\godot.windows.editor.x86_64.exe --editor",
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}
+

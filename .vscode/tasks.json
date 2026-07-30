@@ -1,0 +1,150 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Build Godot (Windows Editor)",
+            "type": "shell",
+            "command": "python",
+            "args": [
+                "-m",
+                "SCons",
+                "platform=windows",
+                "target=editor",
+                "module_text_server_fb_enabled=yes",
+                "debug_symbols=yes"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared",
+                "showReuseMessage": true,
+                "clear": false
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Build Godot (Debug)",
+            "type": "shell",
+            "command": "python",
+            "args": [
+                "-m",
+                "SCons",
+                "platform=windows",
+                "target=editor",
+                "module_text_server_fb_enabled=yes",
+                "dev_build=yes"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "build",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared",
+                "showReuseMessage": true,
+                "clear": false
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Clean Build",
+            "type": "shell",
+            "command": "python",
+            "args": [
+                "-m",
+                "SCons",
+                "--clean",
+                "platform=windows",
+                "module_text_server_fb_enabled=yes"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "label": "Build and Launch Godot Editor",
+            "type": "shell",
+            "command": "python -m SCons platform=windows target=editor module_text_server_fb_enabled=yes; if ($LASTEXITCODE -eq 0) { .\\bin\\godot.windows.editor.x86_64.exe --editor }",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": {
+                "kind": "test",
+                "isDefault": true
+            },
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared",
+                "showReuseMessage": true,
+                "clear": false
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Build and Launch Godot Editor (Console)",
+            "type": "shell",
+            "command": "python -m SCons platform=windows target=editor module_text_server_fb_enabled=yes; if ($LASTEXITCODE -eq 0) { .\\bin\\godot.windows.editor.x86_64.console.exe --editor }",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "test",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared",
+                "showReuseMessage": true,
+                "clear": false
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Launch Godot Editor (No Build)",
+            "type": "shell",
+            "command": ".\\bin\\godot.windows.editor.x86_64.exe",
+            "args": [
+                "--editor"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "test",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared",
+                "showReuseMessage": true,
+                "clear": false
+            },
+            "problemMatcher": []
+        },
+        {
+            "type": "npm",
+            "script": "docs",
+            "path": "platform/web",
+            "problemMatcher": [],
+            "label": "npm: docs - platform/web",
+            "detail": "jsdoc --template js/jsdoc2rst/ js/engine/engine.js js/engine/config.js js/engine/features.js --destination ''",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        }
+    ]
+}
+

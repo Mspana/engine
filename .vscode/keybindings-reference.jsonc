@@ -1,0 +1,31 @@
+// Workspace keybindings for this repo.
+//
+// VS Code / Cursor cannot load keybindings from a workspace folder, so these
+// must be merged once per machine into the user keybindings file:
+//   Ctrl+Shift+P -> "Preferences: Open Keyboard Shortcuts (JSON)"
+//   (on Windows: %APPDATA%\Cursor\User\keybindings.json)
+//
+// The "when" clause scopes them to this repo: they only activate in a
+// workspace whose settings set "workspaceKeybindings.godotF6" to true, so it
+// is safe to keep them in the global user file. When this folder is opened
+// directly, the committed .vscode/settings.json provides the flag. If the
+// repo is opened as part of a multi-root .code-workspace, folder-level
+// window settings are ignored — add the flag to the workspace file's
+// "settings" block instead.
+//
+// F5 needs no entry here — it is the default Start Debugging key and runs
+// "Build and Launch Godot (F5)" from launch.json.
+[
+    {
+        "key": "f6",
+        "command": "workbench.action.tasks.runTask",
+        "args": "Launch Godot Editor (No Build)",
+        "when": "config.workspaceKeybindings.godotF6"
+    },
+    {
+        "key": "shift+f6",
+        "command": "workbench.action.tasks.terminate",
+        "args": "Launch Godot Editor (No Build)",
+        "when": "config.workspaceKeybindings.godotF6"
+    }
+]
