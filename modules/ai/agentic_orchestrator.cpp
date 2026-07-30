@@ -750,8 +750,11 @@ void AgenticOrchestrator::_process_native_tool_response(const Dictionary &p_api_
 				}
 
 				_emit_progress_update(tool_name == "export_project" ? "Exporting project..." : "Exporting and serving web build...", current_run.model_turns);
-				Ref<SceneTreeTimer> deferred_timer = deferred_tree->create_timer(0.05);
-				deferred_timer->connect("timeout", callable_mp(this, &AgenticOrchestrator::_run_deferred_sync_tool).bind(_run_gen), CONNECT_ONE_SHOT);
+				// process_frame, NOT a SceneTreeTimer: EditorProgress pumps
+				// Main::iteration, and re-entering process_timers from inside
+				// a timer callback corrupts the timer list (crash observed
+				// 7/30 on the harness's identical pattern).
+				deferred_tree->connect("process_frame", callable_mp(this, &AgenticOrchestrator::_run_deferred_sync_tool).bind(_run_gen), CONNECT_ONE_SHOT);
 				return;
 			}
 			// No SceneTree (shouldn't happen in-editor) — fall through to

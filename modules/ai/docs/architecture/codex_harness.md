@@ -150,9 +150,13 @@ pending→resolved tool cards like editor tools, so nothing executes invisibly.
 
 ## State / what's next
 
-Working end-to-end in the panel: streaming markdown, inline thinking (persisted),
-codex-native todos, tool cards, vision (incl. run_and_screenshot multi-shot), instant
-cancel, mid-turn steer, per-chat session continuity. Remaining roadmap (plan doc §3.5):
-hidden-context injection (`[SCENE CHANGES]`/`[GAME SESSION]`/`[SCENE UPDATE]`), approvals
-+ Shift+Tab policy UI, export-tool async port, streaming smoothing (backlog), then the
-legacy-loop removal once harness is default.
+**Functionally complete** (7/30). Working end-to-end in the panel: streaming markdown,
+inline thinking (persisted), codex-native todos, tool cards, vision (incl.
+run_and_screenshot multi-shot), instant cancel, mid-turn steer, per-chat session
+continuity, hidden-context injection, the full approval policy (Shift+Tab), and the
+export tools (install_export_templates via the shared AITemplateInstaller held-open
+flow; export_project/serve_web_build via deferred process_frame dispatch — NEVER a
+SceneTreeTimer: EditorProgress pumps Main::iteration and nested process_timers corrupts
+the timer list; crash observed and fixed 7/30 in both loops). Remaining: backlog polish
+(streaming smoothing, transcript UI items), then flipping the default and removing the
+legacy loop.

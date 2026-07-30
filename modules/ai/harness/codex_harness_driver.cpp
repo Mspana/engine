@@ -4,9 +4,11 @@
 
 #include "codex_harness_driver.h"
 
+#include "../actions/export_actions.h"
 #include "../ai.h"
 #include "../ai_provider.h"
 #include "../scene_diff.h"
+#include "../template_installer.h"
 #include "responses_translator.h"
 
 #include "core/config/project_settings.h"
@@ -159,10 +161,16 @@ void CodexHarnessDriver::shutdown() {
 
 void CodexHarnessDriver::_handle_child_exit() {
 	child_alive.clear();
-	// A held-open tool call can't be answered anymore; drop the state.
+	// Held-open tool calls can't be answered anymore; drop the state.
 	rns_phase = RNS_INACTIVE;
 	rns_request_id = -1;
 	pending_approvals.clear();
+	if (tpl_installer.is_valid()) {
+		tpl_installer->cancel();
+	}
+	tpl_request_id = -1;
+	deferred_export_request_id = -1;
+	deferred_export_params = Dictionary();
 	if (turn_active) {
 		turn_active = false;
 		emit_signal("run_complete", false, "The agent process exited unexpectedly.");
@@ -547,6 +555,25 @@ void CodexHarnessDriver::cancel_run() {
 		// waiting on a tool that will never respond.
 		_abort_async_rns("user_cancelled_run");
 	}
+	if (tpl_installer.is_valid() && tpl_installer->is_active()) {
+		tpl_installer->cancel();
+		if (tpl_request_id >= 0) {
+			int req = tpl_request_id;
+			tpl_request_id = -1;
+			_refuse_tool_call(req, "install_export_templates", tpl_call_id,
+					"The run was cancelled during the template install.", "cancelled");
+			tpl_call_id = String();
+			tpl_args = Dictionary();
+		}
+	}
+	if (deferred_export_request_id >= 0) {
+		int req = deferred_export_request_id;
+		String tool = Dictionary(deferred_export_params).get("tool", "");
+		String call_id = Dictionary(deferred_export_params).get("callId", "");
+		deferred_export_request_id = -1;
+		deferred_export_params = Dictionary();
+		_refuse_tool_call(req, tool, call_id, "The run was cancelled before the export started.", "cancelled");
+	}
 	if (!turn_active || current_turn_id.is_empty()) {
 		return;
 	}
@@ -766,23 +793,7 @@ void CodexHarnessDriver::_handle_server_request(int p_id, const String &p_method
 			}
 		}
 
-		if (tool == "run_and_screenshot") {
-			// Held-open call: the response is sent when captures complete.
-			_begin_async_rns(p_id, p_params);
-			return;
-		}
-		if (tool == "install_export_templates" || tool == "export_project" || tool == "serve_web_build") {
-			// Async export machinery not yet ported to harness mode.
-			Dictionary err;
-			err["code"] = "not_supported_in_harness";
-			err["message"] = vformat("'%s' is not available in Codex Harness mode yet. Ask the user to switch to a legacy model for export operations.", tool);
-			Dictionary exec_result;
-			exec_result["status"] = "error";
-			exec_result["error"] = err;
-			_send_response(p_id, _tool_response_from_result(tool, Dictionary(), p_params.get("callId", ""), exec_result));
-			return;
-		}
-		_send_response(p_id, _execute_dynamic_tool(p_params));
+		_dispatch_tool_call(p_id, p_params);
 		return;
 	}
 	if (p_method == "item/commandExecution/requestApproval") {
@@ -889,12 +900,9 @@ void CodexHarnessDriver::respond_approval(int p_request_id, const String &p_deci
 		if (p_decision == "acceptForSession") {
 			session_allowed_tools.insert(tool);
 		}
-		// Approved: execute now and answer the held request with the result.
-		if (tool == "run_and_screenshot") {
-			_begin_async_rns(p_request_id, params);
-		} else {
-			_send_response(p_request_id, _execute_dynamic_tool(params));
-		}
+		// Approved: dispatch now; the held request is answered by whichever
+		// flow the tool takes.
+		_dispatch_tool_call(p_request_id, params);
 		return;
 	}
 
@@ -1099,6 +1107,114 @@ Dictionary CodexHarnessDriver::_tool_response_from_result(const String &p_tool, 
 	resp["success"] = success;
 	resp["contentItems"] = content_items;
 	return resp;
+}
+
+/* -------------------------------------------------------------------- */
+/*  Post-policy tool dispatch                                            */
+/* -------------------------------------------------------------------- */
+
+void CodexHarnessDriver::_dispatch_tool_call(int p_request_id, const Dictionary &p_params) {
+	String tool = p_params.get("tool", "");
+	String call_id = p_params.get("callId", "");
+
+	if (tool == "run_and_screenshot") {
+		// Held-open: answered when the game has run and captures arrived.
+		_begin_async_rns(p_request_id, p_params);
+		return;
+	}
+
+	if (tool == "install_export_templates") {
+		Variant args_v = p_params.get("arguments", Dictionary());
+		Dictionary args;
+		if (args_v.get_type() == Variant::STRING) {
+			Variant parsed = JSON::parse_string(args_v);
+			if (parsed.get_type() == Variant::DICTIONARY) {
+				args = parsed;
+			}
+		} else if (args_v.get_type() == Variant::DICTIONARY) {
+			args = args_v;
+		}
+		bool needs_install = !AIExportActions::templates_installed() || (bool)args.get("force", false);
+		if (needs_install) {
+			if (tpl_installer.is_valid() && tpl_installer->is_active()) {
+				_refuse_tool_call(p_request_id, tool, call_id,
+						"A template install is already in progress.", "error");
+				return;
+			}
+			// Held-open: answered from _on_tpl_done.
+			tpl_request_id = p_request_id;
+			tpl_call_id = call_id;
+			tpl_args = args;
+			if (tpl_installer.is_null()) {
+				tpl_installer.instantiate();
+			}
+			tpl_installer->start(
+					callable_mp(this, &CodexHarnessDriver::_on_tpl_progress),
+					callable_mp(this, &CodexHarnessDriver::_on_tpl_done));
+			return;
+		}
+		// Already installed and no force: the synchronous exec reports that.
+	}
+
+	if (tool == "export_project" || tool == "serve_web_build") {
+		// These use EditorProgress, which refuses to start while the message
+		// queue is flushing — and this dispatch runs from call_deferred.
+		// Re-enter from a SceneTreeTimer callback, outside the flush.
+		SceneTree *tree = Object::cast_to<SceneTree>(OS::get_singleton()->get_main_loop());
+		if (tree) {
+			if (deferred_export_request_id >= 0) {
+				_refuse_tool_call(p_request_id, tool, call_id,
+						"Another export operation is already pending.", "error");
+				return;
+			}
+			deferred_export_request_id = p_request_id;
+			deferred_export_params = p_params;
+			emit_signal("progress_update",
+					tool == "export_project" ? "Exporting project..." : "Exporting and serving web build...",
+					turn_counter);
+			// process_frame, NOT a SceneTreeTimer: EditorProgress pumps
+			// Main::iteration, and re-entering process_timers from inside a
+			// timer callback corrupts the timer list (crash observed 7/30).
+			// process_frame fires outside both the message-queue flush and
+			// the timer-list iteration.
+			tree->connect("process_frame", callable_mp(this, &CodexHarnessDriver::_run_deferred_export).bind(run_generation), CONNECT_ONE_SHOT);
+			return;
+		}
+		// No SceneTree (shouldn't happen in-editor): fall through, noisily.
+	}
+
+	_send_response(p_request_id, _execute_dynamic_tool(p_params));
+}
+
+void CodexHarnessDriver::_run_deferred_export(uint64_t p_generation) {
+	if (deferred_export_request_id < 0) {
+		return;
+	}
+	int req = deferred_export_request_id;
+	Dictionary params = deferred_export_params;
+	deferred_export_request_id = -1;
+	deferred_export_params = Dictionary();
+	if (p_generation != run_generation || !child_alive.is_set()) {
+		// Run was cancelled (the cancel path already refused the call) or the
+		// child died; nothing to answer.
+		return;
+	}
+	_send_response(req, _execute_dynamic_tool(params));
+}
+
+void CodexHarnessDriver::_on_tpl_progress(const String &p_status) {
+	emit_signal("progress_update", p_status, turn_counter);
+}
+
+void CodexHarnessDriver::_on_tpl_done(const Dictionary &p_exec_result) {
+	if (tpl_request_id < 0) {
+		return;
+	}
+	int req = tpl_request_id;
+	tpl_request_id = -1;
+	_send_response(req, _tool_response_from_result("install_export_templates", tpl_args, tpl_call_id, p_exec_result));
+	tpl_call_id = String();
+	tpl_args = Dictionary();
 }
 
 /* -------------------------------------------------------------------- */

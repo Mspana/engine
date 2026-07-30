@@ -117,6 +117,25 @@ private:
 	static bool _is_protected_path(const String &p_path);
 	static bool _is_read_only_tool(const String &p_tool);
 
+	// Post-policy tool dispatch: routes to the held-open flows
+	// (run_and_screenshot, install_export_templates), the deferred-sync path
+	// (export_project/serve_web_build must run outside the message-queue
+	// flush), or plain execution.
+	void _dispatch_tool_call(int p_request_id, const Dictionary &p_params);
+
+	// install_export_templates held-open state (shared AITemplateInstaller).
+	Ref<class AITemplateInstaller> tpl_installer;
+	int tpl_request_id = -1;
+	String tpl_call_id;
+	Dictionary tpl_args;
+	void _on_tpl_progress(const String &p_status);
+	void _on_tpl_done(const Dictionary &p_exec_result);
+
+	// Deferred-sync export state.
+	int deferred_export_request_id = -1;
+	Dictionary deferred_export_params;
+	void _run_deferred_export(uint64_t p_generation);
+
 	static void _reader_thread_func(void *p_userdata);
 	static void _stderr_thread_func(void *p_userdata);
 	void _reader_loop();
