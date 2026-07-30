@@ -1,5 +1,8 @@
 // Workspace keybindings for this repo.
 //
+// Quick setup: point an agent at .vscode/AGENT_SETUP.md and it will apply
+// these (plus the workspace flag) for you.
+//
 // VS Code / Cursor cannot load keybindings from a workspace folder, so these
 // must be merged once per machine into the user keybindings file:
 //   Ctrl+Shift+P -> "Preferences: Open Keyboard Shortcuts (JSON)"
