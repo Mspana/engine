@@ -9,9 +9,11 @@ and [in_engine_vs_external_agents](../design/in_engine_vs_external_agents.md).*
 The harness replaces the custom agentic loop (`AgenticOrchestrator` + `AIProvider`) with
 a vendored **codex app-server** child process. The editor keeps everything editor-semantic
 (tools, chat UI, checkpoints, scene diffs); codex owns the model loop (context, retries,
-compaction, caching). Toggled per-chat via the model dropdown entry "Kimi K2.6 (Codex
-Harness)"; the legacy loop still runs for every other dropdown entry until the harness
-becomes default.
+compaction, caching). Toggled per-chat via the model dropdown's "(Codex Harness)" entries
+— Kimi K2.6 and Kimi K3, both routed through the native translator (dropdown metadata
+"codex-harness" or "codex-harness:<model>"; switching harness models resets the driver
+and thread/resume re-applies the new model, so chat continuity survives). The legacy loop
+still runs for every other dropdown entry until the harness becomes default.
 
 | Component | File | Role |
 |---|---|---|

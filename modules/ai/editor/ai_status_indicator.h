@@ -475,6 +475,7 @@ private:
 	// below.
 	Ref<CodexHarnessDriver> harness_driver;
 	bool use_harness_mode = false;
+	String harness_model = "kimi-k2.6"; // Which model the harness entry runs (dropdown metadata "codex-harness[:model]").
 	void _ensure_harness_driver();
 
 	// Streaming state: the pending "Thinking..." label doubles as the live

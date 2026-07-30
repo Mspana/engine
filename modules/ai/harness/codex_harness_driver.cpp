@@ -36,6 +36,7 @@ void CodexHarnessDriver::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_session_ready"), &CodexHarnessDriver::is_session_ready);
 	ClassDB::bind_method(D_METHOD("set_resume_thread_id", "thread_id"), &CodexHarnessDriver::set_resume_thread_id);
 	ClassDB::bind_method(D_METHOD("get_thread_id"), &CodexHarnessDriver::get_thread_id);
+	ClassDB::bind_method(D_METHOD("set_model", "model"), &CodexHarnessDriver::set_model);
 	ClassDB::bind_method(D_METHOD("set_policy_mode", "mode"), &CodexHarnessDriver::set_policy_mode);
 	ClassDB::bind_method(D_METHOD("get_policy_mode"), &CodexHarnessDriver::get_policy_mode);
 	ClassDB::bind_method(D_METHOD("respond_approval", "request_id", "decision"), &CodexHarnessDriver::respond_approval);
@@ -359,6 +360,9 @@ void CodexHarnessDriver::_start_thread_request() {
 	params["developerInstructions"] = _developer_instructions();
 	params["dynamicTools"] = _build_dynamic_tools();
 	String model = OS::get_singleton()->get_environment("ARISTOTLE_HARNESS_MODEL");
+	if (model.is_empty()) {
+		model = model_override;
+	}
 	params["model"] = model.is_empty() ? String("kimi-k2.6") : model;
 	String provider = OS::get_singleton()->get_environment("ARISTOTLE_HARNESS_PROVIDER");
 	params["modelProvider"] = provider.is_empty() ? String("aristotle") : provider;

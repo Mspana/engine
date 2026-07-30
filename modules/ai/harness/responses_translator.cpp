@@ -543,6 +543,11 @@ Dictionary AIResponsesTranslator::_translate_request(const Dictionary &p_req, St
 	if (p_req.has("temperature")) {
 		chat["temperature"] = p_req["temperature"];
 	}
+	// Kimi K3 rejects any temperature other than 1 with HTTP 400. Codex doesn't
+	// send temperature today; clamp defensively in case a future config does.
+	if (String(chat["model"]).begins_with("kimi-k3") && chat.has("temperature")) {
+		chat["temperature"] = 1;
+	}
 	if (p_req.has("top_p")) {
 		chat["top_p"] = p_req["top_p"];
 	}

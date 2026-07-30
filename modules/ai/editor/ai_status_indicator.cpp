@@ -2374,7 +2374,7 @@ void AIStatusPanel::_start_run(const String &p_message) {
 	// Persist which model is handling this turn
 	if (chat_store.is_valid()) {
 		if (use_harness_mode) {
-			chat_store->append_item(AIChatStore::make_model_info_item("kimi-k2.6", "codex-harness"));
+			chat_store->append_item(AIChatStore::make_model_info_item(harness_model, "codex-harness"));
 		} else {
 			AI *ai_pre = AI::get_singleton();
 			if (ai_pre) {
@@ -4941,6 +4941,7 @@ void AIStatusPanel::_ensure_harness_driver() {
 	harness_driver->connect("scene_diff_ready", callable_mp(this, &AIStatusPanel::_on_scene_diff_ready));
 	harness_driver->connect("approval_requested", callable_mp(this, &AIStatusPanel::_on_harness_approval_requested));
 	harness_driver->set_policy_mode(harness_policy_mode);
+	harness_driver->set_model(harness_model);
 	harness_driver->connect("todos_updated", callable_mp(this, &AIStatusPanel::_on_todos_updated));
 	// Session continuity: resume this chat's codex thread if we have one.
 	if (chat_store.is_valid()) {
@@ -4967,10 +4968,29 @@ void AIStatusPanel::_on_provider_changed(int p_index) {
 		return;
 	}
 
-	if (model_id == "codex-harness") {
+	if (model_id == "codex-harness" || model_id.begins_with("codex-harness:")) {
+		String new_model = model_id.get_slice(":", 1);
+		if (new_model.is_empty()) {
+			new_model = "kimi-k2.6"; // Bare "codex-harness" predates multi-model.
+		}
+		// A live driver keeps the model it started with, so a model change
+		// needs a fresh driver. Chat continuity survives: the codex thread id
+		// persists in ai_harness_threads and thread/resume re-applies the new
+		// model override. (The driver can outlive harness mode — leaving it
+		// doesn't shut it down — hence no use_harness_mode check here.)
+		if (harness_driver.is_valid() && new_model != harness_model) {
+			harness_driver->shutdown();
+			harness_driver.unref();
+			harness_streaming = false;
+			harness_stream_text = String();
+			harness_stream_block = nullptr;
+			harness_stream_rich = nullptr;
+			_finalize_harness_thinking();
+		}
 		use_harness_mode = true;
+		harness_model = new_model;
 		EditorSettings::get_singleton()->set_project_metadata("ai", "selected_model", model_id);
-		print_line("AI: Switched to Codex Harness loop (Kimi K2.6)");
+		print_line("AI: Switched to Codex Harness loop (" + harness_model + ")");
 		return;
 	}
 	use_harness_mode = false;
@@ -5539,12 +5559,20 @@ AIStatusPanel::AIStatusPanel() {
 		}
 	}
 	// Experimental codex-harness loop (Phase 2 of the harness replacement).
+	// Metadata is "codex-harness" (bare = K2.6, kept for saved-setting compat)
+	// or "codex-harness:<model>" for other translator-routed models.
 	{
 		int harness_idx = models.size();
 		provider_dropdown->add_item("Kimi K2.6 (Codex Harness)", harness_idx);
 		provider_dropdown->set_item_metadata(harness_idx, "codex-harness");
 		if (saved_model == "codex-harness") {
 			default_idx = harness_idx;
+		}
+		int harness_k3_idx = harness_idx + 1;
+		provider_dropdown->add_item("Kimi K3 (Codex Harness)", harness_k3_idx);
+		provider_dropdown->set_item_metadata(harness_k3_idx, "codex-harness:kimi-k3");
+		if (saved_model == "codex-harness:kimi-k3") {
+			default_idx = harness_k3_idx;
 		}
 	}
 	provider_dropdown->select(default_idx);

@@ -46,6 +46,11 @@ public:
 	void set_resume_thread_id(const String &p_id) { resume_thread_id = p_id; }
 	String get_thread_id() const { return thread_id; }
 
+	// Model for this session (e.g. "kimi-k3"), chosen in the panel dropdown.
+	// Applied at thread/start AND thread/resume; empty falls back to the
+	// driver default. ARISTOTLE_HARNESS_MODEL still overrides for debugging.
+	void set_model(const String &p_model) { model_override = p_model; }
+
 	// Approval policy (Shift+Tab cycled in the panel). Codex always runs with
 	// approvalPolicy "untrusted"; the DRIVER is the policy engine and decides
 	// per mode. Protected editor files are declined in every mode.
@@ -89,6 +94,7 @@ private:
 	bool session_ready = false;
 	String thread_id;
 	String resume_thread_id;
+	String model_override;
 	String current_turn_id;
 	bool turn_active = false;
 	int turn_counter = 0;
