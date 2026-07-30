@@ -8,6 +8,15 @@ Thoughts should be one line, with ... -  let the user click it to expand.
 Have user prompts be a fixed maximum of 3 lines, and let the user click it to expand.
 Move edit symbols to the left of the user bubble.
 
+~~Tool calls are failing when they actually succeed. The AI set a square to blue, it became blue, but because the tool call failed the AI tried a few other things without realizing it didn't need to.~~
+FIXED 7/30: false negative in set_property — hex/named color strings ("#0000ff",
+"blue") were coerced by the engine's set() and APPLIED, but the raw string failed the
+target-vs-actual verification, so the model retried changes that had already worked.
+ai_coerce_value now parses color strings for Color-typed properties (validated
+Color::from_string, plus the "Color(r, g, b, a)" constructor syntax the model also
+emits, which the engine itself does NOT coerce — that case previously failed for
+real). Pattern to watch: other Variant types with engine-side string coercion could
+hit the same mismatch; extend ai_coerce_value if observed.
 
 Mid-run steering (turn/steer) does not carry fresh [SCENE CHANGES]: if the user edits a
 scene then steers the in-flight turn, the model won't see the edit's diff until the next

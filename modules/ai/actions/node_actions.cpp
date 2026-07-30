@@ -148,6 +148,44 @@ static Variant ai_coerce_value(Object *obj, const String &prop, const Variant &v
 				}
 			}
 		}
+
+		// String value on a Color-typed property. The engine's set() coerces
+		// hex/named strings itself (so the value APPLIED), but the raw string
+		// then failed the post-set verification and the model retried changes
+		// that had already worked. Coerce here so target and actual compare
+		// same-type, and also accept the "Color(r, g, b[, a])" constructor
+		// syntax models emit (which the engine does NOT coerce).
+		{
+			bool prop_valid = false;
+			Variant current = obj->get(prop, &prop_valid);
+			if (prop_valid && current.get_type() == Variant::COLOR) {
+				String s = path.strip_edges();
+				if (s.begins_with("Color(") && s.ends_with(")")) {
+					PackedStringArray parts = s.trim_prefix("Color(").trim_suffix(")").split(",");
+					if (parts.size() == 3 || parts.size() == 4) {
+						bool numeric = true;
+						for (const String &part : parts) {
+							if (!part.strip_edges().is_valid_float()) {
+								numeric = false;
+								break;
+							}
+						}
+						if (numeric) {
+							return Color(parts[0].to_float(), parts[1].to_float(), parts[2].to_float(),
+									parts.size() == 4 ? parts[3].to_float() : 1.0f);
+						}
+					}
+				}
+				// Hex ("#rrggbb[aa]") and named ("blue") colors. Validated via
+				// double sentinel: invalid strings return the default, so two
+				// different defaults only agree when the parse was real.
+				Color parsed_a = Color::from_string(s, Color(0, 0, 0, 0));
+				Color parsed_b = Color::from_string(s, Color(1, 1, 1, 1));
+				if (parsed_a == parsed_b) {
+					return parsed_a;
+				}
+			}
+		}
 		return val;
 	}
 
