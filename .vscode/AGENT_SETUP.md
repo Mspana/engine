@@ -54,6 +54,47 @@ window settings are ignored, so add the flag to the workspace file's
    (`python -m SCons`) and the MSVC toolchain on PATH.
 3. If a just-added keybinding does not fire, run "Developer: Reload Window".
 
+## Step 4 — Provider credentials (secrets — never committed)
+
+AI provider connectivity does NOT travel with the repo. No system env vars
+are involved; everything is file-based:
+
+- **`modules/ai/.env`** (gitignored) holds the provider API keys as
+  `KEY=VALUE` lines. Copy it from the old machine via a secure channel, or
+  recreate it with whichever of these the engine reads (set only the ones
+  in use): `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`,
+  `XAI_API_KEY`, `MOONSHOT_API_KEY`, `DEEPINFRA_API_KEY`,
+  `PARASAIL_API_KEY`, `CLARIFAI_API_KEY`.
+  Lookup order (`AIProvider::load_api_key_from_env`): system env var, then
+  `.env` in `bin/`, engine root, or `modules/ai/`.
+- **Codex harness auth**: `modules/ai/harness_spike/codex_home/` is
+  gitignored except `config.toml`. Copy `auth.json` from the old machine to
+  restore the codex login — or copy the entire folder to also keep the
+  harness agent's sessions/memories/goals state (the `*.sqlite` files).
+
+An agent running this setup should create `modules/ai/.env` with the key
+names above and empty values, then ask the user to fill them in — never ask
+for the secrets in chat.
+
+## Step 5 — Codex harness binary (not in git)
+
+The codex harness (`CodexHarnessDriver::start_session`) spawns a pinned
+codex CLI from `modules/ai/harness_spike/bin/codex-x86_64-pc-windows-msvc.exe`
+unless `ARISTOTLE_CODEX_EXE` points elsewhere. That whole `bin/` directory
+is gitignored — the main exe is ~340 MB, over GitHub's file-size limit — so
+on a new machine, restore it one of these ways:
+
+1. Copy `modules/ai/harness_spike/bin/` from the old machine (bring the
+   helper exes too: `codex-command-runner.exe`,
+   `codex-windows-sandbox-setup.exe`).
+2. Download codex-cli **0.145.0** for `x86_64-pc-windows-msvc` from the
+   openai/codex GitHub releases and extract it there.
+3. Install codex anywhere else (e.g. `npm i -g @openai/codex@0.145.0`) and
+   set `ARISTOTLE_CODEX_EXE` to the binary's full path.
+
+Keep the version pinned at **0.145.0** unless the harness's app-server
+protocol handling has been revalidated against a newer codex.
+
 ## Gotchas
 
 - Upstream Godot's `.gitignore` ignores `.vscode/`. The shipped files are
