@@ -18,6 +18,8 @@
 #include "core/object/ref_counted.h"
 #include "core/os/os.h"
 #include "core/os/thread.h"
+#include "core/templates/hash_map.h"
+#include "core/templates/hash_set.h"
 #include "core/templates/safe_refcount.h"
 
 class CodexHarnessDriver : public RefCounted {
@@ -43,6 +45,19 @@ public:
 	// the existing codex thread (history intact) instead of starting fresh.
 	void set_resume_thread_id(const String &p_id) { resume_thread_id = p_id; }
 	String get_thread_id() const { return thread_id; }
+
+	// Approval policy (Shift+Tab cycled in the panel). Codex always runs with
+	// approvalPolicy "untrusted"; the DRIVER is the policy engine and decides
+	// per mode. Protected editor files are declined in every mode.
+	enum PolicyMode {
+		POLICY_ASK = 0, // surface an approval card, user decides
+		POLICY_AUTO = 1, // auto-accept commands/patches (protected files still declined)
+		POLICY_READ_ONLY = 2, // read-only sandbox; all writes declined
+	};
+	void set_policy_mode(int p_mode) { policy_mode = (PolicyMode)CLAMP(p_mode, 0, 2); }
+	int get_policy_mode() const { return policy_mode; }
+	// Answers a pending approval ("accept" / "acceptForSession" / "decline").
+	void respond_approval(int p_request_id, const String &p_decision);
 
 protected:
 	static void _bind_methods();
@@ -87,6 +102,20 @@ private:
 	// Request-id bookkeeping for the bring-up state machine and turn starts.
 	int pending_phase_request = -1;
 	int pending_turn_request = -1;
+
+	// Approval routing. pending_approvals values:
+	//   {type:"native"} — codex shell/patch request; answer with {decision}.
+	//   {type:"editor_tool", params} — a gated dynamic tool call held BEFORE
+	//   execution; on accept it executes and the tool response is sent.
+	PolicyMode policy_mode = POLICY_ASK;
+	HashMap<int, Dictionary> pending_approvals;
+	HashSet<String> session_allowed_tools; // "Allow for session" cache (editor tools)
+	HashMap<String, Dictionary> file_change_items; // recent fileChange items by id (approval display + guard)
+	void _route_approval(int p_request_id, const Dictionary &p_info);
+	void _decline_pending_approvals();
+	void _refuse_tool_call(int p_request_id, const String &p_tool, const String &p_call_id, const String &p_message, const String &p_status);
+	static bool _is_protected_path(const String &p_path);
+	static bool _is_read_only_tool(const String &p_tool);
 
 	static void _reader_thread_func(void *p_userdata);
 	static void _stderr_thread_func(void *p_userdata);

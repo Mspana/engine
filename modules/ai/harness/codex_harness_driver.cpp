@@ -34,6 +34,9 @@ void CodexHarnessDriver::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_session_ready"), &CodexHarnessDriver::is_session_ready);
 	ClassDB::bind_method(D_METHOD("set_resume_thread_id", "thread_id"), &CodexHarnessDriver::set_resume_thread_id);
 	ClassDB::bind_method(D_METHOD("get_thread_id"), &CodexHarnessDriver::get_thread_id);
+	ClassDB::bind_method(D_METHOD("set_policy_mode", "mode"), &CodexHarnessDriver::set_policy_mode);
+	ClassDB::bind_method(D_METHOD("get_policy_mode"), &CodexHarnessDriver::get_policy_mode);
+	ClassDB::bind_method(D_METHOD("respond_approval", "request_id", "decision"), &CodexHarnessDriver::respond_approval);
 	ClassDB::bind_method(D_METHOD("_handle_frame", "frame"), &CodexHarnessDriver::_handle_frame);
 	ClassDB::bind_method(D_METHOD("_handle_child_exit"), &CodexHarnessDriver::_handle_child_exit);
 
@@ -52,6 +55,7 @@ void CodexHarnessDriver::_bind_methods() {
 	ADD_SIGNAL(MethodInfo("assistant_delta", PropertyInfo(Variant::STRING, "delta")));
 	ADD_SIGNAL(MethodInfo("thinking_delta", PropertyInfo(Variant::STRING, "delta")));
 	ADD_SIGNAL(MethodInfo("thinking_done"));
+	ADD_SIGNAL(MethodInfo("approval_requested", PropertyInfo(Variant::DICTIONARY, "info")));
 }
 
 void CodexHarnessDriver::_smoke(const String &p_line) {
@@ -158,6 +162,7 @@ void CodexHarnessDriver::_handle_child_exit() {
 	// A held-open tool call can't be answered anymore; drop the state.
 	rns_phase = RNS_INACTIVE;
 	rns_request_id = -1;
+	pending_approvals.clear();
 	if (turn_active) {
 		turn_active = false;
 		emit_signal("run_complete", false, "The agent process exited unexpectedly.");
@@ -375,7 +380,11 @@ String CodexHarnessDriver::_developer_instructions() {
 			"[PARSE ERRORS], [SCENE CHANGES], [SCENE UPDATE]) are ambient editor state "
 			"injected by the harness, not words from the user. Account for them when "
 			"acting — they are the file-level and runtime ground truth — but never "
-			"respond to them directly or attribute them to the user.");
+			"respond to them directly or attribute them to the user.\n\n"
+			"Depending on the user's approval mode, tools and commands that modify the "
+			"project may require the user's explicit approval before they run, and may "
+			"be denied. A denial is a deliberate decision by the user, not an error: "
+			"never retry a denied action; adjust your plan or ask the user.");
 }
 
 Array CodexHarnessDriver::_build_dynamic_tools() {
@@ -504,6 +513,12 @@ void CodexHarnessDriver::_start_turn(const String &p_text) {
 	Dictionary params;
 	params["threadId"] = thread_id;
 	params["input"] = input;
+	// Codex always asks; the driver routes approvals per policy_mode (§3.2 of
+	// the plan). Read-only mode also constrains codex's own shell sandbox.
+	params["approvalPolicy"] = "untrusted";
+	Dictionary sandbox;
+	sandbox["type"] = policy_mode == POLICY_READ_ONLY ? "readOnly" : "workspaceWrite";
+	params["sandboxPolicy"] = sandbox;
 	pending_turn_request = _send_request("turn/start", params);
 }
 
@@ -525,6 +540,8 @@ void CodexHarnessDriver::steer(const String &p_text) {
 }
 
 void CodexHarnessDriver::cancel_run() {
+	// Codex must never be left waiting on an unanswered server request.
+	_decline_pending_approvals();
 	if (rns_phase != RNS_INACTIVE || rns_request_id >= 0) {
 		// Stop the game and answer the held-open call so codex isn't left
 		// waiting on a tool that will never respond.
@@ -572,7 +589,32 @@ void CodexHarnessDriver::_handle_notification(const String &p_method, const Dict
 	}
 	if (p_method == "item/started") {
 		Dictionary item = p_params.get("item", Dictionary());
-		if (String(item.get("type", "")) == "dynamicToolCall") {
+		String started_type = item.get("type", "");
+		if (started_type == "fileChange") {
+			// Cached for approval display and the protected-file guard (the
+			// approval request references this item by id only).
+			file_change_items[String(item.get("id", ""))] = item;
+			if (file_change_items.size() > 16) {
+				file_change_items.clear();
+			}
+		} else if (started_type == "commandExecution") {
+			// Codex's own shell runs get the same pending tool card treatment
+			// as editor tools, so nothing executes invisibly.
+			Dictionary args;
+			args["command"] = item.get("command", "");
+			Dictionary block;
+			block["type"] = "tool_call";
+			block["id"] = item.get("id", "");
+			block["name"] = "shell";
+			block["args"] = args;
+			Array content;
+			content.push_back(block);
+			Dictionary assistant_item;
+			assistant_item["role"] = "assistant";
+			assistant_item["content"] = content;
+			emit_signal("assistant_item_ready", assistant_item);
+		}
+		if (started_type == "dynamicToolCall") {
 			// Announce the tool call as a canonical assistant item so the
 			// panel creates its pending tool card (resolved by
 			// tool_result_ready when item/completed arrives).
@@ -619,6 +661,34 @@ void CodexHarnessDriver::_handle_notification(const String &p_method, const Dict
 			// A reasoning item finished: back-to-back thinking phases must
 			// render (and persist) as separate blocks.
 			emit_signal("thinking_done");
+		} else if (type == "commandExecution") {
+			// Resolve the shell tool card.
+			Dictionary trd;
+			trd["tool_name"] = "shell";
+			trd["action_id"] = item.get("id", "");
+			trd["type"] = "shell";
+			Dictionary args;
+			args["command"] = item.get("command", "");
+			trd["args"] = args;
+			bool cmd_ok = String(item.get("status", "")) == "completed";
+			trd["status"] = cmd_ok ? "success" : "error";
+			Dictionary payload;
+			String output = item.get("aggregatedOutput", "");
+			if (output.length() > 2000) {
+				output = output.substr(0, 2000) + "\n[truncated]";
+			}
+			payload["output"] = output;
+			if (item.has("exitCode")) {
+				payload["exit_code"] = (int64_t)(double)item.get("exitCode", 0);
+			}
+			if (cmd_ok) {
+				trd["result"] = payload;
+			} else {
+				payload["message"] = vformat("command %s", String(item.get("status", "")));
+				trd["error"] = payload;
+			}
+			trd["tokens"] = (int64_t)(output.length() / 4);
+			emit_signal("tool_result_ready", trd);
 		}
 		return;
 	}
@@ -670,6 +740,32 @@ void CodexHarnessDriver::_handle_notification(const String &p_method, const Dict
 void CodexHarnessDriver::_handle_server_request(int p_id, const String &p_method, const Dictionary &p_params) {
 	if (p_method == "item/tool/call") {
 		String tool = p_params.get("tool", "");
+		String call_id = p_params.get("callId", "");
+
+		// Editor tools obey the same policy as codex-native actions: reads
+		// are always free; anything that mutates or executes is gated.
+		if (!_is_read_only_tool(tool)) {
+			if (policy_mode == POLICY_READ_ONLY) {
+				_refuse_tool_call(p_id, tool, call_id,
+						"Read-only mode is active; mutating editor tools are disabled. Ask the user to switch approval modes (Shift+Tab) to make changes.",
+						"error");
+				return;
+			}
+			if (policy_mode == POLICY_ASK && !session_allowed_tools.has(tool)) {
+				Dictionary pending;
+				pending["type"] = "editor_tool";
+				pending["params"] = p_params;
+				pending_approvals[p_id] = pending;
+				Dictionary info;
+				info["kind"] = "editor_tool";
+				info["request_id"] = p_id;
+				info["tool"] = tool;
+				info["args"] = p_params.get("arguments", Dictionary());
+				emit_signal("approval_requested", info);
+				return;
+			}
+		}
+
 		if (tool == "run_and_screenshot") {
 			// Held-open call: the response is sent when captures complete.
 			_begin_async_rns(p_id, p_params);
@@ -689,16 +785,189 @@ void CodexHarnessDriver::_handle_server_request(int p_id, const String &p_method
 		_send_response(p_id, _execute_dynamic_tool(p_params));
 		return;
 	}
-	if (p_method.contains("requestApproval")) {
-		// Increment 1: no approval UI yet; decline so nothing runs unreviewed.
+	if (p_method == "item/commandExecution/requestApproval") {
+		Dictionary info;
+		info["kind"] = "command";
+		info["request_id"] = p_id;
+		info["command"] = p_params.get("command", "");
+		info["cwd"] = p_params.get("cwd", "");
+		info["reason"] = p_params.get("reason", "");
+		_route_approval(p_id, info);
+		return;
+	}
+	if (p_method == "item/fileChange/requestApproval") {
+		// File list lives on the cached fileChange item, not the request.
+		Array files;
+		String item_id = p_params.get("itemId", "");
+		bool protected_hit = false;
+		if (file_change_items.has(item_id)) {
+			Array changes = file_change_items[item_id].get("changes", Array());
+			for (int i = 0; i < changes.size(); i++) {
+				if (changes[i].get_type() != Variant::DICTIONARY) {
+					continue;
+				}
+				String path = Dictionary(changes[i]).get("path", "");
+				if (path.is_empty()) {
+					continue;
+				}
+				files.push_back(path);
+				if (_is_protected_path(path)) {
+					protected_hit = true;
+				}
+			}
+		}
+		if (protected_hit) {
+			// §3.2 enforcement: scenes/resources/project settings go through
+			// the editor tools, never direct patches — in every policy mode.
+			Dictionary resp;
+			resp["decision"] = "decline";
+			_send_response(p_id, resp);
+			_smoke("declined protected file patch: " + JSON::stringify(files));
+			return;
+		}
+		Dictionary info;
+		info["kind"] = "file_change";
+		info["request_id"] = p_id;
+		info["files"] = files;
+		info["reason"] = p_params.get("reason", "");
+		_route_approval(p_id, info);
+		return;
+	}
+	if (p_method.contains("requestApproval") || p_method.contains("requestUserInput")) {
+		// Unknown approval-ish request: decline so nothing runs unreviewed.
 		Dictionary resp;
 		resp["decision"] = "decline";
 		_send_response(p_id, resp);
-		_smoke("declined approval request: " + p_method);
+		_smoke("declined unhandled approval: " + p_method);
 		return;
 	}
 	_send_response(p_id, Dictionary());
 	_smoke("unhandled server request: " + p_method);
+}
+
+void CodexHarnessDriver::_route_approval(int p_request_id, const Dictionary &p_info) {
+	switch (policy_mode) {
+		case POLICY_AUTO: {
+			Dictionary resp;
+			resp["decision"] = "accept";
+			_send_response(p_request_id, resp);
+			_smoke("auto-accepted approval");
+		} break;
+		case POLICY_READ_ONLY: {
+			Dictionary resp;
+			resp["decision"] = "decline";
+			_send_response(p_request_id, resp);
+			_smoke("declined approval (read-only mode)");
+		} break;
+		case POLICY_ASK:
+		default: {
+			Dictionary pending;
+			pending["type"] = "native";
+			pending_approvals[p_request_id] = pending;
+			emit_signal("approval_requested", p_info);
+		} break;
+	}
+}
+
+void CodexHarnessDriver::respond_approval(int p_request_id, const String &p_decision) {
+	if (!pending_approvals.has(p_request_id)) {
+		return;
+	}
+	Dictionary pending = pending_approvals[p_request_id];
+	pending_approvals.erase(p_request_id);
+
+	if (String(pending.get("type", "native")) == "editor_tool") {
+		Dictionary params = pending.get("params", Dictionary());
+		String tool = params.get("tool", "");
+		String call_id = params.get("callId", "");
+		if (p_decision == "decline") {
+			_refuse_tool_call(p_request_id, tool, call_id,
+					"The user denied this action. Do not retry it; ask the user how to proceed if needed.",
+					"cancelled");
+			return;
+		}
+		if (p_decision == "acceptForSession") {
+			session_allowed_tools.insert(tool);
+		}
+		// Approved: execute now and answer the held request with the result.
+		if (tool == "run_and_screenshot") {
+			_begin_async_rns(p_request_id, params);
+		} else {
+			_send_response(p_request_id, _execute_dynamic_tool(params));
+		}
+		return;
+	}
+
+	Dictionary resp;
+	resp["decision"] = p_decision;
+	_send_response(p_request_id, resp);
+}
+
+// Refuses a gated dynamic tool call: answers codex AND resolves the panel's
+// pending tool card (which item/started already created).
+void CodexHarnessDriver::_refuse_tool_call(int p_request_id, const String &p_tool, const String &p_call_id, const String &p_message, const String &p_status) {
+	Dictionary trd;
+	trd["tool_name"] = p_tool;
+	trd["action_id"] = p_call_id;
+	trd["type"] = p_tool;
+	trd["args"] = Dictionary();
+	trd["status"] = p_status;
+	Dictionary err;
+	err["message"] = p_message;
+	trd["error"] = err;
+	trd["tokens"] = 0;
+	emit_signal("tool_result_ready", trd);
+
+	Dictionary text_item;
+	text_item["type"] = "inputText";
+	text_item["text"] = p_message;
+	Array content_items;
+	content_items.push_back(text_item);
+	Dictionary resp;
+	resp["success"] = false;
+	resp["contentItems"] = content_items;
+	_send_response(p_request_id, resp);
+	_smoke(vformat("refused tool %s (%s)", p_tool, p_status));
+}
+
+void CodexHarnessDriver::_decline_pending_approvals() {
+	for (const KeyValue<int, Dictionary> &kv : pending_approvals) {
+		if (String(kv.value.get("type", "native")) == "editor_tool") {
+			Dictionary params = kv.value.get("params", Dictionary());
+			_refuse_tool_call(kv.key, params.get("tool", ""), params.get("callId", ""),
+					"The run was cancelled before this action was approved.", "cancelled");
+		} else {
+			Dictionary resp;
+			resp["decision"] = "cancel";
+			_send_response(kv.key, resp);
+		}
+	}
+	pending_approvals.clear();
+}
+
+bool CodexHarnessDriver::_is_protected_path(const String &p_path) {
+	String lower = p_path.to_lower();
+	return lower.ends_with(".tscn") || lower.ends_with(".scn") ||
+			lower.ends_with(".tres") || lower.ends_with(".res") ||
+			lower.ends_with("project.godot");
+}
+
+bool CodexHarnessDriver::_is_read_only_tool(const String &p_tool) {
+	// Allowlist of tools with no project/editor side effects. Anything not
+	// listed — including future tools — is gated: safe by default.
+	static const char *READ_ONLY_TOOLS[] = {
+		"list_nodes", "get_node_info", "find_nodes_by_type", "list_files",
+		"read_script", "read_scene_file", "get_project_settings",
+		"list_open_scenes", "open_scene", "preview_asset",
+		"capture_2d_viewport", "capture_3d_viewport", "get_export_status",
+		"write_dev_note", "update_todos", "stop_game",
+	};
+	for (const char *name : READ_ONLY_TOOLS) {
+		if (p_tool == name) {
+			return true;
+		}
+	}
+	return false;
 }
 
 Dictionary CodexHarnessDriver::_execute_dynamic_tool(const Dictionary &p_params) {

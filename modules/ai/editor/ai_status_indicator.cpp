@@ -2957,6 +2957,8 @@ void AIStatusPanel::_new_chat() {
 	harness_stream_block = nullptr;
 	harness_stream_rich = nullptr;
 	_finalize_harness_thinking();
+	approval_queue.clear();
+	_show_next_approval(); // Restores the composer if an approval was showing.
 
 	if (chat_store.is_valid()) {
 		String new_id = AIChatStore::generate_chat_id();
@@ -3042,6 +3044,8 @@ void AIStatusPanel::_switch_to_chat(const String &p_id) {
 	harness_stream_block = nullptr;
 	harness_stream_rich = nullptr;
 	_finalize_harness_thinking();
+	approval_queue.clear();
+	_show_next_approval(); // Restores the composer if an approval was showing.
 
 	if (chat_store.is_valid()) {
 		chat_store->set_file_path(AIChatStore::make_chat_path(p_id));
@@ -3293,6 +3297,13 @@ void AIStatusPanel::_on_prompt_gui_input(const Ref<InputEvent> &p_event) {
 		// Escape: stop the current run
 		if (key_event->get_keycode() == Key::ESCAPE) {
 			_request_cancel();
+			prompt_edit->accept_event();
+			return;
+		}
+
+		// Shift+Tab: cycle approval policy (Ask -> Auto -> Read-only)
+		if (key_event->get_keycode() == Key::TAB && key_event->is_shift_pressed()) {
+			_cycle_policy_mode();
 			prompt_edit->accept_event();
 			return;
 		}
@@ -4115,6 +4126,13 @@ void AIStatusPanel::_on_orchestrator_tool_result(const Dictionary &p_tool_result
 void AIStatusPanel::_on_orchestrator_complete(bool p_success, const String &p_final_message) {
 	print_line(vformat("AIStatusPanel: _on_orchestrator_complete called - success=%s, message_length=%d", p_success ? "true" : "false", p_final_message.length()));
 
+	// A cancelled run may leave an approval prompt showing (the driver has
+	// already answered codex); restore the composer.
+	if (!approval_queue.is_empty() || (approval_panel && approval_panel->is_visible())) {
+		approval_queue.clear();
+		_show_next_approval();
+	}
+
 	// Session continuity: remember which codex thread backs this chat so a
 	// restarted editor resumes it (history intact) instead of starting fresh.
 	if (use_harness_mode && harness_driver.is_valid() && chat_store.is_valid()) {
@@ -4741,6 +4759,167 @@ void AIStatusPanel::_reset_harness_stream() {
 	}
 }
 
+void AIStatusPanel::_cycle_policy_mode() {
+	harness_policy_mode = (harness_policy_mode + 1) % 3;
+	EditorSettings::get_singleton()->set_project_metadata("ai", "harness_policy_mode", harness_policy_mode);
+	if (harness_driver.is_valid()) {
+		harness_driver->set_policy_mode(harness_policy_mode);
+	}
+	_update_policy_mode_label();
+}
+
+void AIStatusPanel::_update_policy_mode_label() {
+	if (!policy_mode_label) {
+		return;
+	}
+	switch (harness_policy_mode) {
+		case CodexHarnessDriver::POLICY_AUTO:
+			policy_mode_label->set_text(TTR("auto"));
+			policy_mode_label->add_theme_color_override("font_color", AIColors::ACCENT_BLUE_MUTED);
+			break;
+		case CodexHarnessDriver::POLICY_READ_ONLY:
+			policy_mode_label->set_text(TTR("read-only"));
+			policy_mode_label->add_theme_color_override("font_color", Color(1.0f, 0.6f, 0.3f, 1.0f));
+			break;
+		case CodexHarnessDriver::POLICY_ASK:
+		default:
+			policy_mode_label->set_text(TTR("ask"));
+			policy_mode_label->add_theme_color_override("font_color", AIColors::TEXT_MUTED);
+			break;
+	}
+}
+
+void AIStatusPanel::_build_approval_panel() {
+	// Sits at the composer's slot; visibility-swapped with input_bar while an
+	// approval is pending (modern-CLI style, transcript stays clean). Plain
+	// text, no bordered block — it should read as the composer changing mode,
+	// not as a chat element.
+	MarginContainer *margin = memnew(MarginContainer);
+	margin->add_theme_constant_override("margin_left", AIColors::PADDING_SM * EDSCALE);
+	margin->add_theme_constant_override("margin_right", AIColors::PADDING_SM * EDSCALE);
+	margin->add_theme_constant_override("margin_top", AIColors::PADDING_XS * EDSCALE);
+	margin->add_theme_constant_override("margin_bottom", AIColors::PADDING_XS * EDSCALE);
+	approval_panel = margin;
+
+	VBoxContainer *vbox = memnew(VBoxContainer);
+	vbox->add_theme_constant_override("separation", AIColors::PADDING_XS * EDSCALE);
+	margin->add_child(vbox);
+
+	approval_header = memnew(Label);
+	approval_header->add_theme_color_override("font_color", AIColors::TEXT_PRIMARY);
+	approval_header->add_theme_font_size_override("font_size", 12 * EDSCALE);
+	vbox->add_child(approval_header);
+
+	approval_body = memnew(RichTextLabel);
+	approval_body->set_use_bbcode(false);
+	approval_body->set_fit_content(true);
+	approval_body->set_scroll_active(false);
+	approval_body->set_selection_enabled(true);
+	approval_body->set_autowrap_mode(TextServer::AUTOWRAP_WORD_SMART);
+	approval_body->add_theme_color_override("default_color", AIColors::TEXT_SECONDARY);
+	vbox->add_child(approval_body);
+
+	HBoxContainer *buttons = memnew(HBoxContainer);
+	buttons->add_theme_constant_override("separation", AIColors::PADDING_SM * EDSCALE);
+	vbox->add_child(buttons);
+	struct ButtonSpec {
+		const char *label;
+		const char *decision;
+	};
+	const ButtonSpec specs[] = {
+		{ "Allow", "accept" },
+		{ "Allow for session", "acceptForSession" },
+		{ "Deny", "decline" },
+	};
+	for (const ButtonSpec &spec : specs) {
+		Button *btn = memnew(Button);
+		btn->set_text(TTR(spec.label));
+		btn->connect(SceneStringNames::get_singleton()->pressed,
+				callable_mp(this, &AIStatusPanel::_on_approval_decision).bind(String(spec.decision)));
+		buttons->add_child(btn);
+	}
+
+	approval_panel->set_visible(false);
+	add_child(approval_panel);
+	move_child(approval_panel, input_bar->get_index());
+}
+
+void AIStatusPanel::_show_next_approval() {
+	if (approval_queue.is_empty()) {
+		if (approval_panel) {
+			approval_panel->set_visible(false);
+		}
+		if (input_bar) {
+			input_bar->set_visible(true);
+		}
+		if (prompt_edit) {
+			prompt_edit->grab_focus();
+		}
+		return;
+	}
+	Dictionary info = approval_queue[0];
+	String kind = info.get("kind", "command");
+	if (kind == "file_change") {
+		approval_header->set_text(TTR("Approval: apply file changes?"));
+	} else if (kind == "editor_tool") {
+		approval_header->set_text(vformat(TTR("Approval: %s?"), String(info.get("tool", "action"))));
+	} else {
+		approval_header->set_text(TTR("Approval: run command?"));
+	}
+	String detail;
+	if (kind == "file_change") {
+		Array files = info.get("files", Array());
+		for (int i = 0; i < files.size(); i++) {
+			detail += String(files[i]) + "\n";
+		}
+	} else if (kind == "editor_tool") {
+		Variant args = info.get("args", Dictionary());
+		String args_json = args.get_type() == Variant::STRING ? String(args) : JSON::stringify(args);
+		if (args_json != "{}" && !args_json.is_empty()) {
+			detail = args_json;
+		}
+	} else {
+		detail = info.get("command", "");
+		String cwd = info.get("cwd", "");
+		if (!cwd.is_empty()) {
+			detail += "\n(in " + cwd + ")";
+		}
+	}
+	String reason = info.get("reason", "");
+	if (!reason.is_empty()) {
+		detail += "\n" + reason;
+	}
+	if (detail.length() > 600) {
+		detail = detail.substr(0, 600) + "\n[truncated]";
+	}
+	approval_body->set_text(detail.strip_edges());
+	approval_body->set_visible(!detail.strip_edges().is_empty());
+
+	if (input_bar) {
+		input_bar->set_visible(false);
+	}
+	approval_panel->set_visible(true);
+}
+
+void AIStatusPanel::_on_harness_approval_requested(const Dictionary &p_info) {
+	approval_queue.push_back(p_info);
+	if (approval_panel && !approval_panel->is_visible()) {
+		_show_next_approval();
+	}
+}
+
+void AIStatusPanel::_on_approval_decision(const String &p_decision) {
+	if (approval_queue.is_empty()) {
+		return;
+	}
+	Dictionary info = approval_queue[0];
+	approval_queue.remove_at(0);
+	if (harness_driver.is_valid()) {
+		harness_driver->respond_approval((int)info.get("request_id", -1), p_decision);
+	}
+	_show_next_approval();
+}
+
 void AIStatusPanel::_ensure_harness_driver() {
 	if (harness_driver.is_valid()) {
 		return;
@@ -4760,6 +4939,8 @@ void AIStatusPanel::_ensure_harness_driver() {
 	harness_driver->connect("thinking_delta", callable_mp(this, &AIStatusPanel::_on_harness_thinking_delta));
 	harness_driver->connect("thinking_done", callable_mp(this, &AIStatusPanel::_finalize_harness_thinking));
 	harness_driver->connect("scene_diff_ready", callable_mp(this, &AIStatusPanel::_on_scene_diff_ready));
+	harness_driver->connect("approval_requested", callable_mp(this, &AIStatusPanel::_on_harness_approval_requested));
+	harness_driver->set_policy_mode(harness_policy_mode);
 	harness_driver->connect("todos_updated", callable_mp(this, &AIStatusPanel::_on_todos_updated));
 	// Session continuity: resume this chat's codex thread if we have one.
 	if (chat_store.is_valid()) {
@@ -5228,9 +5409,10 @@ AIStatusPanel::AIStatusPanel() {
 	// ========================================
 	// Input bar (bottom)
 	// ========================================
-	HBoxContainer *input_bar = memnew(HBoxContainer);
+	input_bar = memnew(HBoxContainer);
 	input_bar->add_theme_constant_override("separation", AIColors::PADDING_SM * EDSCALE);
 	add_child(input_bar);
+	_build_approval_panel();
 
 	// Prompt text edit
 	prompt_edit = memnew(TextEdit);
@@ -5373,6 +5555,14 @@ AIStatusPanel::AIStatusPanel() {
 		popup->set_item_as_radio_checkable(i, false);
 	}
 	status_bar->add_child(provider_dropdown);
+
+	// Approval mode indicator (harness loop; Shift+Tab in the composer cycles)
+	harness_policy_mode = (int)EditorSettings::get_singleton()->get_project_metadata("ai", "harness_policy_mode", 0);
+	policy_mode_label = memnew(Label);
+	policy_mode_label->add_theme_font_size_override("font_size", 11 * EDSCALE);
+	policy_mode_label->set_tooltip_text(TTR("Approval mode for agent commands and file edits.\nShift+Tab in the composer to cycle."));
+	status_bar->add_child(policy_mode_label);
+	_update_policy_mode_label();
 
 	// Apply saved model selection to the AI singleton
 	_on_provider_changed(default_idx);

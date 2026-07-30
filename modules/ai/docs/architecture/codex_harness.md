@@ -65,6 +65,39 @@ panel (`update_todos` is no longer declared); per-request token pills are not po
 10. **Never log secrets.** The driver redacts `apiKey` in its frame prints; keep that in
     any future raw logging (watchtower ingestion included).
 
+## Approval policy (Shift+Tab)
+
+Codex always runs with `approvalPolicy: "untrusted"` — **the driver is the policy
+engine**. `PolicyMode` (cycled via Shift+Tab in the composer, persisted per project as
+`ai/harness_policy_mode`) routes each `item/commandExecution/requestApproval` /
+`item/fileChange/requestApproval`:
+
+The policy governs **all agent effects uniformly** — codex-native actions AND editor
+tools. Editor tools are classified by `_is_read_only_tool` (explicit allowlist of pure
+reads; unknown/future tools are gated — safe by default):
+
+- **Ask** (default): reads run freely; every mutating/effectful action — shell, patch,
+  or editor tool — raises an approval prompt that REPLACES the composer (modern-CLI
+  style; the transcript stays clean, the tool card is the record) with Allow /
+  Allow for session / Deny. Gated editor tools are held BEFORE execution and only run
+  on accept; "Allow for session" caches per tool name for the driver's lifetime.
+  Requests queue; the composer returns when the queue drains (and on cancel/chat
+  switch, which also answers the underlying requests).
+- **Auto**: everything runs silently.
+- **Read-only**: `readOnly` sandbox for codex, mutating editor tools refused with a
+  switch-modes message — a true plan-mode analog.
+
+Denied/refused tool calls still answer codex (success:false + explanation) AND resolve
+the panel's pending tool card; `developerInstructions` tells the model a denial is user
+intent, never to be retried.
+
+Two rules hold in EVERY mode: protected paths (`.tscn`/`.scn`/`.tres`/`.res`/
+`project.godot`) are auto-declined — the editor tools are the only path to scenes — and
+pending approvals are answered (`cancel`) on run cancel/shutdown, never abandoned.
+File-change approvals reference a `fileChange` item by id only; the driver caches those
+items from `item/started` to display files and run the guard. Codex's own shell runs get
+pending→resolved tool cards like editor tools, so nothing executes invisibly.
+
 ## Translator specifics
 
 - The **golden fixtures** in `harness_spike/fixtures/` are captured SSE streams codex

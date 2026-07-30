@@ -486,6 +486,25 @@ private:
 	void _on_harness_assistant_delta(const String &p_delta);
 	void _reset_harness_stream();
 
+	// Approval policy (Shift+Tab cycles Ask -> Auto -> Read-only; the driver
+	// is the policy engine, this is just the UI + persistence).
+	int harness_policy_mode = 0;
+	Label *policy_mode_label = nullptr;
+	void _cycle_policy_mode();
+	void _update_policy_mode_label();
+
+	// Approval prompt REPLACES the composer while pending (modern-CLI style;
+	// the transcript stays clean — the action's tool card is its record).
+	HBoxContainer *input_bar = nullptr;
+	Control *approval_panel = nullptr;
+	Label *approval_header = nullptr;
+	RichTextLabel *approval_body = nullptr;
+	Vector<Dictionary> approval_queue;
+	void _build_approval_panel();
+	void _show_next_approval();
+	void _on_harness_approval_requested(const Dictionary &p_info);
+	void _on_approval_decision(const String &p_decision);
+
 	// Thinking stream: italic, lighter, one point smaller than body text.
 	// Finalized blocks stay in the transcript as plain styled text.
 	Control *harness_thinking_block = nullptr;
