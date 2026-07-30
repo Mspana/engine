@@ -456,4 +456,91 @@ Dictionary diff_scene_against_snapshot(const String &p_scene_path) {
 	return out;
 }
 
+// ---------------------------------------------------------------------------
+// Hidden-context builders
+
+String format_entry(const Dictionary &p_diff) {
+	String path = p_diff.get("path", "");
+	if (path.is_empty()) {
+		return String();
+	}
+	if ((bool)p_diff.get("missing", false)) {
+		return vformat("%s: no longer exists (deleted or renamed).", path);
+	}
+	if ((bool)p_diff.get("too_large", false)) {
+		return vformat("%s: changed substantially (now %d lines, was %d) - too large to show inline. Use read_scene_file to see the current state.",
+				path, (int)p_diff.get("new_lines", 0), (int)p_diff.get("old_lines", 0));
+	}
+	String diff_text = p_diff.get("diff", "");
+	if (diff_text.is_empty()) {
+		return String();
+	}
+	return vformat("%s (+%d/-%d lines):\n%s", path,
+			(int)p_diff.get("added", 0), (int)p_diff.get("removed", 0), diff_text.strip_edges());
+}
+
+String collect_user_changes(Array *r_changed_scenes) {
+	// Discard stale batch tracking from a previous (e.g. cancelled) run.
+	take_batch_scenes();
+
+	Vector<String> tracked = get_snapshot_paths();
+	String block;
+	for (const String &scene_path : tracked) {
+		Dictionary diff = diff_scene_against_snapshot(scene_path);
+		if (!(bool)diff.get("missing", false) && !(bool)diff.get("changed", false)) {
+			continue;
+		}
+		String entry = format_entry(diff);
+		if (entry.is_empty()) {
+			continue;
+		}
+		block += entry + "\n";
+		if (r_changed_scenes) {
+			r_changed_scenes->push_back(diff);
+		}
+	}
+	if (block.is_empty()) {
+		return String();
+	}
+	return "[SCENE CHANGES] The following scene file(s) changed outside this conversation (user edits in the editor, or external changes) since you last saw them:\n\n" + block.strip_edges();
+}
+
+String collect_ai_updates(Array *r_changed_scenes) {
+	Vector<String> paths = take_batch_scenes();
+	if (paths.is_empty()) {
+		return String();
+	}
+	String block;
+	for (const String &scene_path : paths) {
+		if (!has_snapshot(scene_path)) {
+			// First sight of this scene (e.g. just created): store a baseline,
+			// nothing to diff against yet.
+			String text = serialize_open_scene(scene_path);
+			if (text.is_empty()) {
+				text = read_disk_scene(scene_path);
+			}
+			if (!text.is_empty()) {
+				set_snapshot(scene_path, text);
+			}
+			continue;
+		}
+		Dictionary diff = diff_scene_against_snapshot(scene_path);
+		if (!(bool)diff.get("changed", false) && !(bool)diff.get("missing", false)) {
+			continue;
+		}
+		String entry = format_entry(diff);
+		if (entry.is_empty()) {
+			continue;
+		}
+		block += entry + "\n";
+		if (r_changed_scenes) {
+			r_changed_scenes->push_back(diff);
+		}
+	}
+	if (block.is_empty()) {
+		return String();
+	}
+	return "[SCENE UPDATE] Resulting scene file changes from your tool calls:\n\n" + block.strip_edges();
+}
+
 } // namespace AISceneDiff

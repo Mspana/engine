@@ -1238,6 +1238,41 @@ void AI::set_errors_consumed_by_tool(bool p_consumed) {
     _errors_consumed_by_tool = p_consumed;
 }
 
+String AI::format_session_context_text(const Dictionary &p_session_ctx) {
+	if (!(bool)p_session_ctx.get("include", true)) {
+		return String();
+	}
+	bool game_running = p_session_ctx.get("game_is_running", false);
+	int error_count = p_session_ctx.get("error_count", 0);
+
+	String ctx_text = "[GAME SESSION]\n";
+	ctx_text += vformat("Status: %s\n", game_running ? "Running" : "Not running");
+	if (error_count == 0) {
+		ctx_text += "Errors: 0 (none)\n";
+	} else {
+		ctx_text += vformat("Errors: %d\n", error_count);
+		if (p_session_ctx.has("errors")) {
+			Array errors = p_session_ctx["errors"];
+			if (errors.size() > 0) {
+				ctx_text += JSON::stringify(errors, "  ") + "\n";
+			}
+		}
+	}
+	if (p_session_ctx.has("game_output")) {
+		ctx_text += "\n[GAME OUTPUT]\n";
+		ctx_text += (String)p_session_ctx["game_output"] + "\n";
+	}
+	if (p_session_ctx.has("parse_errors")) {
+		Array parse_errors = p_session_ctx["parse_errors"];
+		if (parse_errors.size() > 0) {
+			String pe_file = p_session_ctx.get("parse_error_file", "");
+			ctx_text += vformat("\n[PARSE ERRORS] %s\n", pe_file);
+			ctx_text += JSON::stringify(parse_errors, "  ") + "\n";
+		}
+	}
+	return ctx_text;
+}
+
 Dictionary AI::consume_session_context() {
     Dictionary ctx;
 #ifdef TOOLS_ENABLED

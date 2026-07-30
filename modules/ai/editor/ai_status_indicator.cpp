@@ -4759,6 +4759,7 @@ void AIStatusPanel::_ensure_harness_driver() {
 	harness_driver->connect("assistant_delta", callable_mp(this, &AIStatusPanel::_on_harness_assistant_delta));
 	harness_driver->connect("thinking_delta", callable_mp(this, &AIStatusPanel::_on_harness_thinking_delta));
 	harness_driver->connect("thinking_done", callable_mp(this, &AIStatusPanel::_finalize_harness_thinking));
+	harness_driver->connect("scene_diff_ready", callable_mp(this, &AIStatusPanel::_on_scene_diff_ready));
 	harness_driver->connect("todos_updated", callable_mp(this, &AIStatusPanel::_on_todos_updated));
 	// Session continuity: resume this chat's codex thread if we have one.
 	if (chat_store.is_valid()) {

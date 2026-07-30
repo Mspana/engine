@@ -6,6 +6,7 @@
 
 #include "../ai.h"
 #include "../ai_provider.h"
+#include "../scene_diff.h"
 #include "responses_translator.h"
 
 #include "core/config/project_settings.h"
@@ -46,6 +47,7 @@ void CodexHarnessDriver::_bind_methods() {
 	ADD_SIGNAL(MethodInfo("run_complete", PropertyInfo(Variant::BOOL, "success"), PropertyInfo(Variant::STRING, "final_message")));
 	ADD_SIGNAL(MethodInfo("checkpoint_recommended", PropertyInfo(Variant::INT, "user_message_id")));
 	ADD_SIGNAL(MethodInfo("todos_updated", PropertyInfo(Variant::ARRAY, "todos")));
+	ADD_SIGNAL(MethodInfo("scene_diff_ready", PropertyInfo(Variant::DICTIONARY, "diff_info")));
 	// Streaming extensions beyond the orchestrator contract (harness-only).
 	ADD_SIGNAL(MethodInfo("assistant_delta", PropertyInfo(Variant::STRING, "delta")));
 	ADD_SIGNAL(MethodInfo("thinking_delta", PropertyInfo(Variant::STRING, "delta")));
@@ -368,7 +370,12 @@ String CodexHarnessDriver::_developer_instructions() {
 			"running the game, and capturing screenshots — prefer those tools over shell "
 			"commands or direct file edits for anything they cover. Scene files and "
 			"project state are live in the editor; do not modify .tscn/.tres files "
-			"directly with file tools.");
+			"directly with file tools.\n\n"
+			"Bracket-tagged blocks in the input ([GAME SESSION], [GAME OUTPUT], "
+			"[PARSE ERRORS], [SCENE CHANGES], [SCENE UPDATE]) are ambient editor state "
+			"injected by the harness, not words from the user. Account for them when "
+			"acting — they are the file-level and runtime ground truth — but never "
+			"respond to them directly or attribute them to the user.");
 }
 
 Array CodexHarnessDriver::_build_dynamic_tools() {
@@ -403,6 +410,47 @@ Array CodexHarnessDriver::_build_dynamic_tools() {
 }
 
 /* -------------------------------------------------------------------- */
+/*  Hidden context (shared builders in AISceneDiff / AI; formats         */
+/*  documented in docs/architecture/hidden_model_context.md)             */
+/* -------------------------------------------------------------------- */
+
+String CodexHarnessDriver::_build_game_session_context() {
+	AI *ai = AI::get_singleton();
+	if (!ai) {
+		return String();
+	}
+	// Session screenshots are not attached here (turn input image support is
+	// untested); the model can capture fresh state with its own tools.
+	return AI::format_session_context_text(ai->consume_session_context());
+}
+
+String CodexHarnessDriver::_build_user_scene_changes() {
+	Array changed_scenes;
+	String block = AISceneDiff::collect_user_changes(&changed_scenes);
+	if (block.is_empty()) {
+		return String();
+	}
+	Dictionary info;
+	info["attribution"] = "user";
+	info["scenes"] = changed_scenes;
+	emit_signal("scene_diff_ready", info);
+	return block;
+}
+
+String CodexHarnessDriver::_take_ai_scene_update() {
+	Array changed_scenes;
+	String block = AISceneDiff::collect_ai_updates(&changed_scenes);
+	if (block.is_empty()) {
+		return String();
+	}
+	Dictionary info;
+	info["attribution"] = "ai";
+	info["scenes"] = changed_scenes;
+	emit_signal("scene_diff_ready", info);
+	return block;
+}
+
+/* -------------------------------------------------------------------- */
 /*  Turns                                                                */
 /* -------------------------------------------------------------------- */
 
@@ -431,10 +479,27 @@ void CodexHarnessDriver::_start_turn(const String &p_text) {
 	emit_signal("run_started");
 	emit_signal("api_round_started", turn_counter);
 
+	Array input;
+	// Hidden context rides as separate input items ahead of the user text.
+	String session_ctx = _build_game_session_context();
+	if (!session_ctx.is_empty()) {
+		Dictionary item;
+		item["type"] = "text";
+		item["text"] = session_ctx;
+		input.push_back(item);
+		_smoke("injected [GAME SESSION]");
+	}
+	String scene_changes = _build_user_scene_changes();
+	if (!scene_changes.is_empty()) {
+		Dictionary item;
+		item["type"] = "text";
+		item["text"] = scene_changes;
+		input.push_back(item);
+		_smoke("injected [SCENE CHANGES]");
+	}
 	Dictionary text_input;
 	text_input["type"] = "text";
 	text_input["text"] = p_text;
-	Array input;
 	input.push_back(text_input);
 	Dictionary params;
 	params["threadId"] = thread_id;
@@ -749,6 +814,17 @@ Dictionary CodexHarnessDriver::_tool_response_from_result(const String &p_tool, 
 	}
 	if (!image_b64s.is_empty()) {
 		_smoke(vformat("attached %d image(s) to tool result", image_b64s.size()));
+	}
+	// File-level ground truth for scene-mutating tools: the diff of every
+	// scene this call touched rides back with the result (the legacy loop
+	// batched these per API round; per-call is tighter attribution).
+	String scene_update = _take_ai_scene_update();
+	if (!scene_update.is_empty()) {
+		Dictionary update_item;
+		update_item["type"] = "inputText";
+		update_item["text"] = scene_update;
+		content_items.push_back(update_item);
+		_smoke("appended [SCENE UPDATE] to tool result");
 	}
 	Dictionary resp;
 	resp["success"] = success;

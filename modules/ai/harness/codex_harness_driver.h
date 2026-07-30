@@ -107,6 +107,11 @@ private:
 	Array _build_dynamic_tools();
 	String _developer_instructions();
 
+	// Hidden context injection (ported orchestrator formats).
+	String _build_game_session_context();
+	String _build_user_scene_changes();
+	String _take_ai_scene_update();
+
 	// --- run_and_screenshot: held-open dynamic tool call. The JSON-RPC
 	// response to codex's item/tool/call is deferred until the game has
 	// launched and every requested capture has arrived (ported from the

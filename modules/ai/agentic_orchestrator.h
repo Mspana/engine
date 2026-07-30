@@ -194,7 +194,6 @@ private:
 	// next run's user-attributed diff doesn't pick up the AI's own changes.
 	void _refresh_batch_snapshots_silent();
 	// Shared formatter: one scene's entry for a diff context block.
-	static String _format_scene_diff_entry(const Dictionary &p_diff);
 
 	// Signal emissions
 	void _emit_progress_update(const String &p_status, int p_turn);

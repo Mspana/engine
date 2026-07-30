@@ -2,6 +2,18 @@
 
 ## Ideas / Future Features
 
+Fix bad looking connected icon.
+Why have //res: displayed? just have them sit at the root.
+Thoughts should be one line, with ... -  let the user click it to expand.
+Have user prompts be a fixed maximum of 3 lines, and let the user click it to expand.
+Move edit symbols to the left of the user bubble.
+
+
+Mid-run steering (turn/steer) does not carry fresh [SCENE CHANGES]: if the user edits a
+scene then steers the in-flight turn, the model won't see the edit's diff until the next
+turn start. Good feature, deferred 7/28 — add the collect_user_changes() block to
+CodexHarnessDriver::steer() input when wanted.
+
 Harness streaming renders in provider-sized chunks and looks choppy. Smooth it with a
 small reveal buffer (drain accumulated deltas on a ~30-60ms tick, or per-word reveal)
 like modern agent UIs do. Cosmetic; deferred 7/28.

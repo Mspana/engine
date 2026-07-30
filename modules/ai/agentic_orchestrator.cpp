@@ -132,37 +132,8 @@ void AgenticOrchestrator::run_agentic_loop(const Array &p_initial_messages, Ref<
 		if (ai_singleton) {
 			Dictionary session_ctx = ai_singleton->consume_session_context();
 
-			if ((bool)session_ctx.get("include", true)) {
-				bool game_running = session_ctx.get("game_is_running", false);
-				int error_count = session_ctx.get("error_count", 0);
-
-				String ctx_text = "[GAME SESSION]\n";
-				ctx_text += vformat("Status: %s\n", game_running ? "Running" : "Not running");
-				if (error_count == 0) {
-					ctx_text += "Errors: 0 (none)\n";
-				} else {
-					ctx_text += vformat("Errors: %d\n", error_count);
-					if (session_ctx.has("errors")) {
-						Array errors = session_ctx["errors"];
-						if (errors.size() > 0) {
-							ctx_text += JSON::stringify(errors, "  ") + "\n";
-						}
-					}
-				}
-				if (session_ctx.has("game_output")) {
-					ctx_text += "\n[GAME OUTPUT]\n";
-					ctx_text += (String)session_ctx["game_output"] + "\n";
-				}
-
-				if (session_ctx.has("parse_errors")) {
-					Array parse_errors = session_ctx["parse_errors"];
-					if (parse_errors.size() > 0) {
-						String pe_file = session_ctx.get("parse_error_file", "");
-						ctx_text += vformat("\n[PARSE ERRORS] %s\n", pe_file);
-						ctx_text += JSON::stringify(parse_errors, "  ") + "\n";
-					}
-				}
-
+			String ctx_text = AI::format_session_context_text(session_ctx);
+			if (!ctx_text.is_empty()) {
 				Dictionary ctx_msg;
 				ctx_msg["role"] = "user";
 				ctx_msg["content"] = ctx_text;
@@ -182,30 +153,12 @@ void AgenticOrchestrator::run_agentic_loop(const Array &p_initial_messages, Ref<
 	// external tools) since the model last saw each tracked scene. Diffed
 	// against the per-scene snapshots and injected before the current prompt.
 	{
-		// Discard stale batch tracking from a previous (e.g. cancelled) run.
-		AISceneDiff::take_batch_scenes();
-
-		Vector<String> tracked = AISceneDiff::get_snapshot_paths();
-		String block;
 		Array changed_scenes;
-		for (const String &scene_path : tracked) {
-			Dictionary diff = AISceneDiff::diff_scene_against_snapshot(scene_path);
-			bool missing = diff.get("missing", false);
-			bool changed = diff.get("changed", false);
-			if (!missing && !changed) {
-				continue;
-			}
-			String entry = _format_scene_diff_entry(diff);
-			if (entry.is_empty()) {
-				continue;
-			}
-			block += entry + "\n";
-			changed_scenes.push_back(diff);
-		}
+		String block = AISceneDiff::collect_user_changes(&changed_scenes);
 		if (!block.is_empty()) {
 			Dictionary diff_msg;
 			diff_msg["role"] = "user";
-			diff_msg["content"] = "[SCENE CHANGES] The following scene file(s) changed outside this conversation (user edits in the editor, or external changes) since you last saw them:\n\n" + block.strip_edges();
+			diff_msg["content"] = block;
 			current_run.conversation_history.insert(
 					MAX(0, current_run.conversation_history.size() - 1), diff_msg);
 
@@ -1001,65 +954,16 @@ void AgenticOrchestrator::_synthesize_cancelled_results_for_unanswered() {
 
 // Formats one scene's diff entry for a context block. Empty result = nothing
 // worth telling the model.
-String AgenticOrchestrator::_format_scene_diff_entry(const Dictionary &p_diff) {
-	String path = p_diff.get("path", "");
-	if (path.is_empty()) {
-		return String();
-	}
-	if ((bool)p_diff.get("missing", false)) {
-		return vformat("%s: no longer exists (deleted or renamed).", path);
-	}
-	if ((bool)p_diff.get("too_large", false)) {
-		return vformat("%s: changed substantially (now %d lines, was %d) — too large to show inline. Use read_scene_file to see the current state.",
-				path, (int)p_diff.get("new_lines", 0), (int)p_diff.get("old_lines", 0));
-	}
-	String diff_text = p_diff.get("diff", "");
-	if (diff_text.is_empty()) {
-		return String();
-	}
-	return vformat("%s (+%d/-%d lines):\n%s", path,
-			(int)p_diff.get("added", 0), (int)p_diff.get("removed", 0), diff_text.strip_edges());
-}
-
 void AgenticOrchestrator::_append_batch_scene_diffs() {
-	Vector<String> paths = AISceneDiff::take_batch_scenes();
-	if (paths.is_empty()) {
-		return;
-	}
-
-	String block;
 	Array changed_scenes;
-	for (const String &scene_path : paths) {
-		if (!AISceneDiff::has_snapshot(scene_path)) {
-			// First sight of this scene (e.g. just created): store a baseline,
-			// nothing to diff against yet.
-			String text = AISceneDiff::serialize_open_scene(scene_path);
-			if (text.is_empty()) {
-				text = AISceneDiff::read_disk_scene(scene_path);
-			}
-			if (!text.is_empty()) {
-				AISceneDiff::set_snapshot(scene_path, text);
-			}
-			continue;
-		}
-		Dictionary diff = AISceneDiff::diff_scene_against_snapshot(scene_path);
-		if (!(bool)diff.get("changed", false) && !(bool)diff.get("missing", false)) {
-			continue;
-		}
-		String entry = _format_scene_diff_entry(diff);
-		if (entry.is_empty()) {
-			continue;
-		}
-		block += entry + "\n";
-		changed_scenes.push_back(diff);
-	}
+	String block = AISceneDiff::collect_ai_updates(&changed_scenes);
 	if (block.is_empty()) {
 		return;
 	}
 
 	Dictionary diff_msg;
 	diff_msg["role"] = "user";
-	diff_msg["content"] = "[SCENE UPDATE] Resulting scene file changes from your tool calls this turn:\n\n" + block.strip_edges();
+	diff_msg["content"] = block;
 	current_run.conversation_history.push_back(diff_msg);
 	current_run.run_messages.push_back(diff_msg);
 

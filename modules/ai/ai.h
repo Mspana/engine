@@ -132,6 +132,9 @@ public:
 
 	// Game session context (auto-captured on stop, injected into next AI turn)
 	Dictionary consume_session_context();                  // returns and clears stored session data
+	// Renders session context as the model-facing "[GAME SESSION]" text block
+	// (shared by both agent loops). Empty when include=false or no content.
+	static String format_session_context_text(const Dictionary &p_session_ctx);
 	void set_debug_context_enabled(bool p_enabled);        // UI pill toggle
 	void set_errors_consumed_by_tool(bool p_consumed);
 	bool get_errors_consumed_by_tool() const { return _errors_consumed_by_tool; }

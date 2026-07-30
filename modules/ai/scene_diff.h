@@ -59,6 +59,22 @@ Dictionary compute_diff(const String &p_old, const String &p_new);
 // nor on disk (snapshot is dropped).
 Dictionary diff_scene_against_snapshot(const String &p_scene_path);
 
+// ---- Hidden-context builders (shared by both agent loops) ------------------
+// One diff entry rendered for the model (path + counts + unified diff, or the
+// missing/too-large fallbacks). Empty when there is nothing to show.
+String format_entry(const Dictionary &p_diff);
+
+// User edits since the model last saw each tracked scene. Discards stale batch
+// tracking first (a cancelled run must not leak into this one), then diffs
+// every snapshot. Returns the complete "[SCENE CHANGES] ..." block, or empty.
+// r_changed_scenes receives the per-scene diff dictionaries for UI signals.
+String collect_user_changes(Array *r_changed_scenes);
+
+// Consequences of the AI's own scene-mutating tool calls since the last take.
+// First sight of a scene stores a baseline instead of diffing. Returns the
+// complete "[SCENE UPDATE] ..." block, or empty.
+String collect_ai_updates(Array *r_changed_scenes);
+
 } // namespace AISceneDiff
 
 #endif // AI_SCENE_DIFF_H
