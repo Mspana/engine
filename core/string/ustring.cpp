@@ -4925,15 +4925,43 @@ String String::c_escape_multiline() const {
 }
 
 String String::json_escape() const {
-	String escaped = *this;
-	escaped = escaped.replace("\\", "\\\\");
-	escaped = escaped.replace("\b", "\\b");
-	escaped = escaped.replace("\f", "\\f");
-	escaped = escaped.replace("\n", "\\n");
-	escaped = escaped.replace("\r", "\\r");
-	escaped = escaped.replace("\t", "\\t");
-	escaped = escaped.replace("\v", "\\v");
-	escaped = escaped.replace("\"", "\\\"");
+	String escaped;
+	for (int i = 0; i < length(); i++) {
+		const char32_t c = operator[](i);
+		switch (c) {
+			case '\\':
+				escaped += "\\\\";
+				break;
+			case '\"':
+				escaped += "\\\"";
+				break;
+			case '\b':
+				escaped += "\\b";
+				break;
+			case '\f':
+				escaped += "\\f";
+				break;
+			case '\n':
+				escaped += "\\n";
+				break;
+			case '\r':
+				escaped += "\\r";
+				break;
+			case '\t':
+				escaped += "\\t";
+				break;
+			default:
+				if (c < 0x20) {
+					// RFC 8259 requires all other control characters to be
+					// escaped; emitting them raw (or as the non-JSON "\v")
+					// produces invalid JSON.
+					escaped += vformat("\\u%04x", (uint32_t)c);
+				} else {
+					escaped += c;
+				}
+				break;
+		}
+	}
 
 	return escaped;
 }

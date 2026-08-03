@@ -583,7 +583,7 @@
 		<method name="json_escape" qualifiers="const">
 			<return type="String" />
 			<description>
-				Returns a copy of the string with special characters escaped using the JSON standard. Because it closely matches the C standard, it is possible to use [method c_unescape] to unescape the string, if necessary.
+				Returns a copy of the string with special characters escaped using the JSON standard. Control characters without a short escape sequence (such as [code]U+0000[/code]) are escaped as [code]\uXXXX[/code], as required by the JSON specification.
 			</description>
 		</method>
 		<method name="left" qualifiers="const">

@@ -308,4 +308,25 @@ TEST_CASE("[JSON] Serialization") {
 		}
 	}
 }
+
+TEST_CASE("[JSON] Control characters round-trip") {
+	// Strings holding any control character (including embedded NUL, which can
+	// enter a String via a parsed \u escape) must survive stringify -> parse.
+	String control_chars;
+	for (char32_t c = 0; c < 0x20; c++) {
+		control_chars += c;
+	}
+	Dictionary dict;
+	dict["text"] = control_chars;
+
+	String serialized = JSON::stringify(dict);
+	Variant parsed = JSON::parse_string(serialized);
+
+	REQUIRE_MESSAGE(
+			parsed.get_type() == Variant::DICTIONARY,
+			"Stringified JSON containing control characters should parse back successfully.");
+	CHECK_MESSAGE(
+			String(Dictionary(parsed)["text"]) == control_chars,
+			"Control characters should survive a JSON stringify -> parse round-trip unchanged.");
+}
 } // namespace TestJSON

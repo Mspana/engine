@@ -1739,6 +1739,21 @@ TEST_CASE("[String] c-escape/unescape") {
 	CHECK(s.c_escape().c_unescape() == s);
 }
 
+TEST_CASE("[String] json_escape") {
+	// Short escapes.
+	CHECK(String("a\\b\"c\b\f\n\r\t").json_escape() == "a\\\\b\\\"c\\b\\f\\n\\r\\t");
+	// Control characters without a short escape must become \uXXXX ("\v" is
+	// not a valid JSON escape).
+	CHECK(String("\x01\v\x1f").json_escape() == "\\u0001\\u000b\\u001f");
+	// Embedded NUL (only reachable via UTF-32 paths, e.g. parsed \u0000).
+	String with_nul = "a";
+	with_nul += char32_t(0);
+	with_nul += "b";
+	CHECK(with_nul.json_escape() == "a\\u0000b");
+	// Non-control text is unchanged.
+	CHECK(String(U"Tēšt 🙂").json_escape() == String(U"Tēšt 🙂"));
+}
+
 TEST_CASE("[String] indent") {
 	static const char *input[] = {
 		"",
