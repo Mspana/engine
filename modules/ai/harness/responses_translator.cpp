@@ -4,6 +4,7 @@
 
 #include "responses_translator.h"
 
+#include "../ai_text_sanitizer.h"
 #include "core/crypto/crypto.h"
 #include "core/io/file_access.h"
 #include "core/io/http_client.h"
@@ -557,7 +558,11 @@ Dictionary AIResponsesTranslator::_translate_request(const Dictionary &p_req, St
 	Dictionary stream_options;
 	stream_options["include_usage"] = true;
 	chat["stream_options"] = stream_options;
-	return chat;
+	// History replayed from codex rollouts can carry control chars (e.g. NUL
+	// from a shell command dumping a binary file); strict provider decoders
+	// reject them even properly escaped, and the replay makes the failure
+	// permanent. Scrub every string value before serialization.
+	return ai_sanitize_model_variant(chat);
 }
 
 /* -------------------------------------------------------------------- */

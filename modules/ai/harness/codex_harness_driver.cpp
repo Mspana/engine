@@ -7,6 +7,7 @@
 #include "../actions/export_actions.h"
 #include "../ai.h"
 #include "../ai_provider.h"
+#include "../ai_text_sanitizer.h"
 #include "../scene_diff.h"
 #include "../template_installer.h"
 #include "responses_translator.h"
@@ -16,6 +17,7 @@
 #include "core/os/os.h"
 #include "core/os/time.h"
 #include "core/string/print_string.h"
+#include "core/templates/local_vector.h"
 #include "editor/debugger/editor_debugger_node.h"
 #include "editor/debugger/script_editor_debugger.h"
 #include "editor/editor_log.h"
@@ -194,7 +196,10 @@ void CodexHarnessDriver::_stderr_thread_func(void *p_userdata) {
 }
 
 void CodexHarnessDriver::_reader_loop() {
-	String pending;
+	// Buffer bytes and only decode complete lines: per-chunk String::utf8()
+	// would truncate at a stray NUL and mangle multi-byte sequences split
+	// across chunk boundaries.
+	LocalVector<uint8_t> pending;
 	uint8_t chunk[4096];
 
 	while (!reader_exit.is_set()) {
@@ -211,14 +216,25 @@ void CodexHarnessDriver::_reader_loop() {
 			OS::get_singleton()->delay_usec(2000);
 			continue;
 		}
-		pending += String::utf8((const char *)chunk, read);
-		int nl;
-		while ((nl = pending.find("\n")) >= 0) {
-			String line = pending.substr(0, nl).strip_edges();
-			pending = pending.substr(nl + 1);
+		uint32_t scan_from = pending.size();
+		pending.resize(scan_from + read);
+		memcpy(pending.ptr() + scan_from, chunk, read);
+		uint32_t line_start = 0;
+		for (uint32_t i = scan_from; i < pending.size(); i++) {
+			if (pending[i] != '\n') {
+				continue;
+			}
+			String line = String::utf8((const char *)pending.ptr() + line_start, i - line_start).strip_edges();
 			if (!line.is_empty()) {
 				call_deferred("_handle_frame", line);
 			}
+			line_start = i + 1;
+		}
+		if (line_start > 0) {
+			// Keep only the unterminated tail.
+			uint32_t tail = pending.size() - line_start;
+			memmove(pending.ptr(), pending.ptr() + line_start, tail);
+			pending.resize(tail);
 		}
 	}
 }
@@ -699,12 +715,14 @@ void CodexHarnessDriver::_handle_notification(const String &p_method, const Dict
 			trd["action_id"] = item.get("id", "");
 			trd["type"] = "shell";
 			Dictionary args;
-			args["command"] = item.get("command", "");
+			args["command"] = ai_sanitize_model_text(item.get("command", ""));
 			trd["args"] = args;
 			bool cmd_ok = String(item.get("status", "")) == "completed";
 			trd["status"] = cmd_ok ? "success" : "error";
 			Dictionary payload;
-			String output = item.get("aggregatedOutput", "");
+			// Shell output can contain raw binary (e.g. cat'ing a .bin file);
+			// control chars corrupt the JSONL store and the transcript card.
+			String output = ai_sanitize_model_text(item.get("aggregatedOutput", ""));
 			if (output.length() > 2000) {
 				output = output.substr(0, 2000) + "\n[truncated]";
 			}
@@ -1567,10 +1585,14 @@ void CodexHarnessDriver::_write_frame(const Dictionary &p_frame) {
 	if (stdio.is_null()) {
 		return;
 	}
-	CharString line = (JSON::stringify(p_frame) + "\n").utf8();
+	// Engine tool results can carry control chars (reading binary files);
+	// anything written here lands in codex's rollout and gets replayed to the
+	// provider on every turn, so scrub before it can poison the thread.
+	Dictionary frame = ai_sanitize_model_variant(p_frame);
+	CharString line = (JSON::stringify(frame) + "\n").utf8();
 	stdio->store_buffer((const uint8_t *)line.get_data(), line.length());
 	if (smoke_mode) {
-		Dictionary redacted = p_frame.duplicate(true);
+		Dictionary redacted = frame.duplicate(true);
 		if (redacted.has("params") && Dictionary(redacted["params"]).has("apiKey")) {
 			Dictionary params = redacted["params"];
 			params["apiKey"] = "<redacted>";
