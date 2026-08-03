@@ -55,9 +55,13 @@ public:
 	// approvalPolicy "untrusted"; the DRIVER is the policy engine and decides
 	// per mode. Protected editor files are declined in every mode.
 	enum PolicyMode {
-		POLICY_ASK = 0, // surface an approval card, user decides
+		POLICY_ASK = 0, // surface an approval prompt, user decides
 		POLICY_AUTO = 1, // auto-accept commands/patches (protected files still declined)
-		POLICY_READ_ONLY = 2, // read-only sandbox; all writes declined
+		// Plan mode: read-only enforcement (readOnly sandbox, mutating editor
+		// tools refused) PLUS per-turn planning instructions. Codex's native
+		// collaborationMode was probed on 0.145.0 and is silently ignored by
+		// app-server (TUI-only feature) — re-test on version bumps.
+		POLICY_PLAN = 2,
 	};
 	void set_policy_mode(int p_mode) { policy_mode = (PolicyMode)CLAMP(p_mode, 0, 2); }
 	int get_policy_mode() const { return policy_mode; }
@@ -108,6 +112,10 @@ private:
 	// Request-id bookkeeping for the bring-up state machine and turn starts.
 	int pending_phase_request = -1;
 	int pending_turn_request = -1;
+
+	// Mode the agent returns to when the user approves exit_plan_mode
+	// (tracked when plan mode is entered via the agent tool).
+	PolicyMode pre_plan_mode = POLICY_ASK;
 
 	// Approval routing. pending_approvals values:
 	//   {type:"native"} — codex shell/patch request; answer with {decision}.

@@ -493,6 +493,7 @@ private:
 	Label *policy_mode_label = nullptr;
 	void _cycle_policy_mode();
 	void _update_policy_mode_label();
+	void _on_policy_mode_changed(int p_mode); // agent-initiated (enter/exit_plan_mode)
 
 	// Approval prompt REPLACES the composer while pending (modern-CLI style;
 	// the transcript stays clean — the action's tool card is its record).

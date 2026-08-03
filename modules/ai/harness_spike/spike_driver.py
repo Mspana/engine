@@ -230,6 +230,11 @@ def start_thread_and_turn(s, prompt, model=None):
         thread_params["modelProvider"] = SPIKE_PROVIDER
     if SPIKE_MODEL:
         thread_params["model"] = SPIKE_MODEL
+    if os.environ.get("SPIKE_COLLAB_MODE"):
+        thread_params["collaborationMode"] = {
+            "mode": os.environ["SPIKE_COLLAB_MODE"],
+            "settings": {},
+        }
     rid = s.send("thread/start", thread_params)
     resp = s.wait_response(rid)
     print("thread/start ->", json.dumps(resp)[:400])

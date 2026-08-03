@@ -992,7 +992,7 @@ void AIStatusIndicator::_notification(int p_what) {
 
 			Vector2 center = get_size() / 2.0;
 			float radius = MIN(center.x, center.y) - 2.0;
-			draw_circle(center, radius, indicator_color);
+			draw_circle(center, radius, indicator_color, true, -1.0, true); // antialiased
 		} break;
 	}
 }
@@ -1129,6 +1129,9 @@ AIStatusIndicator::AIStatusIndicator() {
 	set_custom_minimum_size(Size2(12, 12) * EDSCALE);
 	set_mouse_filter(MOUSE_FILTER_PASS);
 	set_v_size_flags(SIZE_SHRINK_CENTER);
+	// ColorRect's own fill must be transparent or it paints a white square
+	// under the status circle.
+	set_color(Color(0, 0, 0, 0));
 }
 
 // ============================================================================
@@ -1741,6 +1744,12 @@ Control *AIStatusPanel::_create_message_bubble(const HistoryItem &p_item) {
 	String display_content;
 	if (role == "user") {
 		display_content = p_item.data.get("content", "");
+		// Paragraph spacing for user newlines, matching the visual rhythm of
+		// assistant paragraphs (single breaks read cramped in the bubble).
+		display_content = display_content.replace("\r\n", "\n").replace("\n", "\n\n");
+		while (display_content.contains("\n\n\n")) {
+			display_content = display_content.replace("\n\n\n", "\n\n");
+		}
 	} else if (role == "assistant") {
 		Array content_blocks = p_item.data.get("content", Array());
 		for (int j = 0; j < content_blocks.size(); j++) {
@@ -3794,7 +3803,7 @@ void AIStatusPanel::_on_harness_thinking_delta(const String &p_delta) {
 	harness_thinking_text += p_delta;
 	harness_thinking_label->set_text(harness_thinking_text);
 	harness_thinking_block->set_meta("_bubble_plain_text", harness_thinking_text);
-	_scroll_to_bottom();
+	// No direct scroll: stick-to-bottom is handled by the range-changed hook.
 }
 
 void AIStatusPanel::_finalize_harness_thinking() {
@@ -3871,7 +3880,6 @@ void AIStatusPanel::_on_orchestrator_assistant_item(const Dictionary &p_item) {
 				harness_streaming = false;
 				harness_stream_text = String();
 				_show_pending_message();
-				should_auto_scroll = true;
 				break;
 			}
 			// No live stream to finalize (legacy loop, or a raced item):
@@ -3884,7 +3892,6 @@ void AIStatusPanel::_on_orchestrator_assistant_item(const Dictionary &p_item) {
 			} else {
 				message_list->add_child(rich);
 			}
-			should_auto_scroll = true;
 			break; // one text block per assistant item
 		}
 	}
@@ -3927,7 +3934,6 @@ void AIStatusPanel::_on_orchestrator_assistant_item(const Dictionary &p_item) {
 				message_list->add_child(entry);
 			}
 			pending_tool_entries[call_id] = entry;
-			should_auto_scroll = true;
 		}
 	}
 	if (!pending_tool_entries.is_empty() && pending_tool_timer && pending_tool_timer->is_stopped()) {
@@ -4164,7 +4170,6 @@ void AIStatusPanel::_on_orchestrator_complete(bool p_success, const String &p_fi
 				Control *notice = _create_cancel_notice();
 				if (notice) {
 					message_list->add_child(notice);
-					should_auto_scroll = true;
 				}
 			}
 		} else {
@@ -4180,7 +4185,6 @@ void AIStatusPanel::_on_orchestrator_complete(bool p_success, const String &p_fi
 				Control *notice = _create_error_notice(p_final_message);
 				if (notice) {
 					message_list->add_child(notice);
-					should_auto_scroll = true;
 				}
 			}
 		}
@@ -4741,7 +4745,8 @@ void AIStatusPanel::_on_harness_assistant_delta(const String &p_delta) {
 	if (harness_stream_rich) {
 		harness_stream_rich->set_text(_markdown_to_bbcode(harness_stream_text));
 	}
-	_scroll_to_bottom();
+	// No direct scroll: growth fires _on_scrollbar_range_changed, which
+	// follows only if the user is already at the bottom.
 }
 
 void AIStatusPanel::_reset_harness_stream() {
@@ -4768,6 +4773,12 @@ void AIStatusPanel::_cycle_policy_mode() {
 	_update_policy_mode_label();
 }
 
+void AIStatusPanel::_on_policy_mode_changed(int p_mode) {
+	harness_policy_mode = CLAMP(p_mode, 0, 2);
+	EditorSettings::get_singleton()->set_project_metadata("ai", "harness_policy_mode", harness_policy_mode);
+	_update_policy_mode_label();
+}
+
 void AIStatusPanel::_update_policy_mode_label() {
 	if (!policy_mode_label) {
 		return;
@@ -4777,9 +4788,9 @@ void AIStatusPanel::_update_policy_mode_label() {
 			policy_mode_label->set_text(TTR("auto"));
 			policy_mode_label->add_theme_color_override("font_color", AIColors::ACCENT_BLUE_MUTED);
 			break;
-		case CodexHarnessDriver::POLICY_READ_ONLY:
-			policy_mode_label->set_text(TTR("read-only"));
-			policy_mode_label->add_theme_color_override("font_color", Color(1.0f, 0.6f, 0.3f, 1.0f));
+		case CodexHarnessDriver::POLICY_PLAN:
+			policy_mode_label->set_text(TTR("plan"));
+			policy_mode_label->add_theme_color_override("font_color", Color(0.5f, 0.85f, 1.0f, 1.0f));
 			break;
 		case CodexHarnessDriver::POLICY_ASK:
 		default:
@@ -4861,6 +4872,8 @@ void AIStatusPanel::_show_next_approval() {
 	String kind = info.get("kind", "command");
 	if (kind == "file_change") {
 		approval_header->set_text(TTR("Approval: apply file changes?"));
+	} else if (kind == "exit_plan") {
+		approval_header->set_text(TTR("Approve plan and execute?"));
 	} else if (kind == "editor_tool") {
 		approval_header->set_text(vformat(TTR("Approval: %s?"), String(info.get("tool", "action"))));
 	} else {
@@ -4872,6 +4885,8 @@ void AIStatusPanel::_show_next_approval() {
 		for (int i = 0; i < files.size(); i++) {
 			detail += String(files[i]) + "\n";
 		}
+	} else if (kind == "exit_plan") {
+		detail = info.get("plan_summary", "");
 	} else if (kind == "editor_tool") {
 		Variant args = info.get("args", Dictionary());
 		String args_json = args.get_type() == Variant::STRING ? String(args) : JSON::stringify(args);
@@ -4940,6 +4955,7 @@ void AIStatusPanel::_ensure_harness_driver() {
 	harness_driver->connect("thinking_done", callable_mp(this, &AIStatusPanel::_finalize_harness_thinking));
 	harness_driver->connect("scene_diff_ready", callable_mp(this, &AIStatusPanel::_on_scene_diff_ready));
 	harness_driver->connect("approval_requested", callable_mp(this, &AIStatusPanel::_on_harness_approval_requested));
+	harness_driver->connect("policy_mode_changed", callable_mp(this, &AIStatusPanel::_on_policy_mode_changed));
 	harness_driver->set_policy_mode(harness_policy_mode);
 	harness_driver->set_model(harness_model);
 	harness_driver->connect("todos_updated", callable_mp(this, &AIStatusPanel::_on_todos_updated));
@@ -5440,6 +5456,8 @@ AIStatusPanel::AIStatusPanel() {
 	prompt_edit->set_h_size_flags(SIZE_EXPAND_FILL);
 	prompt_edit->set_custom_minimum_size(Size2(0, 60 * EDSCALE));
 	prompt_edit->set_line_wrapping_mode(TextEdit::LINE_WRAPPING_BOUNDARY);
+	// Line spacing while composing, matching the bubble's paragraph rhythm.
+	prompt_edit->add_theme_constant_override("line_spacing", (int)(8 * EDSCALE));
 	prompt_edit->connect("text_changed", callable_mp(this, &AIStatusPanel::_on_prompt_text_changed));
 	prompt_edit->connect("gui_input", callable_mp(this, &AIStatusPanel::_on_prompt_gui_input));
 	// Forward drag-and-drop from the FileSystem dock onto the input — drops the

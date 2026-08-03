@@ -86,12 +86,26 @@ reads; unknown/future tools are gated — safe by default):
   Requests queue; the composer returns when the queue drains (and on cancel/chat
   switch, which also answers the underlying requests).
 - **Auto**: everything runs silently.
-- **Read-only**: `readOnly` sandbox for codex, mutating editor tools refused with a
-  switch-modes message — a true plan-mode analog.
+- **Plan**: read-only enforcement (`readOnly` sandbox for codex, mutating editor tools
+  refused) plus per-turn `[PLAN MODE]` instructions: explore with read tools, present a
+  numbered plan in chat, ask for confirmation. The plan is chat text (modern
+  convention); its steps become live todos via codex's `update_plan` once the user
+  switches modes and says go. Codex's native `collaborationMode {mode: plan}` was
+  probed on 0.145.0: `thread/start` accepts the field but app-server ignores it
+  (byte-identical base prompt — it's a TUI-side feature); re-test on version bumps.
 
 Denied/refused tool calls still answer codex (success:false + explanation) AND resolve
 the panel's pending tool card; `developerInstructions` tells the model a denial is user
 intent, never to be retried.
+
+**Agent-initiated mode switching** (Claude Code's Enter/ExitPlanMode analog — codex has
+no model-invocable mode switch, so these are driver-native dynamic tools):
+`enter_plan_mode` switches into plan mode freely (restriction-increasing, no approval;
+remembers the prior mode). `exit_plan_mode` ALWAYS raises the composer plan-approval
+prompt ("Approve plan and execute?", showing the tool's plan_summary); on approval the
+driver restores the pre-plan mode and the model proceeds in the same turn; on decline
+the model is told to keep planning. Mode changes sync to the panel label and persist
+via the `policy_mode_changed` signal.
 
 Two rules hold in EVERY mode: protected paths (`.tscn`/`.scn`/`.tres`/`.res`/
 `project.godot`) are auto-declined — the editor tools are the only path to scenes — and

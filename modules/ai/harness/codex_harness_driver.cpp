@@ -61,6 +61,7 @@ void CodexHarnessDriver::_bind_methods() {
 	ADD_SIGNAL(MethodInfo("thinking_delta", PropertyInfo(Variant::STRING, "delta")));
 	ADD_SIGNAL(MethodInfo("thinking_done"));
 	ADD_SIGNAL(MethodInfo("approval_requested", PropertyInfo(Variant::DICTIONARY, "info")));
+	ADD_SIGNAL(MethodInfo("policy_mode_changed", PropertyInfo(Variant::INT, "mode")));
 }
 
 void CodexHarnessDriver::_smoke(const String &p_line) {
@@ -442,6 +443,42 @@ Array CodexHarnessDriver::_build_dynamic_tools() {
 		spec["inputSchema"] = fn.get("parameters", Dictionary());
 		specs.push_back(spec);
 	}
+	// Driver-native mode tools (Claude Code's Enter/ExitPlanMode analog —
+	// codex has no model-invocable mode switching, so the harness provides it).
+	{
+		Dictionary enter_spec;
+		enter_spec["type"] = "function";
+		enter_spec["name"] = "enter_plan_mode";
+		enter_spec["description"] =
+				"Switch this session into plan mode (read-only exploration; mutating tools "
+				"disabled). Call when the user asks for a plan, or before non-trivial work "
+				"when you want to propose an approach first.";
+		Dictionary empty_schema;
+		empty_schema["type"] = "object";
+		empty_schema["properties"] = Dictionary();
+		empty_schema["additionalProperties"] = false;
+		enter_spec["inputSchema"] = empty_schema;
+		specs.push_back(enter_spec);
+
+		Dictionary exit_spec;
+		exit_spec["type"] = "function";
+		exit_spec["name"] = "exit_plan_mode";
+		exit_spec["description"] =
+				"Request the user's approval to leave plan mode and execute the plan. Call "
+				"AFTER presenting the plan, when the user indicates they want to proceed. "
+				"The user must approve; if they decline, continue planning.";
+		Dictionary exit_schema;
+		Dictionary exit_props;
+		Dictionary summary_prop;
+		summary_prop["type"] = "string";
+		summary_prop["description"] = "One-line summary of the plan being approved.";
+		exit_props["plan_summary"] = summary_prop;
+		exit_schema["type"] = "object";
+		exit_schema["properties"] = exit_props;
+		exit_schema["additionalProperties"] = false;
+		exit_spec["inputSchema"] = exit_schema;
+		specs.push_back(exit_spec);
+	}
 	_smoke(vformat("declaring %d dynamic tools", specs.size()));
 	return specs;
 }
@@ -517,6 +554,23 @@ void CodexHarnessDriver::_start_turn(const String &p_text) {
 	emit_signal("api_round_started", turn_counter);
 
 	Array input;
+	// Plan mode intent (enforcement lives in the tool gate + readOnly
+	// sandbox; codex's native collaborationMode is app-server-inert on
+	// 0.145.0, so the instructions are ours).
+	if (policy_mode == POLICY_PLAN) {
+		Dictionary plan_item;
+		plan_item["type"] = "text";
+		plan_item["text"] =
+				"[PLAN MODE] The user wants a plan, not changes. Explore the project "
+				"with read-only tools (list_nodes, get_node_info, read_script, "
+				"read_scene_file, list_files, preview_asset, captures), then present a "
+				"concise numbered plan: what you'd change, in which scenes/scripts, and "
+				"why. Mutating tools are disabled and will fail — do not attempt them. "
+				"End by asking the user to confirm the plan. When they approve, call "
+				"exit_plan_mode to request execution.";
+		input.push_back(plan_item);
+		_smoke("injected [PLAN MODE]");
+	}
 	// Hidden context rides as separate input items ahead of the user text.
 	String session_ctx = _build_game_session_context();
 	if (!session_ctx.is_empty()) {
@@ -545,7 +599,7 @@ void CodexHarnessDriver::_start_turn(const String &p_text) {
 	// the plan). Read-only mode also constrains codex's own shell sandbox.
 	params["approvalPolicy"] = "untrusted";
 	Dictionary sandbox;
-	sandbox["type"] = policy_mode == POLICY_READ_ONLY ? "readOnly" : "workspaceWrite";
+	sandbox["type"] = policy_mode == POLICY_PLAN ? "readOnly" : "workspaceWrite";
 	params["sandboxPolicy"] = sandbox;
 	pending_turn_request = _send_request("turn/start", params);
 }
@@ -791,12 +845,47 @@ void CodexHarnessDriver::_handle_server_request(int p_id, const String &p_method
 		String tool = p_params.get("tool", "");
 		String call_id = p_params.get("callId", "");
 
+		// Agent-initiated mode switching, ahead of the policy gate:
+		// entering plan mode tightens restrictions — always allowed;
+		// exiting requires the user's plan approval — always prompted.
+		if (tool == "enter_plan_mode") {
+			_dispatch_tool_call(p_id, p_params);
+			return;
+		}
+		if (tool == "exit_plan_mode") {
+			if (policy_mode != POLICY_PLAN) {
+				_refuse_tool_call(p_id, tool, call_id, "Not in plan mode.", "error");
+				return;
+			}
+			Variant args_v = p_params.get("arguments", Dictionary());
+			Dictionary args;
+			if (args_v.get_type() == Variant::STRING) {
+				Variant parsed = JSON::parse_string(args_v);
+				if (parsed.get_type() == Variant::DICTIONARY) {
+					args = parsed;
+				}
+			} else if (args_v.get_type() == Variant::DICTIONARY) {
+				args = args_v;
+			}
+			Dictionary pending;
+			pending["type"] = "editor_tool";
+			pending["params"] = p_params;
+			pending_approvals[p_id] = pending;
+			Dictionary info;
+			info["kind"] = "exit_plan";
+			info["request_id"] = p_id;
+			info["tool"] = tool;
+			info["plan_summary"] = args.get("plan_summary", "");
+			emit_signal("approval_requested", info);
+			return;
+		}
+
 		// Editor tools obey the same policy as codex-native actions: reads
 		// are always free; anything that mutates or executes is gated.
 		if (!_is_read_only_tool(tool)) {
-			if (policy_mode == POLICY_READ_ONLY) {
+			if (policy_mode == POLICY_PLAN) {
 				_refuse_tool_call(p_id, tool, call_id,
-						"Read-only mode is active; mutating editor tools are disabled. Ask the user to switch approval modes (Shift+Tab) to make changes.",
+						"Plan mode is active: explore and plan only, no changes. Present your plan to the user; they approve it by switching modes (Shift+Tab) and telling you to proceed.",
 						"error");
 				return;
 			}
@@ -886,11 +975,11 @@ void CodexHarnessDriver::_route_approval(int p_request_id, const Dictionary &p_i
 			_send_response(p_request_id, resp);
 			_smoke("auto-accepted approval");
 		} break;
-		case POLICY_READ_ONLY: {
+		case POLICY_PLAN: {
 			Dictionary resp;
 			resp["decision"] = "decline";
 			_send_response(p_request_id, resp);
-			_smoke("declined approval (read-only mode)");
+			_smoke("declined approval (plan mode)");
 		} break;
 		case POLICY_ASK:
 		default: {
@@ -914,6 +1003,12 @@ void CodexHarnessDriver::respond_approval(int p_request_id, const String &p_deci
 		String tool = params.get("tool", "");
 		String call_id = params.get("callId", "");
 		if (p_decision == "decline") {
+			if (tool == "exit_plan_mode") {
+				_refuse_tool_call(p_request_id, tool, call_id,
+						"The user chose to keep planning. Revise the plan based on their feedback before asking again.",
+						"cancelled");
+				return;
+			}
 			_refuse_tool_call(p_request_id, tool, call_id,
 					"The user denied this action. Do not retry it; ask the user how to proceed if needed.",
 					"cancelled");
@@ -1138,6 +1233,33 @@ Dictionary CodexHarnessDriver::_tool_response_from_result(const String &p_tool, 
 void CodexHarnessDriver::_dispatch_tool_call(int p_request_id, const Dictionary &p_params) {
 	String tool = p_params.get("tool", "");
 	String call_id = p_params.get("callId", "");
+
+	if (tool == "enter_plan_mode") {
+		if (policy_mode != POLICY_PLAN) {
+			pre_plan_mode = policy_mode;
+			policy_mode = POLICY_PLAN;
+			emit_signal("policy_mode_changed", (int)policy_mode);
+		}
+		Dictionary exec_result;
+		exec_result["status"] = "success";
+		Dictionary rd;
+		rd["note"] = "Plan mode active: explore with read-only tools and present a plan. Call exit_plan_mode when the user approves it.";
+		exec_result["result"] = rd;
+		_send_response(p_request_id, _tool_response_from_result(tool, Dictionary(), call_id, exec_result));
+		return;
+	}
+	if (tool == "exit_plan_mode") {
+		// Only reachable after the user's plan approval (respond_approval).
+		policy_mode = pre_plan_mode == POLICY_PLAN ? POLICY_ASK : pre_plan_mode;
+		emit_signal("policy_mode_changed", (int)policy_mode);
+		Dictionary exec_result;
+		exec_result["status"] = "success";
+		Dictionary rd;
+		rd["note"] = "Plan approved by the user. Proceed with the implementation.";
+		exec_result["result"] = rd;
+		_send_response(p_request_id, _tool_response_from_result(tool, Dictionary(), call_id, exec_result));
+		return;
+	}
 
 	if (tool == "run_and_screenshot") {
 		// Held-open: answered when the game has run and captures arrived.

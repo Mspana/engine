@@ -2,11 +2,13 @@
 
 ## Ideas / Future Features
 
-Fix bad looking connected icon.
+~~Fix bad looking connected icon.~~ (7/30: ColorRect base painted a white square under the non-AA circle; transparent fill + antialiased draw.)
 Why have //res: displayed? just have them sit at the root.
 Thoughts should be one line, with ... -  let the user click it to expand.
 Have user prompts be a fixed maximum of 3 lines, and let the user click it to expand.
 Move edit symbols to the left of the user bubble.
+
+Delete old chats?
 
 ~~Tool calls are failing when they actually succeed. The AI set a square to blue, it became blue, but because the tool call failed the AI tried a few other things without realizing it didn't need to.~~
 FIXED 7/30: false negative in set_property — hex/named color strings ("#0000ff",
