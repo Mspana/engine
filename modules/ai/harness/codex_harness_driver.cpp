@@ -566,6 +566,8 @@ void CodexHarnessDriver::_start_turn(const String &p_text) {
 				"read_scene_file, list_files, preview_asset, captures), then present a "
 				"concise numbered plan: what you'd change, in which scenes/scripts, and "
 				"why. Mutating tools are disabled and will fail — do not attempt them. "
+				"Wrap the plan itself between two lines containing exactly [PLAN] and "
+				"[/PLAN] — the editor renders that section as a distinct plan card. "
 				"End by asking the user to confirm the plan. When they approve, call "
 				"exit_plan_mode to request execution.";
 		input.push_back(plan_item);

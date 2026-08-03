@@ -517,6 +517,11 @@ private:
 	// borderless rich text with markdown rendering — the single source of
 	// truth for how assistant prose looks.
 	Control *_create_assistant_text_block(const String &p_text, RichTextLabel **r_label = nullptr);
+	// Plan sections ([PLAN]...[/PLAN] delimiter lines, emitted per the plan-mode
+	// instructions) render as rounded slate panels; everything else as normal
+	// text blocks. Appends at the end, or before p_insert_before when given.
+	Control *_create_plan_panel(const String &p_text);
+	void _append_assistant_blocks(const String &p_text, Control *p_insert_before);
 	void _on_harness_thinking_delta(const String &p_delta);
 	void _finalize_harness_thinking();
 

@@ -1389,15 +1389,15 @@ void AIStatusPanel::_rebuild_message_list() {
 				}
 
 				// Render text blocks with the shared assistant renderer — same
-				// borderless rich text as live runs (no legacy bubbles).
+				// borderless rich text (and plan panels) as live runs.
 				Array content = item.data.get("content", Array());
 				for (int j = 0; j < content.size(); j++) {
 					Dictionary block = content[j];
 					if (String(block.get("type", "")) == "text") {
 						String text = block.get("text", "");
 						if (!text.is_empty()) {
-							message_list->add_child(_create_assistant_text_block(text));
-							break; // one text block per assistant item
+							_append_assistant_blocks(text, nullptr);
+							break; // one text item per assistant item
 						}
 					}
 				}
@@ -3785,6 +3785,78 @@ Control *AIStatusPanel::_create_assistant_text_block(const String &p_text, RichT
 	return wrapper;
 }
 
+Control *AIStatusPanel::_create_plan_panel(const String &p_text) {
+	MarginContainer *wrapper = memnew(MarginContainer);
+	wrapper->add_theme_constant_override("margin_left", AIColors::PADDING_SM * EDSCALE);
+	wrapper->add_theme_constant_override("margin_right", 0);
+	wrapper->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+
+	PanelContainer *panel = memnew(PanelContainer);
+	panel->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	Ref<StyleBoxFlat> style;
+	style.instantiate();
+	style->set_bg_color(AIColors::ASSISTANT_BG);
+	style->set_corner_radius_all(AIColors::CORNER_RADIUS_LG * EDSCALE);
+	style->set_content_margin_all(AIColors::PADDING_MD * EDSCALE);
+	// Deliberately no border: the shade shift alone marks the plan.
+	panel->add_theme_style_override("panel", style);
+	wrapper->add_child(panel);
+
+	RichTextLabel *label = memnew(RichTextLabel);
+	label->set_use_bbcode(true);
+	label->set_fit_content(true);
+	label->set_scroll_active(false);
+	label->set_selection_enabled(true);
+	label->set_autowrap_mode(TextServer::AUTOWRAP_WORD_SMART);
+	label->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	label->add_theme_color_override("default_color", AIColors::TEXT_PRIMARY);
+	label->set_text(_markdown_to_bbcode(p_text));
+	panel->add_child(label);
+
+	wrapper->set_meta("_bubble_plain_text", p_text);
+	label->connect("gui_input", callable_mp(this, &AIStatusPanel::_on_message_bubble_gui_input).bind(wrapper));
+	wrapper->connect("gui_input", callable_mp(this, &AIStatusPanel::_on_message_bubble_gui_input).bind(wrapper));
+	return wrapper;
+}
+
+void AIStatusPanel::_append_assistant_blocks(const String &p_text, Control *p_insert_before) {
+	if (!message_list) {
+		return;
+	}
+	// Split into normal and [PLAN]-delimited segments (delimiters on their own
+	// lines, stripped from display; an unclosed [PLAN] runs to the end).
+	PackedStringArray lines = p_text.split("\n");
+	String segment;
+	bool in_plan = false;
+	Vector<Control *> blocks;
+	for (int i = 0; i <= lines.size(); i++) {
+		bool at_end = i == lines.size();
+		String stripped = at_end ? String() : lines[i].strip_edges();
+		bool is_open = stripped == "[PLAN]";
+		bool is_close = stripped == "[/PLAN]";
+		if (at_end || is_open || is_close) {
+			String seg = segment.strip_edges();
+			if (!seg.is_empty()) {
+				blocks.push_back(in_plan ? _create_plan_panel(seg) : _create_assistant_text_block(seg));
+			}
+			segment = String();
+			if (is_open) {
+				in_plan = true;
+			} else if (is_close) {
+				in_plan = false;
+			}
+			continue;
+		}
+		segment += lines[i] + "\n";
+	}
+	for (Control *block : blocks) {
+		message_list->add_child(block);
+		if (p_insert_before) {
+			message_list->move_child(block, p_insert_before->get_index());
+		}
+	}
+}
+
 void AIStatusPanel::_on_harness_thinking_delta(const String &p_delta) {
 	if (!message_list) {
 		return;
@@ -3870,29 +3942,31 @@ void AIStatusPanel::_on_orchestrator_assistant_item(const Dictionary &p_item) {
 				break;
 			}
 			if (use_harness_mode && harness_streaming && harness_stream_block && harness_stream_rich) {
-				// The streamed block IS the final rendering: set the
-				// authoritative text, release it to the transcript, and put
-				// the dots back for the rest of the turn.
-				harness_stream_rich->set_text(_markdown_to_bbcode(text));
-				harness_stream_block->set_meta("_bubble_plain_text", text);
-				harness_stream_block = nullptr;
-				harness_stream_rich = nullptr;
+				if (text.contains("[PLAN]")) {
+					// Plan sections re-render as distinct panels: swap the
+					// streamed block for the split layout (it sits at the
+					// end; the dots were removed when streaming began).
+					message_list->remove_child(harness_stream_block);
+					memdelete(harness_stream_block);
+					harness_stream_block = nullptr;
+					harness_stream_rich = nullptr;
+					_append_assistant_blocks(text, nullptr);
+				} else {
+					// The streamed block IS the final rendering: set the
+					// authoritative text and release it to the transcript.
+					harness_stream_rich->set_text(_markdown_to_bbcode(text));
+					harness_stream_block->set_meta("_bubble_plain_text", text);
+					harness_stream_block = nullptr;
+					harness_stream_rich = nullptr;
+				}
 				harness_streaming = false;
 				harness_stream_text = String();
 				_show_pending_message();
 				break;
 			}
-			// No live stream to finalize (legacy loop, or a raced item):
-			// append the shared assistant text block directly.
-			Control *rich = _create_assistant_text_block(text);
-			if (pending_message) {
-				int idx = pending_message->get_index();
-				message_list->add_child(rich);
-				message_list->move_child(rich, idx);
-			} else {
-				message_list->add_child(rich);
-			}
-			break; // one text block per assistant item
+			// No live stream to finalize (legacy loop, or a raced item).
+			_append_assistant_blocks(text, pending_message);
+			break; // one text item per assistant item
 		}
 	}
 
