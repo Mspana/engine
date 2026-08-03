@@ -723,6 +723,21 @@ Dictionary AI::execute_single_action(const Dictionary &p_action) {
         }
     }
 
+    // Read-before-write tracking: record successful reads here, at the single
+    // choke point every execution path shares (legacy orchestrator and harness
+    // dynamic tools alike).
+    if (action_succeeded && (action_name == "read_script" || action_name == "create_script" || action_name == "read_scene_file")) {
+        Dictionary r = action_result.get("result", Dictionary());
+        String fp = r.get("file_path", action_args.get("file_path", ""));
+        if (!fp.is_empty()) {
+            if (action_name == "read_scene_file") {
+                _read_scene_paths.insert(_normalize_read_path(fp));
+            } else {
+                _read_script_paths.insert(_normalize_read_path(fp));
+            }
+        }
+    }
+
     // Inject game state into every result so the model always has situational awareness.
     action_result["game_running"] = game_is_running;
     return action_result;
@@ -869,11 +884,24 @@ bool AI::_was_file_read_in_history(const String &file_path, const Vector<String>
 	return false;
 }
 
+String AI::_normalize_read_path(const String &p_path) {
+	// res:// and absolute forms of the same file must compare equal.
+	return ProjectSettings::get_singleton()->globalize_path(p_path).simplify_path();
+}
+
 bool AI::was_file_read(const String &file_path) const {
+	if (_read_script_paths.has(_normalize_read_path(file_path))) {
+		return true;
+	}
+	// Fallback for legacy chats resumed after an editor restart, where the
+	// in-memory set is empty but the orchestrator history carries the read.
 	return _was_file_read_in_history(file_path, { "read_script", "create_script" });
 }
 
 bool AI::was_scene_file_read(const String &file_path) const {
+	if (_read_scene_paths.has(_normalize_read_path(file_path))) {
+		return true;
+	}
 	return _was_file_read_in_history(file_path, { "read_scene_file" });
 }
 
@@ -995,6 +1023,12 @@ Array AI::request_actions_with_history(const Array &p_messages) {
 
 // Provider management
 void AI::set_current_chat_id(const String &p_chat_id) {
+    if (_current_chat_id != p_chat_id) {
+        // New conversation: reads from the previous chat no longer license
+        // writes (same scoping the history-based check had).
+        _read_script_paths.clear();
+        _read_scene_paths.clear();
+    }
     _current_chat_id = p_chat_id;
 }
 

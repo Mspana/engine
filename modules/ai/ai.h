@@ -3,6 +3,7 @@
 
 #include "core/object/object.h"         // Base class
 #include "core/io/image.h"              // For Ref<Image> in receive_screenshot
+#include "core/templates/hash_set.h"    // For read-before-write tracking
 #include "core/variant/array.h"         // For Array return type
 #include "core/string/ustring.h"        // For String parameter type
 #include "core/variant/dictionary.h"    // Added for Dictionary type hint
@@ -85,6 +86,15 @@ private:
 
 	// Check conversation history for a prior call to any of the given tools on this file
 	bool _was_file_read_in_history(const String &file_path, const Vector<String> &p_tool_names) const;
+
+	// Read-before-write tracking. Reads are recorded here directly by
+	// execute_single_action, so the gate works for every execution path —
+	// the legacy orchestrator's history walk misses harness (codex) runs,
+	// where the conversation lives outside the engine. Cleared when the
+	// chat id changes so the requirement stays scoped to a conversation.
+	HashSet<String> _read_script_paths; // Normalized; read_script/create_script
+	HashSet<String> _read_scene_paths;  // Normalized; read_scene_file
+	static String _normalize_read_path(const String &p_path);
 
 	// File operation helpers for UndoRedo
 	void _create_script_file(const String &abs_path, const String &content);
