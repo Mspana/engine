@@ -1309,7 +1309,7 @@ GameViewPlugin::GameViewPlugin() {
 
 #ifndef ANDROID_ENABLED
 	window_wrapper = memnew(WindowWrapper);
-	window_wrapper->set_window_title(vformat(TTR("%s - Godot Engine"), TTR("Game Workspace")));
+	window_wrapper->set_window_title(vformat(TTR("%s - Aristotle"), TTR("Game Workspace")));
 	window_wrapper->set_margins_enabled(true);
 
 	game_view = memnew(GameView(debugger, window_wrapper));

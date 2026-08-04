@@ -803,7 +803,7 @@ void ProjectManager::_open_recovery_mode_ask(bool manual) {
 	// Only show the initial crash preamble if this popup wasn't manually triggered.
 	if (!manual) {
 		recovery_mode_details +=
-				TTR("It looks like Godot crashed when opening this project the last time. If you're having problems editing this project, you can try to open it in Recovery Mode.") +
+				TTR("It looks like Aristotle crashed when opening this project the last time. If you're having problems editing this project, you can try to open it in Recovery Mode.") +
 				String::utf8("\n\n");
 	}
 
@@ -1361,8 +1361,8 @@ ProjectManager::ProjectManager() {
 
 		title_bar_logo = memnew(Button);
 		title_bar_logo->set_flat(true);
-		title_bar_logo->set_tooltip_text(TTR("About Godot"));
-		title_bar_logo->set_accessibility_name(TTRC("About Godot"));
+		title_bar_logo->set_tooltip_text(TTR("About Aristotle"));
+		title_bar_logo->set_accessibility_name(TTRC("About Aristotle"));
 		left_hbox->add_child(title_bar_logo);
 		title_bar_logo->connect(SceneStringName(pressed), callable_mp(this, &ProjectManager::_show_about));
 

@@ -1,15 +1,14 @@
-# Godot Engine
+# Aristotle
 
 <p align="center">
-  <a href="https://godotengine.org">
-    <img src="logo_outlined.svg" width="400" alt="Godot Engine logo">
-  </a>
+  <img src="logo_outlined.svg" width="400" alt="Aristotle logo">
 </p>
 
-## 2D and 3D cross-platform game engine
+## 2D and 3D cross-platform game engine with a built-in AI assistant
 
-**[Godot Engine](https://godotengine.org) is a feature-packed, cross-platform
-game engine to create 2D and 3D games from a unified interface.** It provides a
+**Aristotle is an AI-native game engine built on [Godot Engine](https://godotengine.org),
+a feature-packed, cross-platform game engine to create 2D and 3D games from a
+unified interface.** It provides a
 comprehensive set of [common tools](https://godotengine.org/features), so that
 users can focus on making games without having to reinvent the wheel. Games can
 be exported with one click to a number of platforms, including the major desktop

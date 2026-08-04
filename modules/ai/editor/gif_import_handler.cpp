@@ -521,7 +521,7 @@ void GIFImportHandler::_on_files_dropped(const PackedStringArray &p_files) {
 
 	if (_dialog_label) {
 		_dialog_label->set_text(
-				TTR("GIFs are not natively supported in Godot. Convert to a sprite sheet?\n\n") +
+				TTR("GIFs are not natively supported in Aristotle. Convert to a sprite sheet?\n\n") +
 				_pending_gif_path);
 	}
 	if (_dialog) {
