@@ -1,58 +1,97 @@
 # Branding
 
-The engine presents itself as **Aristotle**. This document describes where the
-branding lives and what deliberately remains "Godot".
+The engine presents itself as **Aristotle**. This records the principles behind
+the rebrand, its risks, and the knowledge needed to maintain it — not a
+change-by-change history.
 
-## Identity
+## Principles
 
-- The display name comes from `version.py` (`name = "Aristotle"`). It flows into
-  the editor and project manager window titles, the About dialog, the CLI
-  banner, the Output panel startup line, and the Windows exe metadata.
-- `short_name` stays `"godot"` on purpose: it determines the user data folders
-  (`%APPDATA%\Godot`, `user://` roots). Changing it would orphan existing editor
-  settings, project caches, and AI chat logs.
+- **Display identity is Aristotle; lineage is Godot.** Anything a user reads as
+  "the product" — names, logos, window titles, installer, taskbar identity —
+  says Aristotle. Anything that is legal attribution (copyright lines, license
+  tabs, About credits) or a factual upstream reference (Godot 3→4 migration
+  dialogs) keeps the Godot name: the MIT license requires the former, honesty
+  the latter. Where a brand name added nothing ("Open Godot online
+  documentation"), the string was neutralized instead ("Open online
+  documentation").
+- **Identifiers only change when the fallout is understood.** Class names, C#
+  namespaces, and stored project-setting values (e.g. `GodotPhysics2D`) stay —
+  renaming them breaks projects for zero visual gain. The identifiers we *did*
+  change, and their fallout, are under Risks below.
+- **All derived art regenerates from one source.** `modules/ai/aristotle
+  logo.png` (ink `#35221F`, cream `#FDF3E6`) is the only hand-made asset;
+  `misc/scripts/generate_aristotle_assets.py` traces and rasterizes everything
+  else: editor logo icons, window/exe icons, splash, root repo art, web logo,
+  installer/console masters, and the document-icon masters. Never hand-edit a
+  generated asset — change the script and re-run it.
+- **"Support Godot Development" stays** in the Help menu (upstream deserves the
+  funnel). It may move somewhere less prominent later, but it does not get
+  removed or rebranded.
 
-## Logo and derived assets
+## Identity and data directories
 
-The source of truth is `modules/ai/aristotle logo.png` (brown circled-A monogram
-plus "Aristotle" wordmark on cream; ink `#35221F`, cream `#FDF3E6`).
+`version.py` is the identity root: `name = "Aristotle"` is the display name;
+`short_name = "aristotle"` is the filesystem/OS identity. short_name determines
+`%APPDATA%\Aristotle\` (and macOS/Linux analogues): editor settings, caches,
+export templates, and every project's `user://` root under `app_userdata/`.
 
-All derived art is produced by `misc/scripts/generate_aristotle_assets.py`,
-which traces the bitmap into vector paths and rasterizes the rest. Run it again
-if the logo ever changes. It covers:
+**Risk — data migration (one-time, after the short_name change).** Everything
+previously under `%APPDATA%\Godot` is orphaned, not deleted. Migration:
 
-- Boot splash (the splash itself is built straight from the logo by `main/SCsub`).
-- Editor window/taskbar icon (`main/app_icon.png`) and the Windows executable
-  icons (`platform/windows/*.ico`).
-- Editor UI logos: About dialog and credits roll (`Logo.svg`), project manager
-  title bar (`TitleBarLogo.svg`), Help menu icon (`Godot.svg`), project file
-  icons (`GodotMonochrome.svg`, `GodotFile.svg`), and the icon written into
-  every newly created project (`DefaultProjectIcon.svg`).
-- Root repository art (`icon.*`, `logo.*`) and the web editor/export logo.
+1. Copy the tree: `robocopy %APPDATA%\Godot %APPDATA%\Aristotle /E`.
+2. Delete the stale junctions inside `Documents\Godot AI Chats\` (`rmdir`
+   each one — junctions delete without touching their targets).
+   `_ensure_chat_junction` in `modules/ai/ai.cpp` **skips junctions that
+   already exist**, so until the old ones are removed they silently point at
+   the dead location and the godot-ai-dashboard watches stale data. The next
+   editor run recreates them against the new path.
 
-The icon files keep their original Godot names — the engine looks them up by
-name, and renaming them would touch many call sites for no visual gain.
+The `Documents\Godot AI Chats` folder name itself is a literal in ai.cpp and
+deliberately keeps its name — the dashboard and existing habits depend on it.
 
-`modules/ai/icons/` can override most editor icons by filename, but the
-default project icon is resolved by a first-match lookup, so the logo icons
-above are replaced in place in `editor/icons/` instead.
+**Risk — Windows identity.** The AppUserModelID changed from
+`Godot.GodotEditor.*` to `Aristotle.AristotleEditor.*` (and `Aristotle.<app>`
+for exported games): pinned taskbar icons regroup once after first launch. The
+Inno Setup installer has a fresh AppId GUID so an Aristotle install can never
+collide with, or hijack the uninstall entry of, a real Godot install.
 
-## What intentionally stays "Godot"
+## Versioning
 
-- Legal attribution: copyright lines, license texts, and the About dialog's
-  authors/donors/third-party tabs (required by the MIT license).
-- Historical/compatibility text: Godot 3 to 4 migration dialogs and messages
-  that refer to real Godot versions or file formats.
-- Links to Godot documentation and the "Support Godot Development" menu item,
-  which point at Godot's actual sites.
-- Engine-internal identifiers: class names, `GodotPhysics`, C# namespaces,
-  the `user://` directory name, and similar — renaming these breaks projects.
-- The AI assistant's system prompt still says the engine is Godot-based so the
-  model can apply its Godot API knowledge.
+Version numbers (4.5.dev) deliberately track the upstream Godot base so merges
+stay sane. Consequences:
 
-## Not yet swept (low priority)
+- The editor's update checker (`EngineUpdateLabel`, setting
+  `network/connection/check_for_updates`, default "check newest" on dev
+  builds) compares against Godot's release feed, so when online it nags about
+  Godot releases we will never install. Short-term fix: set the editor setting
+  to "Disable Update Checks" (offline mode also silences it). Long-term:
+  repoint or remove `editor/engine_update_label.cpp` once Aristotle has its own
+  release identity. Never "update" over an Aristotle install with an upstream
+  installer — they are separate apps with separate data dirs as of this
+  rebrand.
 
-macOS bundle icons (`.icns`), Android launcher icons and app label, Linux
-desktop/MIME files, and the macOS document icons in `misc/dist/document_icons/`
-still carry Godot art or names. They only matter when packaging for those
-platforms.
+## Branded surfaces
+
+Display name (window titles, About, CLI banner, exe metadata) flows from
+`version.py`. Generated art covers: boot splash (built from the logo by
+`main/SCsub`), window/taskbar icon, Windows exe + console icons and their
+`misc/dist` master SVGs, editor UI logos (`Logo`, `TitleBarLogo`, `Godot`,
+`GodotMonochrome`, `GodotFile`, `DefaultProjectIcon` — names kept because the
+engine looks icons up by name), root repository art, web editor logo, and the
+document-icon masters in `misc/dist/document_icons/` (paper + monogram + a
+per-type accent bar). New projects receive the Aristotle icon via
+`DefaultProjectIcon`; pre-existing projects each own a local `icon.svg` that
+had to be replaced per project.
+
+Note: `DefaultProjectIcon` must live in `editor/icons/` (not the
+`modules/ai/icons/` override dir) because `get_default_project_icon()` takes
+the first name match in the icon table, and module icons register last.
+
+## Not yet swept (matters only when packaging for these platforms)
+
+- macOS: `Godot.icns`/document `.icns` bundles and their `Info.plist` refs.
+- Android: launcher mipmaps, "Godot Engine 4" editor app label, strings.xml.
+- Linux: `.desktop`/MIME/appdata files, X11 `WM_CLASS`, Wayland
+  `app_id "org.godotengine.Godot"`.
+- Network/runtime identity: HTTP `User-Agent: GodotEngine/...`, OpenXR
+  application/engine names.

@@ -1219,7 +1219,7 @@ TextShaderEditor::TextShaderEditor() {
 	site_search->set_flat(true);
 	site_search->connect(SceneStringName(pressed), callable_mp(this, &TextShaderEditor::_menu_option).bind(HELP_DOCS));
 	site_search->set_text(TTR("Online Docs"));
-	site_search->set_tooltip_text(TTR("Open Godot online documentation."));
+	site_search->set_tooltip_text(TTR("Open online documentation."));
 	hbc->add_child(site_search);
 	hbc->add_child(memnew(VSeparator));
 

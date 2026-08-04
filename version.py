@@ -1,4 +1,4 @@
-short_name = "godot"
+short_name = "aristotle"
 name = "Aristotle"
 major = 4
 minor = 5

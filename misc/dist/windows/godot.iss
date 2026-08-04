@@ -1,11 +1,12 @@
-#define MyAppName "Godot Engine"
+#define MyAppName "Aristotle"
 #define MyAppVersion "4.5"
-#define MyAppPublisher "Godot Engine contributors"
+#define MyAppPublisher "Aristotle contributors"
 #define MyAppURL "https://godotengine.org/"
 #define MyAppExeName "godot.exe"
 
 [Setup]
-AppId={{60D07AAA-400E-40F5-B073-A796C34D9D78}
+; Fresh GUID so an Aristotle install never collides with an official Godot install.
+AppId={{4ECC3BC4-6027-4E1E-8414-260BFDAEDEA4}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 ; Don't add "version {version}" to the installed app name in the Add/Remove Programs
@@ -15,16 +16,16 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
-AppComments=Godot Engine editor
+AppComments=Aristotle editor
 ChangesEnvironment=yes
-DefaultDirName={localappdata}\Godot
-DefaultGroupName=Godot Engine
+DefaultDirName={localappdata}\Aristotle
+DefaultGroupName=Aristotle
 AllowNoIcons=yes
 UninstallDisplayIcon={app}\{#MyAppExeName}
 #ifdef App32Bit
-  OutputBaseFilename=godot-setup-x86
+  OutputBaseFilename=aristotle-setup-x86
 #else
-  OutputBaseFilename=godot-setup-x86_64
+  OutputBaseFilename=aristotle-setup-x86_64
   ArchitecturesAllowed=x64
   ArchitecturesInstallIn64BitMode=x64
 #endif
@@ -37,7 +38,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
-Name: "modifypath"; Description: "Add Godot to PATH environment variable"
+Name: "modifypath"; Description: "Add Aristotle to PATH environment variable"
 
 [Files]
 Source: "{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion

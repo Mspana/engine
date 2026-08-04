@@ -21,7 +21,7 @@ The AI assistant runs multi-turn agentic loops where a single user request can t
 ### Storage layout
 
 ```
-%APPDATA%/Godot/app_userdata/<project>/ai_chat/
+%APPDATA%/Aristotle/app_userdata/<project>/ai_chat/
 ├── chat_1775348423238.jsonl        # conversation stream (append-only)
 ├── chat_1775348423238.meta.json    # checkpoints for rewind
 ├── chat_1775418614055.jsonl
@@ -303,7 +303,7 @@ Each checkpoint records how many JSONL items existed at that point (`item_count`
 
 - **Full rewrite on rewind.** Checkpoint restoration rewrites the entire JSONL file. For long conversations this means writing potentially hundreds of KB. In practice this is fast (< 100ms) but it's architecturally less clean than a WAL or tombstone approach.
 
-- **No compression.** Tool results can be verbose (full script contents, scene tree dumps). A single conversation with heavy `read_script` usage can reach hundreds of KB. There's no deduplication or compression — every tool result is stored in full.
+- **No compression.** Tool results can be verbose (full script contents, scene tree dumps). A single conversation with heavy `read_file` usage can reach hundreds of KB. There's no deduplication or compression — every tool result is stored in full.
 
 - **Context injections stored but not consumed from file.** `engine_state` and `todo_state` items are written to the JSONL for completeness, but on reload they're ignored — the orchestrator injects fresh context at runtime. This means the stored injections are purely archival right now, not functional.
 
@@ -327,4 +327,4 @@ Each checkpoint records how many JSONL items existed at that point (`item_count`
 
 - **Conversation search.** With JSONL files on disk, a lightweight search tool could index conversations by content, tool names, or date ranges. The centralized folder structure already makes this feasible with basic shell scripts.
 
-- **Compression or deduplication.** For conversations with many `read_script` calls on the same file, the full file content is stored each time. A reference-based approach (store the content once, reference by hash) could significantly reduce file sizes for long sessions.
+- **Compression or deduplication.** For conversations with many `read_file` calls on the same file, the full file content is stored each time. A reference-based approach (store the content once, reference by hash) could significantly reduce file sizes for long sessions.

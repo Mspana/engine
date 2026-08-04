@@ -171,3 +171,48 @@ splash.paste(sc, ((800 - sc.width) // 2, (600 - sc.height) // 2))
 write_png("main/splash.png", splash)
 write_png("misc/dist/ios_xcode/godot_ios/Images.xcassets/SplashImage.imageset/splash@2x.png", splash)
 write_png("misc/dist/ios_xcode/godot_ios/Images.xcassets/SplashImage.imageset/splash@3x.png", splash)
+
+# Console icon master art: monogram disc with the original terminal badge overlay.
+CONSOLE_BADGE = (
+    '<rect width="430" height="330" x="550" y="650" fill="#414042" stroke="#fff" stroke-width="20" rx="20"/>'
+    '<path fill="#fff" d="M590 750a10 10 0 0 0 0 14.142l70 70-70 70a10 10 0 0 0 0 14.142l20 20a10 10 0 0 0 '
+    '14.142 0l97.071-97.071a10 10 0 0 0 0-14.142L624.142 730A10 10 0 0 0 610 730zm180 145a10 10 0 0 0-10 '
+    '10v25a10 10 0 0 0 10 10h160a10 10 0 0 0 10-10v-25a10 10 0 0 0-10-10z"/>')
+write("misc/dist/icon_console.svg",
+      f'<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024">'
+      f'<circle cx="512" cy="480" r="430" fill="{CREAM}"/>'
+      f'<path {P} d="{mono_path(512, 480, 430, prec=1)}"/>{CONSOLE_BADGE}</svg>\n')
+
+# Document icon master art (macOS .icns / Linux MIME sources): paper sheet with a
+# folded corner, centered monogram, and a per-type accent bar.
+DOC_TYPES = {
+    "project": INK,
+    "scene": "#5a9bd8",
+    "gdscript": "#4aa3a0",
+    "resource": "#6fbf68",
+    "shader": "#e070a8",
+}
+DOC_SIZES = {"": 1024, "_small": 32, "_extra_small": 16}
+
+
+def doc_icon(size, accent):
+    s = size / 1024.0
+    n = lambda v: f"{v * s:.2f}".rstrip("0").rstrip(".")
+    stroke = max(20 * s, 1)
+    paper = (f'M{n(200)} {n(64)}H{n(640)}L{n(864)} {n(288)}V{n(920)}Q{n(864)} {n(960)} {n(824)} {n(960)}'
+             f'H{n(200)}Q{n(160)} {n(960)} {n(160)} {n(920)}V{n(104)}Q{n(160)} {n(64)} {n(200)} {n(64)}Z')
+    fold = f'M{n(640)} {n(64)}L{n(864)} {n(288)}H{n(680)}Q{n(640)} {n(288)} {n(640)} {n(248)}Z'
+    bar = (f'<rect x="{n(220)}" y="{n(840)}" width="{n(584)}" height="{n(64)}" rx="{n(32)}" '
+           f'fill="{accent}"/>')
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}">'
+            f'<path fill="#eff1f5" stroke="#9f9fa1" stroke-width="{stroke:.2f}" '
+            f'stroke-linejoin="round" d="{paper}"/>'
+            f'<path fill="#d8dade" stroke="#9f9fa1" stroke-width="{stroke:.2f}" '
+            f'stroke-linejoin="round" d="{fold}"/>'
+            f'<circle cx="{n(512)}" cy="{n(530)}" r="{n(250)}" fill="{CREAM}"/>'
+            f'<path {P} d="{mono_path(512 * s, 530 * s, 250 * s, prec=2)}"/>{bar}</svg>\n')
+
+
+for doc_type, accent in DOC_TYPES.items():
+    for suffix, size in DOC_SIZES.items():
+        write(f"misc/dist/document_icons/{doc_type}{suffix}.svg", doc_icon(size, accent))
