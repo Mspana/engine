@@ -127,6 +127,26 @@ pending→resolved tool cards like editor tools, so nothing executes invisibly.
   tool role); streams end with `data: [DONE]`.
 - Upstream registry is a static table (`UPSTREAMS`); models with native Responses
   endpoints (OpenAI, xAI) bypass the translator entirely via codex config.
+- **Rounds are re-merged on replay.** Codex fragments one model response into separate
+  items (reasoning, function_call ×N, message — text recorded *after* the calls it
+  announced). `translate_request` accumulates each round's fragments back into the
+  single assistant message the model actually produced (`content` + `tool_calls` +
+  `reasoning_content`), flushing at tool results / user messages. Without the merge,
+  replayed history filled up with text-only assistant messages mid-work, which taught
+  Kimi that stopping on "Let me do X:" with no tool call is normal — the premature
+  turn-stop bug of Aug 2026.
+- **Reasoning round-trips.** Kimi's `reasoning_content` stream becomes a real reasoning
+  output item (stable `rs_aristotle_*` id), which codex records in the rollout and
+  replays; on replay it is folded back as `reasoning_content` — current-turn rounds
+  only, for context economy. Moonshot's thinking models need this to keep their plan
+  across tool rounds. Rollback switch: `ARISTOTLE_TRANSLATOR_LEGACY_REASONING=1`
+  restores the old deltas-on-message behavior.
+- **Truncation is a failure, not a completion.** `finish_reason=length` (Kimi's
+  thinking shares the max_tokens budget) emits `response.failed` with code
+  `output_limit` so the turn errors visibly instead of silently stopping.
+- **Debugging:** `ARISTOTLE_TRANSLATOR_TRACE=1` prints each request's input item types
+  and the outgoing message shapes (role, tool count, has-reasoning). Unit tests live in
+  `modules/ai/tests/test_responses_translator.h` (`tests=yes` build).
 
 ## codex child specifics
 

@@ -192,7 +192,10 @@ class AppServer:
             return
         api_key = load_env_keys().get("OPENAI_API_KEY")
         if not api_key:
-            raise RuntimeError("OPENAI_API_KEY not found in .env")
+            # Mirror CodexHarnessDriver: custom providers (aristotle/sink) carry
+            # their own env_key auth, so proceed unauthenticated.
+            print("  [auth] no OPENAI_API_KEY; continuing unauthenticated (custom provider)")
+            return
         rid = self.send("account/login/start", {"type": "apiKey", "apiKey": api_key})
         resp = self.wait_response(rid, timeout=20)
         if "error" in resp:

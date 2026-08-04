@@ -393,7 +393,88 @@ static Array _repair_tool_adjacency(const Array &p_messages) {
 	return out;
 }
 
-Dictionary AIResponsesTranslator::_translate_request(const Dictionary &p_req, String &r_err) {
+// Codex fragments one model response into separate rollout items (reasoning,
+// function_call xN, message) — and its item ordering even puts the text after
+// the calls it announced. Replaying those fragments as separate assistant
+// messages misrepresents the model's own past behavior: the transcript fills
+// with text-only assistant messages mid-work, which teaches the model that
+// sampling one live is normal — but a chat-completions API never re-samples
+// after a text-only stop, so the turn dies. Accumulate the fragments and
+// re-merge them into the single assistant message the model actually produced.
+struct PendingAssistant {
+	String reasoning;
+	String text;
+	Array tool_calls;
+
+	bool has_payload() const { return !reasoning.is_empty() || !text.is_empty() || !tool_calls.is_empty(); }
+	void reset() {
+		reasoning = String();
+		text = String();
+		tool_calls = Array();
+	}
+};
+
+static void _flush_pending_assistant(PendingAssistant &p_pending, Array &r_messages) {
+	if (p_pending.has_payload()) {
+		Dictionary msg;
+		msg["role"] = "assistant";
+		msg["content"] = p_pending.text;
+		if (!p_pending.tool_calls.is_empty()) {
+			msg["tool_calls"] = p_pending.tool_calls;
+		}
+		if (!p_pending.reasoning.is_empty()) {
+			msg["reasoning_content"] = p_pending.reasoning;
+		}
+		r_messages.push_back(msg);
+	}
+	p_pending.reset();
+}
+
+// Reasoning text lives in content[] (reasoning_text/text parts), with
+// summary[] (summary_text parts) as fallback — the shapes codex records for
+// the reasoning items this translator emits.
+static String _extract_reasoning_text(const Dictionary &p_item) {
+	String out;
+	Array content = p_item.get("content", Array());
+	for (int i = 0; i < content.size(); i++) {
+		if (content[i].get_type() != Variant::DICTIONARY) {
+			continue;
+		}
+		Dictionary part = content[i];
+		String type = part.get("type", "");
+		if (type == "reasoning_text" || type == "text") {
+			String text = part.get("text", "");
+			if (!text.is_empty()) {
+				if (!out.is_empty()) {
+					out += "\n";
+				}
+				out += text;
+			}
+		}
+	}
+	if (!out.is_empty()) {
+		return out;
+	}
+	Array summary = p_item.get("summary", Array());
+	for (int i = 0; i < summary.size(); i++) {
+		if (summary[i].get_type() != Variant::DICTIONARY) {
+			continue;
+		}
+		Dictionary part = summary[i];
+		if (String(part.get("type", "")) == "summary_text") {
+			String text = part.get("text", "");
+			if (!text.is_empty()) {
+				if (!out.is_empty()) {
+					out += "\n";
+				}
+				out += text;
+			}
+		}
+	}
+	return out;
+}
+
+Dictionary AIResponsesTranslator::translate_request(const Dictionary &p_req, String &r_err) {
 	Dictionary chat;
 	Array messages;
 
@@ -406,6 +487,23 @@ Dictionary AIResponsesTranslator::_translate_request(const Dictionary &p_req, St
 	}
 
 	Array input = p_req.get("input", Array());
+
+	// Current-turn boundary: replayed reasoning is folded back into assistant
+	// messages only for rounds after the last user message (Moonshot's
+	// thinking-model guidance covers the in-flight turn; older reasoning is
+	// dropped for context economy).
+	int last_user_idx = -1;
+	for (int i = 0; i < input.size(); i++) {
+		if (input[i].get_type() != Variant::DICTIONARY) {
+			continue;
+		}
+		Dictionary item = input[i];
+		if (String(item.get("type", "message")) == "message" && String(item.get("role", "user")) == "user") {
+			last_user_idx = i;
+		}
+	}
+
+	PendingAssistant pending;
 	for (int i = 0; i < input.size(); i++) {
 		if (input[i].get_type() != Variant::DICTIONARY) {
 			continue;
@@ -421,6 +519,17 @@ Dictionary AIResponsesTranslator::_translate_request(const Dictionary &p_req, St
 			String text;
 			Array image_urls;
 			_split_content(item.get("content", Variant()), text, image_urls);
+			if (role == "assistant") {
+				// Fragment of an assistant round: accumulate, don't emit.
+				if (!text.is_empty()) {
+					if (!pending.text.is_empty()) {
+						pending.text += "\n\n";
+					}
+					pending.text += text;
+				}
+				continue;
+			}
+			_flush_pending_assistant(pending, messages);
 			Dictionary msg;
 			msg["role"] = role;
 			if (image_urls.is_empty()) {
@@ -454,14 +563,9 @@ Dictionary AIResponsesTranslator::_translate_request(const Dictionary &p_req, St
 			Variant args = item.get("arguments", "{}");
 			fn["arguments"] = args.get_type() == Variant::STRING ? String(args) : JSON::stringify(args);
 			call["function"] = fn;
-			Array calls;
-			calls.push_back(call);
-			Dictionary msg;
-			msg["role"] = "assistant";
-			msg["content"] = "";
-			msg["tool_calls"] = calls;
-			messages.push_back(msg);
+			pending.tool_calls.push_back(call);
 		} else if (type == "function_call_output") {
+			_flush_pending_assistant(pending, messages);
 			String call_id = _sanitize_call_id(item.get("call_id", ""));
 			Dictionary msg;
 			msg["role"] = "tool";
@@ -498,9 +602,21 @@ Dictionary AIResponsesTranslator::_translate_request(const Dictionary &p_req, St
 				img_msg["content"] = parts;
 				messages.push_back(img_msg);
 			}
+		} else if (type == "reasoning") {
+			if (i > last_user_idx) {
+				String reasoning_text = _extract_reasoning_text(item);
+				if (!reasoning_text.is_empty()) {
+					if (!pending.reasoning.is_empty()) {
+						pending.reasoning += "\n";
+					}
+					pending.reasoning += reasoning_text;
+				}
+			}
 		}
-		// reasoning / item_reference / anything else: intentionally skipped.
+		// item_reference / anything else: intentionally skipped — and NOT a
+		// flush boundary; fragments on either side still belong to one round.
 	}
+	_flush_pending_assistant(pending, messages);
 
 	// Transcript hygiene (spike-derived, see harness_replacement_plan.md).
 	Array cleaned;
@@ -565,6 +681,26 @@ Dictionary AIResponsesTranslator::_translate_request(const Dictionary &p_req, St
 	return ai_sanitize_model_variant(chat);
 }
 
+Dictionary AIResponsesTranslator::make_reasoning_done_item(const String &p_id, const String &p_text) {
+	Dictionary item;
+	item["type"] = "reasoning";
+	item["id"] = p_id;
+	Dictionary summary_part;
+	summary_part["type"] = "summary_text";
+	summary_part["text"] = p_text;
+	Array summary;
+	summary.push_back(summary_part);
+	item["summary"] = summary;
+	Dictionary content_part;
+	content_part["type"] = "reasoning_text";
+	content_part["text"] = p_text;
+	Array content;
+	content.push_back(content_part);
+	item["content"] = content;
+	// No "status" key: codex's ReasoningResponseItem schema has none.
+	return item;
+}
+
 /* -------------------------------------------------------------------- */
 /*  Connection handling + SSE emitter                                    */
 /* -------------------------------------------------------------------- */
@@ -613,6 +749,18 @@ struct ToolAcc {
 	bool announced = false;
 };
 
+// Reasoning-phase accumulator: each thinking phase becomes one real reasoning
+// output item so codex records it in the rollout and replays it on later
+// rounds (where translate_request folds it back into reasoning_content). A
+// reopened phase gets a fresh item; the serial suffix keeps ids unique.
+struct ReasoningAcc {
+	bool open = false;
+	int serial = 0;
+	String id;
+	String text;
+	int output_index = -1;
+};
+
 void AIResponsesTranslator::_handle_responses(Ref<StreamPeerTCP> p_client, const Dictionary &p_req) {
 	String model = p_req.get("model", "");
 	String host, upstream_path, api_key, err_msg;
@@ -622,10 +770,51 @@ void AIResponsesTranslator::_handle_responses(Ref<StreamPeerTCP> p_client, const
 	}
 
 	String translate_err;
-	Dictionary chat_body = _translate_request(p_req, translate_err);
+	Dictionary chat_body = translate_request(p_req, translate_err);
 	if (!translate_err.is_empty()) {
 		_send_http_json(p_client, 400, JSON::stringify(_make_error(translate_err)));
 		return;
+	}
+
+	if (!OS::get_singleton()->get_environment("ARISTOTLE_TRANSLATOR_TRACE").is_empty()) {
+		// Shape-level trace of the round trip (no content): what codex sent vs
+		// what goes upstream. The reasoning replay verification depends on it.
+		Array in_items = p_req.get("input", Array());
+		String in_desc;
+		for (int i = 0; i < in_items.size(); i++) {
+			if (in_items[i].get_type() != Variant::DICTIONARY) {
+				continue;
+			}
+			Dictionary in_item = in_items[i];
+			String desc = in_item.get("type", "message");
+			if (desc == "message") {
+				desc += ":" + String(in_item.get("role", "user"));
+			}
+			if (!in_desc.is_empty()) {
+				in_desc += " ";
+			}
+			in_desc += desc;
+		}
+		Array out_msgs = chat_body.get("messages", Array());
+		String out_desc;
+		for (int i = 0; i < out_msgs.size(); i++) {
+			if (out_msgs[i].get_type() != Variant::DICTIONARY) {
+				continue;
+			}
+			Dictionary out_msg = out_msgs[i];
+			String desc = out_msg.get("role", "");
+			if (out_msg.has("tool_calls")) {
+				desc += vformat("+tools:%d", Array(out_msg["tool_calls"]).size());
+			}
+			if (out_msg.has("reasoning_content")) {
+				desc += "+reasoning";
+			}
+			if (!out_desc.is_empty()) {
+				out_desc += " ";
+			}
+			out_desc += desc;
+		}
+		print_line(vformat("AIResponsesTranslator: input=[%s] -> messages=[%s]", in_desc, out_desc));
 	}
 
 	// --- Upstream connection (same poll idiom as the provider layer). ---
@@ -735,6 +924,10 @@ void AIResponsesTranslator::_handle_responses(Ref<StreamPeerTCP> p_client, const
 	Dictionary usage;
 	String sse_buffer;
 	bool done = false;
+	ReasoningAcc racc;
+	// Kill-switch: restores the pre-reasoning-item behavior (summary deltas on
+	// the message item, nothing recorded or replayed) as an instant rollback.
+	const bool legacy_reasoning = !OS::get_singleton()->get_environment("ARISTOTLE_TRANSLATOR_LEGACY_REASONING").is_empty();
 
 	auto ensure_msg_open = [&]() {
 		if (msg_open) {
@@ -765,6 +958,41 @@ void AIResponsesTranslator::_handle_responses(Ref<StreamPeerTCP> p_client, const
 		alive = alive && _send_sse_event(p_client, ev2);
 	};
 
+	auto open_reasoning = [&]() {
+		if (racc.open) {
+			return;
+		}
+		racc.open = true;
+		racc.text = String();
+		racc.id = vformat("rs_aristotle_%d_%d", (int64_t)Time::get_singleton()->get_ticks_usec(), racc.serial++);
+		racc.output_index = next_output_index++;
+		Dictionary item;
+		item["id"] = racc.id;
+		item["type"] = "reasoning";
+		item["summary"] = Array();
+		Dictionary ev = make_event("response.output_item.added");
+		ev["output_index"] = racc.output_index;
+		ev["item"] = item;
+		alive = alive && _send_sse_event(p_client, ev);
+	};
+
+	auto close_reasoning = [&]() {
+		if (!racc.open) {
+			return;
+		}
+		racc.open = false;
+		Dictionary ev = make_event("response.reasoning_summary_text.done");
+		ev["item_id"] = racc.id;
+		ev["output_index"] = racc.output_index;
+		ev["summary_index"] = 0;
+		ev["text"] = racc.text;
+		alive = alive && _send_sse_event(p_client, ev);
+		Dictionary ev2 = make_event("response.output_item.done");
+		ev2["output_index"] = racc.output_index;
+		ev2["item"] = make_reasoning_done_item(racc.id, racc.text);
+		alive = alive && _send_sse_event(p_client, ev2);
+	};
+
 	auto process_delta = [&](const Dictionary &p_chunk) {
 		if (p_chunk.has("usage") && p_chunk["usage"].get_type() == Variant::DICTIONARY && !Dictionary(p_chunk["usage"]).is_empty()) {
 			usage = p_chunk["usage"];
@@ -778,16 +1006,28 @@ void AIResponsesTranslator::_handle_responses(Ref<StreamPeerTCP> p_client, const
 
 		String reasoning = delta.get("reasoning_content", "");
 		if (!reasoning.is_empty()) {
-			ensure_msg_open();
-			Dictionary ev = make_event("response.reasoning_summary_text.delta");
-			ev["item_id"] = msg_id;
-			ev["output_index"] = msg_output_index;
-			ev["summary_index"] = 0;
-			ev["delta"] = reasoning;
-			alive = alive && _send_sse_event(p_client, ev);
+			if (legacy_reasoning) {
+				ensure_msg_open();
+				Dictionary ev = make_event("response.reasoning_summary_text.delta");
+				ev["item_id"] = msg_id;
+				ev["output_index"] = msg_output_index;
+				ev["summary_index"] = 0;
+				ev["delta"] = reasoning;
+				alive = alive && _send_sse_event(p_client, ev);
+			} else {
+				open_reasoning();
+				racc.text += reasoning;
+				Dictionary ev = make_event("response.reasoning_summary_text.delta");
+				ev["item_id"] = racc.id;
+				ev["output_index"] = racc.output_index;
+				ev["summary_index"] = 0;
+				ev["delta"] = reasoning;
+				alive = alive && _send_sse_event(p_client, ev);
+			}
 		}
 		String content = delta.get("content", "");
 		if (!content.is_empty()) {
+			close_reasoning();
 			ensure_msg_open();
 			text_accum += content;
 			Dictionary ev = make_event("response.output_text.delta");
@@ -798,6 +1038,9 @@ void AIResponsesTranslator::_handle_responses(Ref<StreamPeerTCP> p_client, const
 			alive = alive && _send_sse_event(p_client, ev);
 		}
 		Array tool_calls = delta.get("tool_calls", Array());
+		if (!tool_calls.is_empty()) {
+			close_reasoning();
+		}
 		for (int t = 0; t < tool_calls.size(); t++) {
 			if (tool_calls[t].get_type() != Variant::DICTIONARY) {
 				continue;
@@ -894,7 +1137,10 @@ void AIResponsesTranslator::_handle_responses(Ref<StreamPeerTCP> p_client, const
 		return;
 	}
 
-	// --- Closing events (order per golden fixtures). ---
+	// --- Closing events (order per golden fixtures; reasoning first so the
+	// rollout records each round as [reasoning, function_call..., message],
+	// all assistant-side-adjacent for translate_request's merge). ---
+	close_reasoning();
 	for (const KeyValue<int, ToolAcc> &kv : tool_accs) {
 		const ToolAcc &acc = kv.value;
 		if (!acc.announced) {
@@ -959,11 +1205,12 @@ void AIResponsesTranslator::_handle_responses(Ref<StreamPeerTCP> p_client, const
 	final_usage["input_tokens"] = (int64_t)(double)usage.get("prompt_tokens", 0);
 	final_usage["output_tokens"] = (int64_t)(double)usage.get("completion_tokens", 0);
 	Dictionary details;
-	details["reasoning_tokens"] = 0;
+	Dictionary completion_details = usage.get("completion_tokens_details", Dictionary());
+	details["reasoning_tokens"] = (int64_t)(double)completion_details.get("reasoning_tokens", 0);
 	final_usage["output_tokens_details"] = details;
 	final_usage["total_tokens"] = (int64_t)(double)usage.get("total_tokens", 0);
-	resp_obj["status"] = "completed";
 	resp_obj["usage"] = final_usage;
+	resp_obj["status"] = "completed";
 	Dictionary ev_done = make_event("response.completed");
 	ev_done["response"] = resp_obj;
 	_send_sse_event(p_client, ev_done);

@@ -37,6 +37,16 @@ public:
 	// Env-or-.env secret lookup (shared with the harness driver).
 	static String load_key(const String &p_env_var);
 
+	// Responses -> Chat Completions translation. Pure and state-free (public
+	// static so unit tests can exercise it without sockets).
+	static Dictionary translate_request(const Dictionary &p_req, String &r_err);
+
+	// Schema-shaped reasoning item for response.output_item.done:
+	// {type:"reasoning", id, summary:[{type:"summary_text",text}],
+	//  content:[{type:"reasoning_text",text}]}. Deliberately no "status" key —
+	// codex's ReasoningResponseItem has none.
+	static Dictionary make_reasoning_done_item(const String &p_id, const String &p_text);
+
 private:
 	static AIResponsesTranslator *singleton;
 
@@ -74,8 +84,6 @@ private:
 	bool _send_sse_event(Ref<StreamPeerTCP> p_client, const Dictionary &p_event);
 	bool _client_alive(Ref<StreamPeerTCP> p_client);
 
-	// Responses -> Chat Completions translation.
-	Dictionary _translate_request(const Dictionary &p_req, String &r_err);
 	void _handle_responses(Ref<StreamPeerTCP> p_client, const Dictionary &p_req);
 
 	// Upstream registry.
