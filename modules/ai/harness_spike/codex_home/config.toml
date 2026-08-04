@@ -2,6 +2,9 @@
 # unified exec is serialized as a `namespace`-type tool, which third-party
 # Responses implementations (xAI, LiteLLM) reject with 422 — force it off.
 experimental_use_unified_exec_tool = false
+# Kimi K3 honors reasoning_effort (K2-era Moonshot rejected it). Aristotle
+# runs at high; the translator also falls back to high if codex omits it.
+model_reasoning_effort = "high"
 # multi_agent_v1 is also serialized as a namespace-type tool; disable the
 # feature for third-party providers (and Aristotle doesn't want codex-side
 # sub-agents anyway).

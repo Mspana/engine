@@ -119,8 +119,11 @@ pending→resolved tool cards like editor tools, so nothing executes invisibly.
 - The **golden fixtures** in `harness_spike/fixtures/` are captured SSE streams codex
   verifiably accepted — they are the emitter's spec and regression reference. Change the
   emitter only against them.
-- Provider-compat kit (all spike-derived, all required for non-OpenAI backends): drop
-  `reasoning_effort`-class params; strip blank assistant messages (Kimi emits them,
+- Provider-compat kit (all spike-derived, all required for non-OpenAI backends): forward
+  `reasoning.effort` as chat `reasoning_effort` for Kimi K3, defaulting to **high**
+  (verified live Aug 2026 — low averages ~4x fewer reasoning tokens than high; K2-era
+  Moonshot rejects the param, so other models still drop it, and codex config pins
+  `model_reasoning_effort = "high"`); strip blank assistant messages (Kimi emits them,
   Moonshot rejects broken tool-call adjacency); repair adjacency with synthesized
   no-orphan results; sanitize `:` out of call ids; filter non-`function` tools; hoist
   tool-result images into follow-up user messages (chat providers reject images in the

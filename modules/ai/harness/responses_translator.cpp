@@ -669,8 +669,27 @@ Dictionary AIResponsesTranslator::translate_request(const Dictionary &p_req, Str
 	if (p_req.has("top_p")) {
 		chat["top_p"] = p_req["top_p"];
 	}
-	// Dropped deliberately: reasoning/effort (Moonshot rejects), store, include,
-	// prompt_cache_key, client_metadata, parallel_tool_calls, text/format.
+	// Kimi K3 honors OpenAI-style reasoning_effort and it genuinely scales
+	// thinking depth (probed api.moonshot.ai Aug 2026: "low" averaged ~4x fewer
+	// reasoning tokens than "high"). The K2-era API rejected the param, which is
+	// why it was historically dropped — non-K3 models still get nothing.
+	// Forward codex's requested effort, defaulting to high per Aristotle policy.
+	if (String(chat["model"]).begins_with("kimi-k3")) {
+		String effort = "high";
+		if (p_req.get("reasoning", Variant()).get_type() == Variant::DICTIONARY) {
+			String requested = Dictionary(p_req["reasoning"]).get("effort", "");
+			if (requested == "minimal") {
+				requested = "low"; // Moonshot's floor; "minimal" is OpenAI-only.
+			}
+			if (requested == "low" || requested == "medium" || requested == "high") {
+				effort = requested;
+			}
+		}
+		chat["reasoning_effort"] = effort;
+	}
+	// Dropped deliberately: store, include, prompt_cache_key, client_metadata,
+	// parallel_tool_calls, text/format; reasoning.effort for non-K3 models
+	// (K2-era Moonshot rejects it).
 	chat["stream"] = true;
 	Dictionary stream_options;
 	stream_options["include_usage"] = true;

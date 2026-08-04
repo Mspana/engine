@@ -294,4 +294,37 @@ TEST_CASE("[AIResponsesTranslator] Reasoning done item matches codex schema") {
 	CHECK_FALSE(item.has("status"));
 }
 
+TEST_CASE("[AIResponsesTranslator] Reasoning effort forwards to Kimi K3 only, defaulting high") {
+	Dictionary req;
+	req["model"] = "kimi-k3";
+	req["input"] = Array();
+	String err;
+	Dictionary chat = AIResponsesTranslator::translate_request(req, err);
+	CHECK(err.is_empty());
+	CHECK(String(chat["reasoning_effort"]) == "high");
+
+	Dictionary reasoning;
+	reasoning["effort"] = "low";
+	req["reasoning"] = reasoning;
+	chat = AIResponsesTranslator::translate_request(req, err);
+	CHECK(String(chat["reasoning_effort"]) == "low");
+
+	// OpenAI-only value clamps to Moonshot's floor.
+	reasoning["effort"] = "minimal";
+	req["reasoning"] = reasoning;
+	chat = AIResponsesTranslator::translate_request(req, err);
+	CHECK(String(chat["reasoning_effort"]) == "low");
+
+	// Unknown values fall back to the high default rather than passing through.
+	reasoning["effort"] = "xhigh";
+	req["reasoning"] = reasoning;
+	chat = AIResponsesTranslator::translate_request(req, err);
+	CHECK(String(chat["reasoning_effort"]) == "high");
+
+	// K2-era Moonshot rejects the param; it must never reach those models.
+	req["model"] = "kimi-k2.6";
+	chat = AIResponsesTranslator::translate_request(req, err);
+	CHECK_FALSE(chat.has("reasoning_effort"));
+}
+
 } // namespace TestResponsesTranslator
