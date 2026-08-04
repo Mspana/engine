@@ -655,7 +655,8 @@ Dictionary AIResponsesTranslator::translate_request(const Dictionary &p_req, Str
 
 	chat["model"] = p_req.get("model", "");
 	if (p_req.has("max_output_tokens")) {
-		chat["max_tokens"] = p_req["max_output_tokens"];
+		// Godot's JSON parser yields doubles; Moonshot 400s on "max_tokens": 16.0.
+		chat["max_tokens"] = (int64_t)(double)p_req["max_output_tokens"];
 	}
 	if (p_req.has("temperature")) {
 		chat["temperature"] = p_req["temperature"];
@@ -924,6 +925,7 @@ void AIResponsesTranslator::_handle_responses(Ref<StreamPeerTCP> p_client, const
 	Dictionary usage;
 	String sse_buffer;
 	bool done = false;
+	String finish_reason;
 	ReasoningAcc racc;
 	// Kill-switch: restores the pre-reasoning-item behavior (summary deltas on
 	// the message item, nothing recorded or replayed) as an instant rollback.
@@ -1003,6 +1005,10 @@ void AIResponsesTranslator::_handle_responses(Ref<StreamPeerTCP> p_client, const
 		}
 		Dictionary choice = choices[0];
 		Dictionary delta = choice.get("delta", Dictionary());
+		Variant fr = choice.get("finish_reason", Variant());
+		if (fr.get_type() == Variant::STRING && !String(fr).is_empty()) {
+			finish_reason = fr;
+		}
 
 		String reasoning = delta.get("reasoning_content", "");
 		if (!reasoning.is_empty()) {
@@ -1210,6 +1216,25 @@ void AIResponsesTranslator::_handle_responses(Ref<StreamPeerTCP> p_client, const
 	final_usage["output_tokens_details"] = details;
 	final_usage["total_tokens"] = (int64_t)(double)usage.get("total_tokens", 0);
 	resp_obj["usage"] = final_usage;
+	if (finish_reason == "length") {
+		// The provider cut generation at the max_tokens budget (which Kimi's
+		// thinking shares). Without this branch the truncation is served as a
+		// clean completion — indistinguishable from a deliberate stop, and if
+		// the cut landed before a tool call, the turn silently dies.
+		resp_obj["status"] = "failed";
+		Dictionary error;
+		error["code"] = "output_limit";
+		error["message"] = (msg_open || !tool_accs.is_empty())
+				? String("Kimi hit the output token limit mid-response (finish_reason=length); the reply was truncated.")
+				: String("Kimi hit the output token limit while reasoning (finish_reason=length); no visible output was produced.");
+		resp_obj["error"] = error;
+		Dictionary ev_failed = make_event("response.failed");
+		ev_failed["response"] = resp_obj;
+		_send_sse_event(p_client, ev_failed);
+		_send_raw(p_client, String("data: [DONE]\n\n").utf8());
+		p_client->disconnect_from_host();
+		return;
+	}
 	resp_obj["status"] = "completed";
 	Dictionary ev_done = make_event("response.completed");
 	ev_done["response"] = resp_obj;
