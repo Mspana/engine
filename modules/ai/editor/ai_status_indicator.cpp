@@ -34,6 +34,8 @@
 #include "core/templates/hash_map.h"
 #include "../agentic_orchestrator.h"
 #include "../harness/codex_harness_driver.h"
+#include "../session/ai_chat_session.h"
+#include "ai_remote_dialog.h"
 #include "core/config/engine.h"
 #include "core/core_bind.h"
 #include "core/input/input_event.h"
@@ -2313,6 +2315,23 @@ void AIStatusPanel::_set_run_state(RunState p_state) {
 	run_state = p_state;
 	print_line(vformat("AI Run State: %s", p_state == STATE_IDLE ? "IDLE" : "RUNNING"));
 	_update_send_button_state();
+	if (AIChatSession *session = AIChatSession::get_singleton()) {
+		session->notify_run_state(p_state == STATE_RUNNING);
+	}
+}
+
+// Programmatic send used by non-UI consumers (remote clients). Mirrors the
+// send button: run when idle, queue when a run is already in flight.
+void AIStatusPanel::submit_external_message(const String &p_text) {
+	String text = p_text.strip_edges();
+	if (text.is_empty() || context_exhausted) {
+		return;
+	}
+	if (run_state == STATE_IDLE) {
+		_start_run(text);
+	} else {
+		_enqueue_message(text);
+	}
 }
 
 void AIStatusPanel::_start_run(const String &p_message) {
@@ -3077,18 +3096,10 @@ void AIStatusPanel::_on_delete_chat_confirmed() {
 	if (pending_delete_chat_id.is_empty()) {
 		return;
 	}
-	String path = AIChatStore::make_chat_path(pending_delete_chat_id);
 	bool is_current = chat_store.is_valid() && chat_store->get_chat_id() == pending_delete_chat_id;
 
-	// Delete the file
-	if (FileAccess::exists(path)) {
-		String dir = path.get_base_dir();
-		String filename = path.get_file();
-		Ref<DirAccess> da = DirAccess::open(dir);
-		if (da.is_valid()) {
-			da->remove(filename);
-		}
-	}
+	// Delete the transcript plus its meta file and screenshot folder.
+	AIChatStore::delete_chat_files(pending_delete_chat_id);
 
 	pending_delete_chat_id = "";
 	history_popup->hide();
@@ -3875,6 +3886,9 @@ void AIStatusPanel::_on_harness_thinking_delta(const String &p_delta) {
 	harness_thinking_text += p_delta;
 	harness_thinking_label->set_text(harness_thinking_text);
 	harness_thinking_block->set_meta("_bubble_plain_text", harness_thinking_text);
+	if (AIChatSession *session = AIChatSession::get_singleton()) {
+		session->notify_delta("thinking", p_delta);
+	}
 	// No direct scroll: stick-to-bottom is handled by the range-changed hook.
 }
 
@@ -4819,6 +4833,9 @@ void AIStatusPanel::_on_harness_assistant_delta(const String &p_delta) {
 	if (harness_stream_rich) {
 		harness_stream_rich->set_text(_markdown_to_bbcode(harness_stream_text));
 	}
+	if (AIChatSession *session = AIChatSession::get_singleton()) {
+		session->notify_delta("assistant", p_delta);
+	}
 	// No direct scroll: growth fires _on_scrollbar_range_changed, which
 	// follows only if the user is already at the bottom.
 }
@@ -4854,6 +4871,9 @@ void AIStatusPanel::_on_policy_mode_changed(int p_mode) {
 }
 
 void AIStatusPanel::_update_policy_mode_label() {
+	if (AIChatSession *session = AIChatSession::get_singleton()) {
+		session->notify_policy_mode(harness_policy_mode);
+	}
 	if (!policy_mode_label) {
 		return;
 	}
@@ -4922,11 +4942,23 @@ void AIStatusPanel::_build_approval_panel() {
 		btn->connect(SceneStringNames::get_singleton()->pressed,
 				callable_mp(this, &AIStatusPanel::_on_approval_decision).bind(String(spec.decision)));
 		buttons->add_child(btn);
+		if (String(spec.decision) == "acceptForSession") {
+			approval_session_button = btn;
+		}
 	}
 
 	approval_panel->set_visible(false);
 	add_child(approval_panel);
 	move_child(approval_panel, input_bar->get_index());
+}
+
+void AIStatusPanel::_show_remote_dialog() {
+	// Built lazily so the feature costs nothing until someone opens it.
+	if (!remote_dialog) {
+		remote_dialog = memnew(AIRemoteDialog);
+		add_child(remote_dialog);
+	}
+	remote_dialog->open();
 }
 
 void AIStatusPanel::_show_next_approval() {
@@ -4940,10 +4972,17 @@ void AIStatusPanel::_show_next_approval() {
 		if (prompt_edit) {
 			prompt_edit->grab_focus();
 		}
+		if (AIChatSession *session = AIChatSession::get_singleton()) {
+			session->notify_approval(Dictionary());
+		}
 		return;
 	}
 	Dictionary info = approval_queue[0];
+	if (AIChatSession *session = AIChatSession::get_singleton()) {
+		session->notify_approval(info);
+	}
 	String kind = info.get("kind", "command");
+	bool always_ask = info.get("always_ask", false);
 	if (kind == "file_change") {
 		approval_header->set_text(TTR("Approval: apply file changes?"));
 	} else if (kind == "exit_plan") {
@@ -4952,6 +4991,13 @@ void AIStatusPanel::_show_next_approval() {
 		approval_header->set_text(vformat(TTR("Approval: %s?"), String(info.get("tool", "action"))));
 	} else {
 		approval_header->set_text(TTR("Approval: run command?"));
+	}
+	if (always_ask) {
+		// Remote VCS operations: approved one call at a time, in every mode.
+		approval_header->set_text(approval_header->get_text() + " " + TTR("(remote operation)"));
+	}
+	if (approval_session_button) {
+		approval_session_button->set_visible(!always_ask);
 	}
 	String detail;
 	if (kind == "file_change") {
@@ -5345,7 +5391,25 @@ AIStatusPanel::AIStatusPanel() {
 	add_theme_style_override("panel", panel_bg);
 
 	// Initialize chat store
-	chat_store.instantiate();
+	// The session hub owns the store so non-UI consumers (remote clients) can
+	// observe history without reaching into the panel. Adopting the same Ref
+	// keeps every existing chat_store-> call site unchanged.
+	{
+		AIChatSession *session = AIChatSession::get_singleton();
+		if (session) {
+			chat_store = session->get_store();
+
+			Dictionary handlers;
+			handlers["submit"] = callable_mp(this, &AIStatusPanel::submit_external_message);
+			handlers["cancel"] = callable_mp(this, &AIStatusPanel::_request_cancel);
+			handlers["approval"] = callable_mp(this, &AIStatusPanel::_on_approval_decision);
+			handlers["switch_chat"] = callable_mp(this, &AIStatusPanel::_switch_to_chat);
+			handlers["new_chat"] = callable_mp(this, &AIStatusPanel::_new_chat);
+			session->set_executor(handlers);
+		} else {
+			chat_store.instantiate();
+		}
+	}
 
 	// ========================================
 	// Chat toolbar (very top) - "+ New" and history
@@ -5384,6 +5448,16 @@ AIStatusPanel::AIStatusPanel() {
 	history_button->add_theme_color_override("font_color", AIColors::TEXT_SECONDARY);
 	history_button->connect(SceneStringNames::get_singleton()->pressed, callable_mp(this, &AIStatusPanel::_show_history_popup));
 	chat_toolbar->add_child(history_button);
+
+	// Remote access (off by default; the dialog owns the whole feature).
+	remote_button = memnew(Button);
+	remote_button->set_text(TTR("Remote"));
+	remote_button->set_flat(true);
+	remote_button->set_default_cursor_shape(Control::CURSOR_POINTING_HAND);
+	remote_button->set_tooltip_text(TTR("View and continue this chat from your phone"));
+	remote_button->add_theme_color_override("font_color", AIColors::TEXT_SECONDARY);
+	remote_button->connect(SceneStringNames::get_singleton()->pressed, callable_mp(this, &AIStatusPanel::_show_remote_dialog));
+	chat_toolbar->add_child(remote_button);
 
 	// New chat button
 	new_chat_button = memnew(Button);
@@ -5835,6 +5909,11 @@ AIStatusPanel::AIStatusPanel() {
 }
 
 AIStatusPanel::~AIStatusPanel() {
+	// Stop the session forwarding commands into a dying panel.
+	if (AIChatSession *session = AIChatSession::get_singleton()) {
+		session->clear_executor();
+	}
+
 	// Disconnect from AI provider signal if connected
 	if (Engine::get_singleton()->has_singleton("AI")) {
 		Object *ai_obj = Engine::get_singleton()->get_singleton_object("AI");

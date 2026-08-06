@@ -111,6 +111,13 @@ public:
 	static String generate_chat_id();
 	static Vector<String> list_chat_ids(); // Newest first, .jsonl files only
 
+	// Delete every file belonging to a chat: the .jsonl transcript, the
+	// .meta.json, and the <id>_images/ screenshot folder.
+	static void delete_chat_files(const String &p_id);
+	// Remove leftovers (meta files, image folders) whose .jsonl no longer
+	// exists. Cheap single directory scan; run once at startup.
+	static void cleanup_orphaned_chat_files();
+
 	// ---- Lifecycle -----------------------------------------------------------
 	// Set active chat. Clears in-memory state. Call load_items() to populate.
 	void set_chat_id(const String &p_id);

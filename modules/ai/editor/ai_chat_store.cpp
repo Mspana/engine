@@ -45,6 +45,13 @@ void AIChatStore::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_chat_id"), &AIChatStore::get_chat_id);
 	ClassDB::bind_method(D_METHOD("clear_items"), &AIChatStore::clear_items);
 	ClassDB::bind_method(D_METHOD("set_file_path", "path"), &AIChatStore::set_file_path);
+
+	// Observation seam for non-UI consumers (remote sessions, dashboards). The
+	// store is the single funnel every persistence path already goes through,
+	// so emitting here means observers see history without touching the panel.
+	ADD_SIGNAL(MethodInfo("item_appended", PropertyInfo(Variant::INT, "ts"), PropertyInfo(Variant::DICTIONARY, "data")));
+	ADD_SIGNAL(MethodInfo("items_rewritten"));
+	ADD_SIGNAL(MethodInfo("chat_changed", PropertyInfo(Variant::STRING, "chat_id")));
 }
 
 static int64_t _now_ms() {
@@ -95,6 +102,74 @@ Vector<String> AIChatStore::list_chat_ids() {
 	return ids;
 }
 
+void AIChatStore::delete_chat_files(const String &p_id) {
+	if (p_id.is_empty()) {
+		return;
+	}
+	Ref<DirAccess> da = DirAccess::open(get_chat_dir());
+	if (da.is_null()) {
+		return;
+	}
+	if (da->file_exists(p_id + ".jsonl")) {
+		da->remove(p_id + ".jsonl");
+	}
+	if (da->file_exists(p_id + ".meta.json")) {
+		da->remove(p_id + ".meta.json");
+	}
+	const String images_dir = p_id + "_images";
+	if (da->dir_exists(images_dir)) {
+		Ref<DirAccess> img = DirAccess::open(get_chat_dir().path_join(images_dir));
+		if (img.is_valid()) {
+			img->erase_contents_recursive();
+		}
+		da->remove(images_dir);
+	}
+}
+
+void AIChatStore::cleanup_orphaned_chat_files() {
+	Ref<DirAccess> da = DirAccess::open(get_chat_dir());
+	if (da.is_null()) {
+		return;
+	}
+	// Collect first, delete after — removing entries mid-listing is undefined.
+	Vector<String> orphan_dirs;
+	Vector<String> orphan_files;
+	da->list_dir_begin();
+	String fname = da->get_next();
+	while (!fname.is_empty()) {
+		if (da->current_is_dir()) {
+			if (fname.ends_with("_images")) {
+				const String id = fname.substr(0, fname.length() - String("_images").length());
+				if (!FileAccess::exists(make_chat_path(id))) {
+					orphan_dirs.push_back(fname);
+				}
+			}
+		} else if (fname.ends_with(".meta.json")) {
+			const String id = fname.get_basename().get_basename(); // strip .json, then .meta
+			if (!FileAccess::exists(make_chat_path(id))) {
+				orphan_files.push_back(fname);
+			}
+		}
+		fname = da->get_next();
+	}
+	da->list_dir_end();
+
+	for (const String &dir_name : orphan_dirs) {
+		Ref<DirAccess> img = DirAccess::open(get_chat_dir().path_join(dir_name));
+		if (img.is_valid()) {
+			img->erase_contents_recursive();
+		}
+		da->remove(dir_name);
+	}
+	for (const String &file_name : orphan_files) {
+		da->remove(file_name);
+	}
+	if (!orphan_dirs.is_empty() || !orphan_files.is_empty()) {
+		print_line(vformat("AIChatStore: Cleaned up %d orphaned image folder(s) and %d orphaned meta file(s).",
+				orphan_dirs.size(), orphan_files.size()));
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Lifecycle
 // ---------------------------------------------------------------------------
@@ -105,6 +180,7 @@ void AIChatStore::set_chat_id(const String &p_id) {
 	_meta_path = "user://ai_chat/" + p_id + ".meta.json";
 	_items.clear();
 	_checkpoints.clear();
+	emit_signal(SNAME("chat_changed"), _chat_id);
 }
 
 void AIChatStore::set_file_path(const String &p_jsonl_path) {
@@ -122,6 +198,7 @@ void AIChatStore::set_file_path(const String &p_jsonl_path) {
 	_meta_path = "user://ai_chat/" + _chat_id + ".meta.json";
 	_items.clear();
 	_checkpoints.clear();
+	emit_signal(SNAME("chat_changed"), _chat_id);
 }
 
 AIChatStore::AIChatStore() {}
@@ -173,6 +250,7 @@ Vector<HistoryItem> AIChatStore::load_items() {
 
 	print_verbose(vformat("AIChatStore: Loaded %d items from '%s'", _items.size(), _jsonl_path));
 	_load_meta();
+	emit_signal(SNAME("items_rewritten"));
 	return _items;
 }
 
@@ -204,6 +282,7 @@ HistoryItem AIChatStore::append_item(const Dictionary &p_data) {
 	file->store_string(line);
 	file.unref();
 
+	emit_signal(SNAME("item_appended"), ts, p_data);
 	return item;
 }
 
@@ -226,6 +305,7 @@ bool AIChatStore::rewrite_items(const Vector<HistoryItem> &p_new_items) {
 
 	_items = p_new_items;
 	print_verbose(vformat("AIChatStore: Rewrote '%s' with %d items.", _jsonl_path, _items.size()));
+	emit_signal(SNAME("items_rewritten"));
 	return true;
 }
 
@@ -245,6 +325,7 @@ void AIChatStore::clear_items() {
 			da->remove(_meta_path.get_file());
 		}
 	}
+	emit_signal(SNAME("items_rewritten"));
 }
 
 // ---------------------------------------------------------------------------

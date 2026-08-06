@@ -301,6 +301,9 @@ private:
 	HBoxContainer *chat_toolbar = nullptr;
 	Button *new_chat_button = nullptr;
 	Button *history_button = nullptr;
+	Button *remote_button = nullptr;
+	class AIRemoteDialog *remote_dialog = nullptr;
+	void _show_remote_dialog();
 	Button *token_toggle_button = nullptr;
 	bool _show_token_counts = false;
 	int _run_token_total = 0;       // estimated total (fallback)
@@ -501,6 +504,7 @@ private:
 	Control *approval_panel = nullptr;
 	Label *approval_header = nullptr;
 	RichTextLabel *approval_body = nullptr;
+	Button *approval_session_button = nullptr; // Hidden for always-ask (remote VCS) approvals.
 	Vector<Dictionary> approval_queue;
 	void _build_approval_panel();
 	void _show_next_approval();
@@ -577,6 +581,9 @@ protected:
 public:
 	void check_api_connectivity();
 	void _add_pending_image(Ref<Image> p_image); // Public: called via AI signal from game_view_plugin
+	// Programmatic send for non-UI consumers (remote clients) — registered as
+	// the AIChatSession "submit" executor. Runs when idle, queues when busy.
+	void submit_external_message(const String &p_text);
 
 	AIStatusPanel();
 	~AIStatusPanel();

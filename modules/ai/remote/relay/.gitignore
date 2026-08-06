@@ -1,0 +1,4 @@
+# Local `wrangler dev` state: miniflare's SQLite stores, bundles, and caches.
+# Regenerated on every run, and it holds Durable Object state from local testing.
+.wrangler/
+node_modules/

@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 from misc.utility.scons_hints import *
 
+import sys
+
 Import("env")
 Import("env_modules")
 
@@ -18,3 +20,33 @@ env_ai.add_source_files(env.modules_sources, "harness/*.cpp")
 # Editor-only sources (status indicator plugin)
 if env.editor_build:
     env_ai.add_source_files(env.modules_sources, "editor/*.cpp")
+
+    # Session seam (UI-free view of chat state, consumed by remote access)
+    env_ai.add_source_files(env.modules_sources, "session/*.cpp")
+
+    # Remote access. These files call mbedTLS directly (X25519 / HKDF /
+    # AES-GCM), so they must be compiled against the SAME mbedTLS config the
+    # mbedtls module builds the library with — otherwise struct layouts and
+    # available symbols can disagree.
+    env_ai_remote = env_ai.Clone()
+    if env["builtin_mbedtls"]:
+        env_ai_remote.Prepend(CPPEXTPATH=["#thirdparty/mbedtls/include/"])
+        config_path = "thirdparty/mbedtls/include/godot_module_mbedtls_config.h"
+        config_path = (
+            f"<{config_path}>" if env_ai_remote["ninja"] and env_ai_remote.msvc else f'\\"{config_path}\\"'
+        )
+        env_ai_remote.Append(CPPDEFINES=[("MBEDTLS_CONFIG_FILE", config_path)])
+    # The web client is compiled into the binary — a phone browser has no other
+    # way to fetch it, and the editor may run from anywhere on disk.
+    sys.path.insert(0, str(Dir("remote").srcnode()))
+    import webclient_builders
+
+    webclient_files = Glob("remote/webclient/*")
+    webclient_files.sort(key=lambda f: str(f))
+    env_ai_remote.CommandNoCache(
+        "remote/ai_remote_webclient.gen.h",
+        webclient_files,
+        env.Run(webclient_builders.make_webclient_header),
+    )
+
+    env_ai_remote.add_source_files(env.modules_sources, "remote/*.cpp")

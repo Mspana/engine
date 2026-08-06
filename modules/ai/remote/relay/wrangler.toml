@@ -1,0 +1,59 @@
+# Cloudflare Worker config for the Aristotle remote relay.
+#
+# NOTHING IS DEPLOYED BY THIS FILE EXISTING. It is inert until you deliberately
+# run `wrangler deploy`. See README.md — deploying creates a PUBLIC hostname.
+#
+# For local testing you do not need this file at all: run local_relay.mjs, which
+# has no dependencies and binds loopback only.
+
+# ---------------------------------------------------------------------------
+# FILL THESE IN BEFORE DEPLOYING
+# ---------------------------------------------------------------------------
+
+# The Worker name. This becomes part of the public URL on workers.dev
+# (https://<name>.<your-subdomain>.workers.dev), so pick something unremarkable
+# rather than something that advertises what it is attached to.
+name = "aristotle-relay"
+
+main = "worker.js"
+
+# Pin the runtime's behaviour to a known date. Bump deliberately, and never set
+# a date in the future — Cloudflare rejects those.
+compatibility_date = "2026-05-01"
+
+# Optional. Only needed if your Cloudflare login has access to more than one
+# account, otherwise wrangler picks it up interactively.
+# account_id = "<your-cloudflare-account-id>"
+
+# Optional. Leave workers.dev enabled for a quick test, or turn it off and use a
+# custom domain so the relay is not sitting on a guessable *.workers.dev host.
+# workers_dev = true
+#
+# [[routes]]
+# pattern = "relay.example.com"
+# custom_domain = true
+
+# ---------------------------------------------------------------------------
+# Durable Objects — one instance per room, addressed by idFromName(roomId).
+# ---------------------------------------------------------------------------
+
+# The binding name must match `env.RELAY_ROOMS` in worker.js.
+[[durable_objects.bindings]]
+name = "RELAY_ROOMS"
+class_name = "RelayRoom"
+
+# Durable Object classes must be declared in a migration before first use.
+# `new_sqlite_classes` is the current form (the older `new_classes` creates a
+# legacy key-value backed object). This relay stores nothing either way — the
+# backing store is simply never written to.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RelayRoom"]
+
+# ---------------------------------------------------------------------------
+# Deliberately absent
+# ---------------------------------------------------------------------------
+# - No [vars] and no secrets: the relay has no credentials because it performs
+#   no authentication. Authentication is the E2EE layer's job.
+# - No KV / R2 / D1 bindings: the relay must have nowhere to persist traffic.
+# - No observability/logpush: message contents are never logged.
