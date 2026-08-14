@@ -5,7 +5,7 @@ Three capture tools are available to the AI, each suited to a different situatio
 | Tool | What it captures | Sync? | When to use |
 |---|---|---|---|
 | `run_and_screenshot` | The running game window (main scene by default, or any scene via `scene_path`) | Async (launches + waits + stops game) | Verify real runtime behavior, physics, scripts, animations. |
-| `capture_2d_viewport` | The 2D editor canvas (shared scene SubViewport, with current pan/zoom) | Sync | Quick visual check of the 2D scene the user is editing without running anything. |
+| `capture_2d_viewport` | The 2D editor canvas (shared scene SubViewport, with current pan/zoom; editor gizmos excluded by default) | Sync | Quick visual check of the 2D scene the user is editing without running anything. |
 | `capture_3d_viewport` | The last-used 3D editor viewport (its own SubViewport + camera) | Sync | Quick visual check of the 3D scene from the current editor camera angle. |
 
 The editor viewport captures are dramatically cheaper than running the game, and they
@@ -289,6 +289,33 @@ operation from the user's perspective) this is acceptable.
 - **Validation is strict.** `frame_rect` must be a 4-element array of numbers
   with positive width and height. Anything else returns an `INVALID_ARGS`
   error and skips the capture entirely.
+
+### Gizmo-Free Default (`include_gizmos`)
+
+By default the 2D capture excludes editor gizmos. Two different things read as
+"gizmos" in the editor: the CanvasItemEditor overlay (rulers, editor grid,
+selection rectangles, the tile editor's grid) — which lives on a Control
+outside `scene_root` and was never part of captures — and editor-only drawing
+that 2D nodes emit *into the scene itself* when running under the editor:
+collision shapes/polygons paint translucent debug fills, raycasts and
+shapecasts draw arrows, `Camera2D` draws frame/limit rectangles, `Marker2D`
+draws a cross, and the tile editor dims every `TileMapLayer` except the one
+being edited. That second category shares the scene's canvas — an off-screen
+SubViewport would render it identically — so it appeared in captures, and
+models mistook it for scene content (teal collision fills were once debugged
+as if they were sprite pixels).
+
+For the capture frame, the tool hides the canvas items of node types whose
+self-drawing is editor-only (they draw nothing in a running game) directly at
+the RenderingServer level — the scene side sees no visibility change, no
+notifications, no signals — and temporarily resets TileMapLayer highlight
+dimming. Everything is restored immediately after the render, on success and
+error paths alike. `include_gizmos: true` skips the suppression and captures
+the editor helpers as before.
+
+Caveat: a script that overrides `_draw()` on one of the suppressed node types
+(e.g. custom drawing attached to a Path2D) is hidden with it in default
+captures — use `include_gizmos: true` to see it.
 
 ### Custom 3D Framing (`shot_position` / `shot_target`)
 

@@ -23,6 +23,22 @@
 #include "core/core_bind.h"
 #include "core/io/image.h"
 #include "core/object/message_queue.h"
+#include "core/templates/local_vector.h"
+#include "scene/2d/camera_2d.h"
+#include "scene/2d/light_occluder_2d.h"
+#include "scene/2d/marker_2d.h"
+#include "scene/2d/navigation/navigation_link_2d.h"
+#include "scene/2d/navigation/navigation_obstacle_2d.h"
+#include "scene/2d/navigation/navigation_region_2d.h"
+#include "scene/2d/path_2d.h"
+#include "scene/2d/physics/collision_polygon_2d.h"
+#include "scene/2d/physics/collision_shape_2d.h"
+#include "scene/2d/physics/joints/joint_2d.h"
+#include "scene/2d/physics/ray_cast_2d.h"
+#include "scene/2d/physics/shape_cast_2d.h"
+#include "scene/2d/skeleton_2d.h"
+#include "scene/2d/tile_map_layer.h"
+#include "scene/2d/visible_on_screen_notifier_2d.h"
 #include "scene/3d/camera_3d.h"
 #include "scene/main/viewport.h"
 #include "servers/rendering_server.h"
@@ -761,6 +777,102 @@ static Dictionary _capture_subviewport_to_result(SubViewport *p_viewport, const 
 
 	return ai_create_success_result(result_data);
 }
+
+// -- 2D gizmo suppression (capture_2d_viewport, include_gizmos=false) --------
+//
+// The editor "gizmos" that land in a scene_root capture are NOT the
+// CanvasItemEditor overlay (rulers, editor grid, selection rects, the tile
+// editor's grid) — that overlay is a Control OUTSIDE scene_root and physically
+// cannot render into its texture. What the capture picks up is drawing emitted
+// by the edited scene's own nodes when Engine::is_editor_hint() is true:
+// CollisionShape2D/CollisionPolygon2D debug fills (the teal boxes),
+// RayCast2D/ShapeCast2D arrows, Camera2D frame/limit rectangles, Marker2D
+// crosses, Path2D curves, editor-only navigation debug, and TileMapLayer's
+// highlight dimming of non-edited layers. Those commands live in the same
+// canvas as the real scene content, so an off-screen SubViewport sharing the
+// World2D would show them identically — the only way to exclude them is to
+// stop the specific canvas items from rendering for the capture frame.
+//
+// Mechanism: RenderingServer::canvas_item_set_visible(false) on nodes whose
+// ENTIRE self-drawing is editor-only (they draw nothing in a running game, so
+// hiding their own canvas item — children are separate items and unaffected —
+// removes exactly the gizmo pixels). RS-level visibility bypasses the scene
+// side: no NOTIFICATION_VISIBILITY_CHANGED, no signals, no layout, and the
+// node's `visible` property is untouched, so the one-frame toggle is invisible
+// to user scripts and the editor. TileMapLayer is the exception: its canvas
+// items carry real tile content, so it is not hidden — instead highlight_mode
+// (which darkens/alpha-fades every layer except the edited one) is temporarily
+// reset to HIGHLIGHT_MODE_DEFAULT; the deferred internal update this queues is
+// executed by the capture's own MessageQueue flush before the render.
+//
+// Restore uses ObjectIDs, not raw pointers: the flush inside the capture can
+// run arbitrary deferred calls, including ones that free nodes.
+//
+// Known leftovers (deliberate): TouchScreenButton draws its shape outline in
+// the editor but its texture is real game content, so it is left alone; and
+// TileMapLayer's per-cell placeholder circles for missing/invalid tiles still
+// draw (they indicate broken data worth seeing).
+
+struct AI2DGizmoSuppression {
+	LocalVector<ObjectID> hidden_nodes;
+	LocalVector<ObjectID> highlight_layers;
+	LocalVector<int> highlight_modes;
+};
+
+static bool _is_gizmo_only_canvas_item(CanvasItem *p_item) {
+	return Object::cast_to<CollisionShape2D>(p_item) ||
+			Object::cast_to<CollisionPolygon2D>(p_item) ||
+			Object::cast_to<RayCast2D>(p_item) ||
+			Object::cast_to<ShapeCast2D>(p_item) ||
+			Object::cast_to<Joint2D>(p_item) ||
+			Object::cast_to<Camera2D>(p_item) ||
+			Object::cast_to<Marker2D>(p_item) ||
+			Object::cast_to<VisibleOnScreenNotifier2D>(p_item) ||
+			Object::cast_to<Path2D>(p_item) ||
+			Object::cast_to<LightOccluder2D>(p_item) ||
+			Object::cast_to<Skeleton2D>(p_item) ||
+			Object::cast_to<NavigationRegion2D>(p_item) ||
+			Object::cast_to<NavigationLink2D>(p_item) ||
+			Object::cast_to<NavigationObstacle2D>(p_item);
+}
+
+static void _suppress_editor_gizmos_2d(Node *p_node, AI2DGizmoSuppression &r_state) {
+	CanvasItem *ci = Object::cast_to<CanvasItem>(p_node);
+	if (ci && ci->is_visible() && _is_gizmo_only_canvas_item(ci)) {
+		RenderingServer::get_singleton()->canvas_item_set_visible(ci->get_canvas_item(), false);
+		r_state.hidden_nodes.push_back(ci->get_instance_id());
+	}
+	TileMapLayer *tml = Object::cast_to<TileMapLayer>(p_node);
+	if (tml && tml->get_highlight_mode() != TileMapLayer::HIGHLIGHT_MODE_DEFAULT) {
+		r_state.highlight_layers.push_back(tml->get_instance_id());
+		r_state.highlight_modes.push_back((int)tml->get_highlight_mode());
+		tml->set_highlight_mode(TileMapLayer::HIGHLIGHT_MODE_DEFAULT);
+	}
+	// Default get_child_count() includes internal children — required so the
+	// legacy TileMap node's internal TileMapLayers are reached.
+	for (int i = 0; i < p_node->get_child_count(); i++) {
+		_suppress_editor_gizmos_2d(p_node->get_child(i), r_state);
+	}
+}
+
+static void _restore_editor_gizmos_2d(const AI2DGizmoSuppression &p_state) {
+	RenderingServer *rs = RenderingServer::get_singleton();
+	for (const ObjectID &id : p_state.hidden_nodes) {
+		CanvasItem *ci = Object::cast_to<CanvasItem>(ObjectDB::get_instance(id));
+		if (ci && ci->is_inside_tree()) {
+			// Restore to the node's CURRENT scene-side visibility (not blindly
+			// true): a deferred call run by the capture's flush may have changed
+			// it, and the scene side is the source of truth.
+			rs->canvas_item_set_visible(ci->get_canvas_item(), ci->is_visible());
+		}
+	}
+	for (uint32_t i = 0; i < p_state.highlight_layers.size(); i++) {
+		TileMapLayer *tml = Object::cast_to<TileMapLayer>(ObjectDB::get_instance(p_state.highlight_layers[i]));
+		if (tml) {
+			tml->set_highlight_mode((TileMapLayer::HighlightMode)p_state.highlight_modes[i]);
+		}
+	}
+}
 #endif
 
 Dictionary exec_capture_2d_viewport(const Dictionary &args) {
@@ -867,6 +979,19 @@ Dictionary exec_capture_2d_viewport(const Dictionary &args) {
 		has_frame_rect = true;
 	}
 
+	// Gizmo-free default: unless the caller opts in with include_gizmos=true,
+	// suppress the edited scene's in-scene editor-only drawing (collision debug
+	// fills, cast/joint/camera/marker gizmos, TileMapLayer highlight dimming)
+	// for the capture frame. All argument-validation early returns are above;
+	// between here and the restore after the capture there is exactly one path,
+	// so the suppression cannot leak on any outcome. See
+	// _suppress_editor_gizmos_2d for the mechanism.
+	const bool include_gizmos = args.get("include_gizmos", false);
+	AI2DGizmoSuppression gizmo_state;
+	if (!include_gizmos && en->get_edited_scene()) {
+		_suppress_editor_gizmos_2d(en->get_edited_scene(), gizmo_state);
+	}
+
 	// Deliberately NO CanvasItemEditor::update_viewport() before the capture. The
 	// grid/rulers/selection overlay draws into the CanvasItemEditor's own overlay
 	// Control (in the editor window's viewport tree, a sibling of the
@@ -874,6 +999,15 @@ Dictionary exec_capture_2d_viewport(const Dictionary &args) {
 	// of scene_root anyway — and queuing that redraw makes _draw_viewport fire during
 	// the capture's MessageQueue flush, clobbering the framing transform.
 	Dictionary result = _capture_subviewport_to_result(sv, "2D", has_frame_rect ? &frame_transform : nullptr);
+
+	// Restore gizmo visibility immediately — before the metadata and
+	// transform/size restores below — so no intervening code observes suppressed
+	// state. This runs on success and error results alike:
+	// _capture_subviewport_to_result reports failures via its returned
+	// Dictionary, never by throwing or early-returning past this point.
+	if (!include_gizmos) {
+		_restore_editor_gizmos_2d(gizmo_state);
+	}
 
 	// Report the transform the render actually used, so the model can convert image
 	// pixels to world units. Without frame_rect the capture shows the editor's current
