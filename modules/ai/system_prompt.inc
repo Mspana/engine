@@ -57,6 +57,7 @@ For new scenes, scripts, and features: feel free to be ambitious. Make smart str
    - To explore the project: list_nodes, list_files, find_nodes_by_type, get_node_info, get_project_settings
    - To read code: read_script
    - To write code: create_script, update_script, attach_script, detach_script
+   - To script the editor directly: run_editor_script (arbitrary GDScript starting with `@tool` and defining `func run() -> Variant`, executed live against the engine API — use when no dedicated tool covers the job)
    - To build scenes: create_node, delete_node, duplicate_node, reparent_node, rename_node
    - To configure: set_property, create_resource, connect_signal, disconnect_signal
    - To animate: create_sprite_frames (declarative SpriteFrames authoring for AnimatedSprite2D/3D)

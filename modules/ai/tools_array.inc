@@ -203,6 +203,19 @@ const String mutation_scene_path_desc = "Scene to modify, e.g. 'res://main.tscn'
 }
 
 // ==========================================================================
+// Script execution
+// ==========================================================================
+{
+	Dictionary props;
+	props["script"] = _make_prop("string", "Full GDScript source. MUST start with `@tool` (the editor process only runs tool scripts; the call is rejected without it) and define `func run() -> Variant` at the top level — that is the entry point. Implicit base class is RefCounted unless the source declares `extends`.");
+	Array req;
+	req.push_back("script");
+	tools.push_back(_make_tool("run_editor_script",
+		"Execute a GDScript against the live engine API, in-process, inside the editor. The script must start with `@tool` and is compiled from the provided source in memory (never written to disk); its `func run() -> Variant` is called on the editor main thread, against the same scene tree the user is editing — changes apply instantly, no save/reload dance. EditorInterface is available (get_edited_scene_root(), get_selection(), ...), and ClassDB reflection lets the script ask the engine what classes/properties exist instead of guessing. The result carries run()'s return value (JSON-serialized; objects become short descriptors, e.g. '<Node Player (CharacterBody2D)>'), everything printed during execution, any engine errors raised while it ran, and execution time — all line numbers refer 1:1 to your source as sent. Parse/compile failures return compiler messages with line numbers and nothing executes. Mutations made this way are NOT undoable with Ctrl+Z — the chat checkpoint is the rollback. The script cannot be interrupted: avoid unbounded loops and long blocking work (they freeze the editor).",
+		props, req));
+}
+
+// ==========================================================================
 // Signal actions
 // ==========================================================================
 {

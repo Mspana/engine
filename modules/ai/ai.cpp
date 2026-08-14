@@ -7,6 +7,7 @@
 // Action implementations
 #include "actions/node_actions.h"
 #include "actions/script_actions.h"
+#include "actions/script_execution_actions.h"
 #include "actions/scene_actions.h"
 #include "actions/read_actions.h"
 #include "actions/signal_actions.h"
@@ -612,6 +613,8 @@ Dictionary AI::execute_single_action(const Dictionary &p_action) {
         action_result = AIScriptActions::exec_rename_script(action_args);
     } else if (action_name == "delete_script") {
         action_result = AIScriptActions::exec_delete_script(action_args);
+    } else if (action_name == "run_editor_script") {
+        action_result = AIScriptExecActions::exec_run_editor_script(action_args);
     } else if (action_name == "create_scene") {
         action_result = AISceneActions::exec_create_scene(action_args);
     } else if (action_name == "open_scene") {
