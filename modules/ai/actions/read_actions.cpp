@@ -554,7 +554,11 @@ Dictionary exec_preview_asset(const Dictionary &args) {
 			"'paths' array is empty");
 	}
 
-	int max_size = 128;
+	// Auto-mode output budget: in "auto" scale, previews larger than this are
+	// downscaled to fit. Explicit "Nx" divisors bypass it. Default 1024: roughly
+	// 1,000-1,500 tokens per image, and most vision models cap useful resolution
+	// around that size anyway.
+	int max_size = 1024;
 	if (args.has("max_size")) {
 		Variant::Type mt = args["max_size"].get_type();
 		if (mt == Variant::INT) {
@@ -562,7 +566,57 @@ Dictionary exec_preview_asset(const Dictionary &args) {
 		} else if (mt == Variant::FLOAT) {
 			max_size = (int)(float)args["max_size"];
 		}
-		max_size = CLAMP(max_size, 32, 256);
+		max_size = CLAMP(max_size, 32, 2048);
+	}
+
+	// Optional crop rect [x, y, w, h] in SOURCE pixels, applied to every path in the call.
+	bool has_region = false;
+	Rect2i region_req;
+	if (args.has("region")) {
+		if (args["region"].get_type() != Variant::ARRAY) {
+			return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+				"'region' must be an array [x, y, w, h] in source pixels");
+		}
+		Array region_in = args["region"];
+		if (region_in.size() != 4) {
+			return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+				"'region' must have exactly 4 elements: [x, y, w, h]");
+		}
+		int region_vals[4];
+		for (int i = 0; i < 4; i++) {
+			Variant::Type rt = region_in[i].get_type();
+			if (rt != Variant::INT && rt != Variant::FLOAT) {
+				return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+					"'region' elements must be numbers: [x, y, w, h] in source pixels");
+			}
+			region_vals[i] = (int)region_in[i];
+		}
+		if (region_vals[2] <= 0 || region_vals[3] <= 0) {
+			return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+				"'region' width and height must be positive");
+		}
+		region_req = Rect2i(region_vals[0], region_vals[1], region_vals[2], region_vals[3]);
+		has_region = true;
+	}
+
+	// Scale knob: "auto" (default) returns native resolution when it fits the
+	// budget, else downscales to fit. Explicit divisors — "1x" = source
+	// resolution, "2x" = half, "4x" = quarter — are deliberate and uncapped.
+	int scale_divisor = 0; // 0 = auto
+	if (args.has("scale")) {
+		String scale_str = String(args["scale"]).strip_edges().to_lower();
+		if (!scale_str.is_empty() && scale_str != "auto") {
+			bool scale_valid = scale_str.length() >= 2 && scale_str.ends_with("x");
+			if (scale_valid) {
+				String scale_num = scale_str.substr(0, scale_str.length() - 1);
+				scale_valid = scale_num.is_valid_int() && scale_num.to_int() >= 1;
+			}
+			if (!scale_valid) {
+				return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
+					"'scale' must be \"auto\" or a divisor like \"1x\", \"2x\", \"4x\"");
+			}
+			scale_divisor = scale_str.substr(0, scale_str.length() - 1).to_int();
+		}
 	}
 
 	Array previews;
@@ -600,19 +654,49 @@ Dictionary exec_preview_asset(const Dictionary &args) {
 			continue;
 		}
 
-		// Resize if larger than max_size, preserving aspect ratio.
 		// Keep the source dimensions: the thumbnail size alone misleads the model
-		// into treating the downscaled preview as the asset's real resolution.
+		// into treating the scaled preview as the asset's real resolution.
 		const int source_w = img->get_width();
 		const int source_h = img->get_height();
-		if (source_w > max_size || source_h > max_size) {
-			if (source_w >= source_h) {
-				int new_h = MAX(1, source_h * max_size / source_w);
-				img->resize(max_size, new_h, Image::INTERPOLATE_BILINEAR);
-			} else {
-				int new_w = MAX(1, source_w * max_size / source_h);
-				img->resize(new_w, max_size, Image::INTERPOLATE_BILINEAR);
+
+		// Resolve the source rect this preview shows (whole image, or the crop).
+		Rect2i shown(0, 0, source_w, source_h);
+		if (has_region) {
+			Rect2i clamped = region_req.intersection(shown);
+			if (!clamped.has_area()) {
+				entry["error"] = vformat("Region [%d, %d, %d, %d] lies outside the image (%dx%d)",
+					region_req.position.x, region_req.position.y, region_req.size.x, region_req.size.y,
+					source_w, source_h);
+				previews.push_back(entry);
+				continue;
 			}
+			if (clamped != region_req) {
+				entry["region_clamped"] = true;
+			}
+			shown = clamped;
+			img = img->get_region(shown);
+		}
+
+		// Pick the target size. Never upscale: output resolution is always at or
+		// below source resolution. In auto mode, content that fits the budget at
+		// native resolution passes through untouched; larger content is downscaled
+		// to fit. Explicit "Nx" divisors bypass the budget — the model deliberately
+		// accepted the context cost.
+		const int shown_w = shown.size.x;
+		const int shown_h = shown.size.y;
+		const int longest = MAX(shown_w, shown_h);
+		double scale = 1.0;
+		if (scale_divisor > 0) {
+			scale = 1.0 / (double)scale_divisor;
+		} else if (longest > max_size) {
+			scale = (double)max_size / (double)longest; // Fit to budget.
+		}
+
+		int target_w = MAX(1, (int)(shown_w * scale + 0.5));
+		int target_h = MAX(1, (int)(shown_h * scale + 0.5));
+
+		if (target_w != shown_w || target_h != shown_h) {
+			img->resize(target_w, target_h, Image::INTERPOLATE_BILINEAR);
 		}
 
 		Vector<uint8_t> png_bytes = img->save_png_to_buffer();
@@ -629,14 +713,29 @@ Dictionary exec_preview_asset(const Dictionary &args) {
 
 		entry["source_width"] = source_w;
 		entry["source_height"] = source_h;
+		// Echo the source rect actually shown so the model can map preview pixels
+		// back to source pixels with zero arithmetic:
+		//   source_x = region[0] + preview_x / effective_scale
+		Array shown_region;
+		shown_region.push_back(shown.position.x);
+		shown_region.push_back(shown.position.y);
+		shown_region.push_back(shown.size.x);
+		shown_region.push_back(shown.size.y);
+		entry["region"] = shown_region;
 		entry["preview_width"] = img->get_width();
 		entry["preview_height"] = img->get_height();
+		// Preview px per source px (always <= 1.0; 1.0 = native 1:1, <1 downscaled).
+		double effective_scale = (double)MAX(img->get_width(), img->get_height()) / (double)longest;
+		effective_scale = (double)((int64_t)(effective_scale * 10000.0 + 0.5)) / 10000.0;
+		entry["effective_scale"] = effective_scale;
 		previews.push_back(entry);
 		images.push_back(b64);
 	}
 
-	print_line(vformat("AI: preview_asset — %d paths, %d images generated (max_size=%d)",
-		paths.size(), images.size(), max_size));
+	print_line(vformat("AI: preview_asset — %d paths, %d images generated (max_size=%d%s%s)",
+		paths.size(), images.size(), max_size,
+		has_region ? String(", region") : String(),
+		scale_divisor > 0 ? vformat(", scale=%dx", scale_divisor) : String()));
 
 	Dictionary result_data;
 	result_data["previews"] = previews;

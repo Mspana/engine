@@ -2,13 +2,21 @@
 
 ## Ideas / Future Features
 
+Text to speech button.
+
+Make thoughts a dropdown. When active: says 'Thinking...' w/ the dots animating. When complete, says 'Thought for x seconds'
+
+Double click images to see a large preview. Literally should be the inspector preview, but as a temporary window-spanning size, so we can see detail.
+
+Copy and paste files into FileSystem from external file explorer.
+
 ~~Fix bad looking connected icon.~~ (7/30: ColorRect base painted a white square under the non-AA circle; transparent fill + antialiased draw.)
 Why have //res: displayed? just have them sit at the root.
-Thoughts should be one line, with ... -  let the user click it to expand.
+Thoughts should be one line, with ... -  let the user click it to expand. (8/4 audit: a 7/28 code comment in _create_thinking_block deliberately chose plain, non-collapsible thinking text — doing this means reversing that decision, not just implementing.)
 Have user prompts be a fixed maximum of 3 lines, and let the user click it to expand.
 Move edit symbols to the left of the user bubble.
 
-Delete old chats?
+~~Delete old chats?~~ (8/4 audit: done — per-row "x" in the history popup with a confirm dialog.)
 
 ~~Tool calls are failing when they actually succeed. The AI set a square to blue, it became blue, but because the tool call failed the AI tried a few other things without realizing it didn't need to.~~
 FIXED 7/30: false negative in set_property — hex/named color strings ("#0000ff",
@@ -34,6 +42,18 @@ Index p_screen = -1 is out of bounds (get_screen_count() = 1)` — observed 7/28
 after a monitor was disconnected (screen count 2 -> 1). Likely a stale screen index in
 the GameView capture path; -1 should resolve to SCREEN_OF_MAIN_WINDOW. run_and_screenshot
 surfaces the failure correctly; the capture itself needs the fix.
+(8/4 audit: hypothesis wrong — there is no stale index; nothing in the AI path passes a
+screen index at all. Engine bug: screen_get_image() bounds-checks p_screen BEFORE the
+switch that resolves SCREEN_OF_MAIN_WINDOW (-1), unlike every sibling function that
+calls _get_screen_index() first. One-line reorder in display_server_windows.cpp;
+macOS/X11 likely share the same ordering bug.)
+
+Pass more editor state to the agent as context. Guiding principle: the agent should get as
+much information as it requires. Concrete case (8/4): the Script editor's own diagnostics
+never reach the model — the only parse-error channels are tool results (read_file /
+update_script / create_script) and the [GAME SESSION] injection, which only carries errors
+from the AI's own edits. Wiring editor diagnostics in would cover user hand-edits too. For
+now, getting parse errors from the tool calls is good enough.
 
 Enhanced AI Panel UI
 1. Input/output, colorized. Same color on success, red output on failure
@@ -61,7 +81,12 @@ Values are just an example here.
 ~~"GIFs are not supported. Would you like to convert your file to a sprite sheet?"~~
 ~~"Convert GIF"   "Cancel"~~
 
-Revert doesn't work. Disable and fix.
+Revert doesn't work. Disable and fix. (8/4 audit: root cause found — checkpoints record
+and undo against GLOBAL_HISTORY, but AI node/property edits land in per-scene undo
+histories, so the global counter never advances: revert silently no-ops ("No undo
+needed") while claiming success, and when it does fire it can undo the user's own edits
+from whichever history is active. Fix = record per-history action indices at checkpoint
+time and unwind each history to its own index. Disabling the button is one line.)
 
 ~~The cancelled message is 'thoughts', why? Change.~~
 
@@ -143,11 +168,11 @@ Tools may be broken for specific reasons. We should have a dashboard to disable 
 
 ~~max actions to 100.~~
 
-tools: do they all pop in the AI panel UI once they're completed? that's too late, they should really be shown right when we get a response from the API, with a little in-progress animation while they're running, and update in-time when they are complete.
+~~tools: do they all pop in the AI panel UI once they're completed? that's too late, they should really be shown right when we get a response from the API, with a little in-progress animation while they're running, and update in-time when they are complete.~~ (8/4 audit: done — pending cards spawn the moment the assistant item arrives, spinner ticks while running, card upgrades in place on result.)
 
-Are we actually cancelling the run when we press cancel? or are we waiting for a response from the API, then discarding it and saying we're done? certainly we can send something to the API to cancel the in-progress run.
+~~Are we actually cancelling the run when we press cancel? or are we waiting for a response from the API, then discarding it and saying we're done? certainly we can send something to the API to cancel the in-progress run.~~ (8/4 audit: stale — verified both paths truly abort: legacy providers memdelete the HTTPClient mid-poll, closing the socket; the harness sends turn/interrupt and the translator tears down its upstream connection.)
 
-Need a way to measure provider latency. Google is being ubuntu slow.
+Need a way to measure provider latency. Google is being ubuntu slow. (8/4 audit: partial — the legacy loop already stamps latency_ms per request, logs it to the watchtower feed, and shows "provider · 1.4s" under the Debug toggle. The harness path records nothing, and there's no cross-provider rollup; the watchtower JSONL already has the data for one.)
 
 ~~We should add the open-source Chinese models.~~(Added Kimi K2.5, very capable vision)
 
@@ -193,14 +218,63 @@ AI should be able to run the game in 3d and change the viewing shot dynamically 
 
 ## UI / UX
 
-- **`update_todos` action missing from UI**: Can't see an action for "make task list" — may not be surfaced in the panel.
-- **Model thinking not visible**: Would be very useful to see the model's exact output including thinking blocks.
+- **Compaction invisible in UI** (8/14): codex auto-compacted twice during the fort
+  session (rollout has `compacted` items + `context_compacted` event_msgs at ~250k of
+  the 258,400-token window codex assigns kimi-k3) and the driver handles neither event
+  type, so the panel showed nothing — the only trace is the model saying "picking up
+  where I left off". Handle the event in codex_harness_driver, render a small
+  "context compacted" divider in the transcript, persist it to the chat store.
+- ~~**`update_todos` action missing from UI**: Can't see an action for "make task list" — may not be surfaced in the panel.~~ (8/4 audit: done — dedicated todo panel widget wired to both backends; deliberately a panel rather than transcript cards.)
+- ~~**Model thinking not visible**: Would be very useful to see the model's exact output including thinking blocks.~~ (8/4 audit: done — thinking streams live and persists across reload. A raw exact-payload view is still open; same work as the Enhanced AI Panel debug viewer.)
 - ~~**Multi-chat window**: Need support for multiple concurrent chat sessions.~~
 
 ## Infrastructure / Architecture
 
+- **capture_2d_viewport renders editor gizmos as scene content** (8/14): captures
+  include editor overlays — collision-shape debug fills (teal) and the tile grid when
+  a TileMapLayer is selected — and the model reads them as part of the scene. Cost it
+  a full false-debugging cycle in the fort session (numpy-scanned source sheets for
+  cyan that was its own colliders' debug fill) and earlier the user had to explain the
+  tile-grid overlay. Decision 8/14: capture without gizmos BY DEFAULT, `include_gizmos`
+  opt-in; document the behavior in the tool description only (no per-result labeling).
+- **Scripted saves spam ProgressDialog guard errors** (8/14): AI tool execution runs
+  in a deferred / message-queue-flush context, so when a run_editor_script calls
+  `EditorInterface.save_scene()` the editor save path pops EditorProgress, which is
+  illegal there — "Do not use progress dialog (task) while flushing the message queue
+  or using call_deferred()!" (progress_dialog.cpp:183) on EVERY scripted save. Saves
+  succeed (err=0), but the errors land in every script result and the model has
+  already learned the reflex "ProgressDialog errors are harmless noise" — alert
+  fatigue that will eventually mask a real save failure. Fix: route AI-context saves
+  through a no-progress path (suppress EditorProgress when invoked from tool
+  execution) — do NOT just filter the error text.
+- **preview_asset: resolution budget + region/scale knob** (8/14): today `max_size`
+  only downscales the whole file — no crop, no magnify. A 512×512 sheet previewed at
+  256 shows each 16px tile as 8px, so in the fort session the model built its own
+  zoom pipeline (shell PIL/System.Drawing crop→upscale→temp PNG, ~10 times) with huge
+  coordinate-arithmetic thinking blocks. Design (8/14): fixed per-image output budget;
+  add `region` [x,y,w,h] in source pixels; add a scale knob — `auto` (default: fit
+  whole image or region to the budget, current behavior), or explicit `1x` (source
+  resolution, unmodified), `2x` (half), etc. Budget math makes detail self-serve:
+  full 4K frame → compressed overview, small region → 1:1 pixels. Result reports the
+  effective scale so the model never re-derives crop→source coordinate mapping.
+  (8/14: built — `region` + `scale` knobs in exec_preview_asset. Never upscales:
+  auto returns native resolution when within the budget (default 1024, clamp
+  32-2048), else downscales to fit; explicit `Nx` divisors bypass the budget.
+  Result echoes `region` + `effective_scale` (always <= 1). Uncommitted, untested.)
+- **Duplicate transcript persistence** (8/14): the engine's chat store (`ai_chat/chat_*.jsonl`) and codex's rollouts (`codex_home/sessions/.../rollout-*.jsonl`) both record every message, tool call, and result. The rollout is the more complete record (full tool args/outputs untruncated; the chat store clips shell output at 2KB in codex_harness_driver.cpp). Task: remove our custom transcript saving and rely on codex rollouts as the single source of truth. Needs care: the chat store also powers panel history rendering, checkpoints/rewind, and message editing — those must read from (or be rebuilt on top of) rollout data first.
 - ~~**AI cannot see everything**: When asked to look at the game, only saw nodes in the current scene. Now looks at all scenes, all nodes, and all files.~~
 - ~~**stop_game tool**: AI should be able to close a running game.~~
 - **Auto-compact needed**: Approaching context limits; auto-compact mechanism required.
 - ~~**Diff-based script updates**: Script modifications should use diffs, not full replacements. Saves context and prevents silent corruption bugs.~~ ✓
-- **Git / version control integration**: Necessary for tracking changes made by the model.
+- ~~**Git / version control integration**: Necessary for tracking changes made by the model.~~ (8/4: built in the in-flight agent work — modules/git EditorVCSInterfaceGit backend + 10 vcs_* tools, remote ops gated behind per-call approval. Uncommitted, no tests yet.)
+
+- **Scene-dock visibility for instanced scenes** (8/14): node counts from
+  run_editor_script / list_nodes include children of instanced scenes (e.g. a Paladin
+  instance's 7 internal nodes), but the Scene dock hides those behind "Open in Editor"
+  unless the instance has Editable Children — so the agent reported 11 nodes while the
+  user saw 4, with no way to know the difference. The dock's display rule is exact and
+  cheap to replicate (scene_tree_editor.cpp ~284: shown iff root, owned by root, or
+  owner is an editable instance). Task: mark instanced-scene roots (`instance_of`:
+  scene path) and add `visible_in_scene_dock` per node + a visible-count alongside
+  total in list_nodes results, so the agent can say "11 nodes, 4 visible in your Scene
+  tab". Low priority — the agent being right about the true tree is fine for now.

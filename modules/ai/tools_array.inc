@@ -512,15 +512,28 @@ const String mutation_scene_path_desc = "Scene to modify, e.g. 'res://main.tscn'
 	paths_items["type"] = "string";
 	paths_prop["items"] = paths_items;
 	props["paths"] = paths_prop;
-	props["max_size"] = _make_prop("integer", "Max dimension in px (default 128, range 32-256)");
+	props["max_size"] = _make_prop("integer", "Auto-mode output budget: max preview dimension in px (default 1024, range 32-2048). Only applies when scale is \"auto\"; explicit divisors bypass it.");
+	Dictionary region_prop;
+	region_prop["type"] = "array";
+	region_prop["description"] = "Optional crop [x, y, w, h] in SOURCE pixels — preview only that rect. Out-of-bounds rects are clamped to the image. Applies to every path in the call.";
+	Dictionary region_items;
+	region_items["type"] = "integer";
+	region_prop["items"] = region_items;
+	props["region"] = region_prop;
+	props["scale"] = _make_prop("string", "\"auto\" (default): native resolution if the image — or the region — fits within max_size, else downscaled to fit. Explicit divisors are NOT capped by max_size: \"1x\" = exact source resolution, \"2x\" = half, \"4x\" = quarter. Never upscales.");
 	Array req;
 	req.push_back("paths");
 	tools.push_back(_make_tool("preview_asset",
-		"Get low-res image previews. Returns visible thumbnails for each image file. "
-		"Use after list_files to see what images contain before placing them. "
-		"The thumbnail is DOWNSCALED — it is NOT the asset's real resolution. Each preview entry "
-		"reports source_width/source_height (the file's true dimensions — use these for any "
-		"layout or scale math) and preview_width/preview_height (the thumbnail).",
+		"Preview image files as visible images. Default: the image — or the region, if given — comes back at "
+		"NATIVE resolution when it fits the max_size budget, else downscaled to fit. Workflow: first call with "
+		"just paths for an overview; then zoom into a region ([x, y, w, h], SOURCE pixels) to read fine detail "
+		"— e.g. individual tiles in a tilesheet — at native pixels. Explicit scale divisors bypass the budget: "
+		"\"1x\" on a large image is expensive (full-resolution image in context) — reserve it for when that "
+		"detail is genuinely needed, and prefer region + \"1x\" instead. Each preview entry reports "
+		"source_width/source_height (the file's true dimensions — use these for any layout or scale math), "
+		"region (the source rect actually shown), preview_width/preview_height, and effective_scale (preview "
+		"px per source px, always <= 1.0; map back with source_x = region[0] + preview_x / effective_scale — "
+		"no other arithmetic needed).",
 		props, req));
 }
 
