@@ -278,3 +278,21 @@ AI should be able to run the game in 3d and change the viewing shot dynamically 
   scene path) and add `visible_in_scene_dock` per node + a visible-count alongside
   total in list_nodes results, so the agent can say "11 nodes, 4 visible in your Scene
   tab". Low priority — the agent being right about the true tree is fine for now.
+
+- ~~**Zip drag-and-drop extraction**: Clicking and dragging a zip file into the filesystem extracts it automatically.~~ (8/18: implemented — dropping a .zip now pops a dialog: "Extract to New Folder" / "Import as .zip" / Cancel. See design/zip_drop_extraction.md.)
+
+- **Investigate: undo for filesystem operations** (8/18, not yet confirmed to build):
+  Godot convention is that FileSystem-dock file operations (drop-copy, zip extraction,
+  move, rename, duplicate) live outside the undo stack — Ctrl+Z only covers scene and
+  script edits. Consider breaking that convention so file operations are undoable.
+  Came up with zip-drop extraction: reversing one currently means right-click → Delete
+  (Recycle Bin). Options to weigh: a real undo-stack entry for file ops, or a lighter
+  post-operation toast with an Undo button that trashes the just-created paths.
+
+- **Rework GIF import to pre-copy interception** (8/18): gif_import_handler.cpp still
+  connects to files_dropped in parallel with EditorNode, re-derives the drop target
+  after EditorNode has already copied the .gif, then converts and deletes the .gif +
+  .import. The zip-drop feature established pre-copy interception inside
+  EditorNode::_dropped_files — migrate the GIF flow to the same pattern so the raw
+  .gif never lands in the project and the fragile parallel files_dropped connection
+  goes away.

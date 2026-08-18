@@ -376,6 +376,10 @@ private:
 	AcceptDialog *warning = nullptr;
 	EditorPlugin *plugin_to_save = nullptr;
 
+	ConfirmationDialog *zip_drop_dialog = nullptr;
+	Vector<String> pending_dropped_zips; // Absolute OS paths of dropped .zip files.
+	String pending_dropped_zips_target; // Globalized destination dir, captured at drop time.
+
 	int overridden_default_layout = -1;
 	Ref<ConfigFile> default_layout;
 	PopupMenu *editor_layouts = nullptr;
@@ -597,6 +601,10 @@ private:
 
 	void _dropped_files(const Vector<String> &p_files);
 	void _add_dropped_files_recursive(const Vector<String> &p_files, String to_path);
+	void _zip_drop_extract_confirmed();
+	void _zip_drop_custom_action(const String &p_action);
+	void _zip_drop_canceled();
+	Error _extract_zip_to_dir(const String &p_zip_path, const String &p_dest_dir, Vector<String> &r_failed_files);
 
 	void _update_vsync_mode();
 	void _update_from_settings();

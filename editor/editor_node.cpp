@@ -38,6 +38,7 @@
 #include "core/io/image.h"
 #include "core/io/resource_loader.h"
 #include "core/io/resource_saver.h"
+#include "core/io/zip_io.h"
 #include "core/object/class_db.h"
 #include "core/os/keyboard.h"
 #include "core/os/os.h"
@@ -6194,9 +6195,193 @@ void EditorNode::_dropped_files(const Vector<String> &p_files) {
 	}
 	to_path = ProjectSettings::get_singleton()->globalize_path(to_path);
 
-	_add_dropped_files_recursive(p_files, to_path);
+	Ref<DirAccess> dir = DirAccess::create(DirAccess::ACCESS_FILESYSTEM);
+	ERR_FAIL_COND(dir.is_null());
 
+	Vector<String> zips;
+	Vector<String> others;
+	for (const String &from : p_files) {
+		if (!dir->dir_exists(from) && from.get_extension().to_lower() == "zip") {
+			zips.push_back(from);
+		} else {
+			others.push_back(from);
+		}
+	}
+
+	if (!others.is_empty()) {
+		_add_dropped_files_recursive(others, to_path);
+		EditorFileSystem::get_singleton()->scan_changes();
+	}
+
+	if (!zips.is_empty()) {
+		pending_dropped_zips = zips;
+		pending_dropped_zips_target = to_path;
+		if (zips.size() == 1) {
+			zip_drop_dialog->set_text(vformat(TTR("\"%s\" is a ZIP archive.\nWould you like to extract the zip file?"), zips[0].get_file()));
+		} else {
+			zip_drop_dialog->set_text(vformat(TTR("%d ZIP archives were dropped.\nWould you like to extract them?"), zips.size()));
+		}
+		zip_drop_dialog->popup_centered();
+	}
+}
+
+void EditorNode::_zip_drop_extract_confirmed() {
+	Ref<DirAccess> da = DirAccess::create(DirAccess::ACCESS_FILESYSTEM);
+	ERR_FAIL_COND(da.is_null());
+
+	Vector<String> failed_files;
+	for (const String &zip_path : pending_dropped_zips) {
+		String dest = pending_dropped_zips_target.path_join(zip_path.get_file().get_basename());
+		int exist_counter = 1;
+		String base_dest = dest;
+		while (da->file_exists(dest) || da->dir_exists(dest)) {
+			exist_counter++;
+			dest = vformat("%s (%d)", base_dest, exist_counter);
+		}
+
+		Error err = _extract_zip_to_dir(zip_path, dest, failed_files);
+		if (err != OK) {
+			failed_files.push_back(vformat(TTR("%s (not a valid ZIP archive)"), zip_path.get_file()));
+		}
+	}
+
+	if (!failed_files.is_empty()) {
+		String msg = TTR("The following files failed extraction from the ZIP archive:") + "\n\n";
+		for (int i = 0; i < failed_files.size(); i++) {
+			if (i > 10) {
+				msg += "\n" + vformat(TTR("(and %s more files)"), itos(failed_files.size() - i));
+				break;
+			}
+			msg += "\n" + failed_files[i];
+		}
+		show_warning(msg);
+	}
+
+	pending_dropped_zips.clear();
+	pending_dropped_zips_target = String();
 	EditorFileSystem::get_singleton()->scan_changes();
+}
+
+void EditorNode::_zip_drop_custom_action(const String &p_action) {
+	if (p_action != "import_zip") {
+		return;
+	}
+	_add_dropped_files_recursive(pending_dropped_zips, pending_dropped_zips_target);
+	pending_dropped_zips.clear();
+	pending_dropped_zips_target = String();
+	EditorFileSystem::get_singleton()->scan_changes();
+	zip_drop_dialog->hide();
+}
+
+void EditorNode::_zip_drop_canceled() {
+	pending_dropped_zips.clear();
+	pending_dropped_zips_target = String();
+}
+
+Error EditorNode::_extract_zip_to_dir(const String &p_zip_path, const String &p_dest_dir, Vector<String> &r_failed_files) {
+	Ref<FileAccess> io_fa;
+	zlib_filefunc_def io = zipio_create_io(&io_fa);
+	unzFile pkg = unzOpen2(p_zip_path.utf8().get_data(), &io);
+	if (!pkg) {
+		return ERR_FILE_CANT_OPEN;
+	}
+
+	// Pass 1: enumerate entries and detect a single common root folder, so
+	// "foo.zip" containing "foo/..." does not extract to "foo/foo/...". The
+	// check is segment-based instead of relying on explicit directory records,
+	// which some archivers omit.
+	Vector<String> entries;
+	String common_root;
+	bool has_common_root = true;
+	int ret = unzGoToFirstFile(pkg);
+	while (ret == UNZ_OK) {
+		unz_file_info64 info;
+		String name;
+		if (godot_unzip_get_current_file_info(pkg, info, name) == UNZ_OK && !name.is_empty() && !name.begins_with("__MACOSX")) {
+			entries.push_back(name);
+			String root = name.get_slice("/", 0);
+			if (common_root.is_empty()) {
+				common_root = root;
+			} else if (common_root != root) {
+				has_common_root = false;
+			}
+			if (name == root) {
+				// A top-level file entry: the archive has no single root folder.
+				has_common_root = false;
+			}
+		}
+		ret = unzGoToNextFile(pkg);
+	}
+
+	String strip_prefix;
+	if (has_common_root && !common_root.is_empty()) {
+		strip_prefix = common_root + "/";
+	}
+
+	Ref<DirAccess> da = DirAccess::create(DirAccess::ACCESS_FILESYSTEM);
+	if (da.is_null()) {
+		unzClose(pkg);
+		return ERR_CANT_CREATE;
+	}
+
+	const String dest_base = p_dest_dir.simplify_path();
+	da->make_dir_recursive(dest_base);
+
+	ProgressDialog::get_singleton()->add_task("extract_zip_drop", vformat(TTR("Extracting \"%s\""), p_zip_path.get_file()), entries.size());
+
+	int idx = 0;
+	ret = unzGoToFirstFile(pkg);
+	while (ret == UNZ_OK) {
+		unz_file_info64 info;
+		String name;
+		if (godot_unzip_get_current_file_info(pkg, info, name) != UNZ_OK || name.is_empty() || name.begins_with("__MACOSX")) {
+			ret = unzGoToNextFile(pkg);
+			continue;
+		}
+
+		ProgressDialog::get_singleton()->task_step("extract_zip_drop", name, idx++);
+
+		String rel = name.trim_prefix(strip_prefix);
+		if (rel.is_empty()) {
+			ret = unzGoToNextFile(pkg);
+			continue;
+		}
+
+		String target = dest_base.path_join(rel).simplify_path();
+		// Guard against zip-slip: entries like "../evil.txt" must never write
+		// outside the destination folder.
+		if (target != dest_base && !target.begins_with(dest_base + "/")) {
+			r_failed_files.push_back(name);
+			ret = unzGoToNextFile(pkg);
+			continue;
+		}
+
+		if (name.ends_with("/")) {
+			da->make_dir_recursive(target);
+		} else {
+			Vector<uint8_t> uncomp_data;
+			uncomp_data.resize(info.uncompressed_size);
+
+			unzOpenCurrentFile(pkg);
+			unzReadCurrentFile(pkg, uncomp_data.ptrw(), uncomp_data.size());
+			unzCloseCurrentFile(pkg);
+
+			da->make_dir_recursive(target.get_base_dir());
+
+			Ref<FileAccess> f = FileAccess::open(target, FileAccess::WRITE);
+			if (f.is_valid()) {
+				f->store_buffer(uncomp_data.ptr(), uncomp_data.size());
+			} else {
+				r_failed_files.push_back(name);
+			}
+		}
+
+		ret = unzGoToNextFile(pkg);
+	}
+
+	ProgressDialog::get_singleton()->end_task("extract_zip_drop");
+	unzClose(pkg);
+	return OK;
 }
 
 void EditorNode::_add_dropped_files_recursive(const Vector<String> &p_files, String to_path) {
@@ -8087,6 +8272,15 @@ EditorNode::EditorNode() {
 	save_confirmation->connect("custom_action", callable_mp(this, &EditorNode::_discard_changes));
 	save_confirmation->connect("canceled", callable_mp(this, &EditorNode::_cancel_close_scene_tab));
 	save_confirmation->connect("about_to_popup", callable_mp(this, &EditorNode::_prepare_save_confirmation_popup));
+
+	zip_drop_dialog = memnew(ConfirmationDialog);
+	zip_drop_dialog->set_ok_button_text(TTRC("Extract to New Folder"));
+	zip_drop_dialog->add_button(TTRC("Import as .zip"), DisplayServer::get_singleton()->get_swap_cancel_ok(), "import_zip");
+	gui_base->add_child(zip_drop_dialog);
+	zip_drop_dialog->set_min_size(Vector2(450.0 * EDSCALE, 0));
+	zip_drop_dialog->connect(SceneStringName(confirmed), callable_mp(this, &EditorNode::_zip_drop_extract_confirmed));
+	zip_drop_dialog->connect("custom_action", callable_mp(this, &EditorNode::_zip_drop_custom_action));
+	zip_drop_dialog->connect("canceled", callable_mp(this, &EditorNode::_zip_drop_canceled));
 
 	gradle_build_manage_templates = memnew(ConfirmationDialog);
 	gradle_build_manage_templates->set_text(TTR("Android build template is missing, please install relevant templates."));
