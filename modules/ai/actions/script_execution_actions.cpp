@@ -270,17 +270,35 @@ Dictionary exec_run_editor_script(const Dictionary &args) {
 
 	if (!gdscript->has_method(StringName("run"))) {
 		remove_error_handler(&error_handler);
+		// Compile succeeded, but non-fatal errors may still have been captured —
+		// they always flow to the model, on failure paths included.
+		Dictionary details;
+		if (!error_capture.entries.is_empty()) {
+			Array errors;
+			for (const AIScriptRunErrorCapture::Entry &e : error_capture.entries) {
+				errors.push_back(_capture_entry_to_dict(e, script_path));
+			}
+			details["errors"] = errors;
+		}
 		return ai_create_error_result(AIErrorCodes::INVALID_ARGS,
-			"The script must define `func run() -> Variant` at the top level — that is the entry point run_editor_script calls.");
+			"The script must define `func run() -> Variant` at the top level — that is the entry point run_editor_script calls.", details);
 	}
 
 	StringName base_type = gdscript->get_instance_base_type();
 	Object *instance = base_type == StringName() ? nullptr : ClassDB::instantiate(base_type);
 	if (!instance) {
 		remove_error_handler(&error_handler);
+		Dictionary details;
+		if (!error_capture.entries.is_empty()) {
+			Array errors;
+			for (const AIScriptRunErrorCapture::Entry &e : error_capture.entries) {
+				errors.push_back(_capture_entry_to_dict(e, script_path));
+			}
+			details["errors"] = errors;
+		}
 		return ai_create_error_result(AIErrorCodes::OPERATION_FAILED,
 			vformat("Could not instantiate the script's base type '%s'. Extend an instantiable class (e.g. RefCounted, Node, Node2D) or omit `extends` for RefCounted.",
-				base_type == StringName() ? String("<unknown>") : String(base_type)));
+				base_type == StringName() ? String("<unknown>") : String(base_type)), details);
 	}
 
 	// A RefCounted-based instance is owned via Ref (released on return); any

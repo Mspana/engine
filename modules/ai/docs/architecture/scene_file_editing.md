@@ -29,6 +29,8 @@ The write path refuses rather than guessing:
 
 Before the real file is touched, the edited content is written to a temp file outside the project (the editor's temp directory, which the filesystem scanner never sees and whose uid header is not registered by loading) and loaded as a `PackedScene` with caching disabled. If the load fails, the tool returns the actual parse errors — captured from the engine's error stream, including line numbers — and the file on disk is left untouched. The temp file is always deleted before returning.
 
+A load can also *succeed* while the engine raises non-fatal errors (for example a property setter rejecting malformed embedded data — the scene loads, but that data is silently dropped). Captured errors always flow to the model: on a successful validation load they are returned in the success result as `load_errors`, with a warning telling the model the file was written but part of its data did not survive the load. Before this rule, such edits were reported as clean successes and the corruption was only discovered at run time.
+
 ## Editor synchronization
 
 After a successful commit the tool tells the editor's filesystem cache about the change, and — only if the scene is open in a tab — reloads that tab from disk in place. The reload preserves tab order and the current tab, and updates the editor's stored modification time so the "files have been modified outside Godot" dialog does not appear afterward. Reloading clears that tab's undo history, which is why file edits are not undoable.

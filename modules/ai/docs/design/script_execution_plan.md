@@ -123,11 +123,20 @@ history.**
 
 - **Phase A (ships with the tool):** the synchronous result contract above. This is
   the tight loop; its quality is the agent's iteration speed.
-- **Phase B (static errors):** keep the existing delta push — new-since-last-turn
+- **Phase B (static errors) — BUILT (Aug 2026):** keep the existing delta push — new-since-last-turn
   errors each turn, not full dumps. First fix: `update_scene_file` captures load
   errors but discards them on the success path (`scene_actions.cpp` validation
   block) — captured errors must always flow to the model. The tilemap chat shipped a
   broken file as a clean success because of this.
+  *Built (verified live 8/18 — a corrupt Curve sub_resource surfaced `load_errors` on a
+  success result):* `update_scene_file` now returns captured non-fatal errors as `load_errors`
+  (plus a warning) on the success path; `run_editor_script`'s two remaining
+  discard paths (missing `run()`, base-type instantiation failure) now carry captured
+  errors in their error details. All other capture/validation sites audited clean —
+  script tools and `read_script` already attach `parse_errors`/`warnings` to success
+  results. Delta push verified: debugger errors clear on game launch, dedupe by
+  message+location with occurrence counts, and the `_errors_consumed_by_tool` flag
+  prevents tool-result/injection double delivery.
 - **Phase C (runtime error log):** JSONL at a stable `user://` path. Entries:
   timestamp, severity, message, script/line; run start/end markers; crashes recorded
   with exact output and exit status (a crash must never look like a quiet run). Kept

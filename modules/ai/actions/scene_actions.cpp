@@ -410,6 +410,17 @@ Dictionary exec_update_scene_file(const Dictionary &args) {
 	if (line_endings_normalized) {
 		result_data["line_endings_normalized"] = true;
 	}
+	// The validation load can succeed while the engine still raises non-fatal errors
+	// (e.g. a property setter rejecting malformed embedded data). The file was written,
+	// but part of it did not survive the load — that must never read as a clean success.
+	if (!capture.lines.is_empty()) {
+		Array load_errors;
+		for (int i = 0; i < capture.lines.size(); i++) {
+			load_errors.push_back(capture.lines[i]);
+		}
+		result_data["load_errors"] = load_errors;
+		warnings.push_back(vformat("The scene loaded with %d non-fatal engine error(s) — see 'load_errors'. The affected data was likely rejected or ignored at load time. Fix it or verify the file is still what you intended (read_scene_file).", capture.lines.size()));
+	}
 	if (!warnings.is_empty()) {
 		result_data["warnings"] = warnings;
 	}
