@@ -2,6 +2,7 @@
 #include "ai.h"
 #include "ai_provider.h"
 #include "retrieval.h"
+#include "runtime_error_log.h"
 #include "scene_diff.h"
 
 // Action implementations
@@ -1097,6 +1098,7 @@ void AI::_bind_methods() {
     // Game screenshot signal chain (run_and_screenshot action, no cross-module deps)
     ClassDB::bind_method(D_METHOD("trigger_game_screenshot"), &AI::trigger_game_screenshot);
     ClassDB::bind_method(D_METHOD("_connect_debugger_signals"), &AI::_connect_debugger_signals);
+    ClassDB::bind_method(D_METHOD("_wire_runtime_log"), &AI::_wire_runtime_log);
     ClassDB::bind_method(D_METHOD("_setup_chat_junction"), &AI::_setup_chat_junction);
     ClassDB::bind_method(D_METHOD("deliver_game_screenshot", "b64"), &AI::deliver_game_screenshot);
     ClassDB::bind_method(D_METHOD("get_game_is_running"), &AI::get_game_is_running);
@@ -1109,6 +1111,7 @@ void AI::initialize_singleton() {
     ERR_FAIL_COND_MSG(singleton != nullptr, "AI singleton already initialized.");
     singleton = memnew(AI);
     singleton->call_deferred("_connect_debugger_signals");
+    singleton->call_deferred("_wire_runtime_log");
     singleton->call_deferred("_setup_chat_junction");
 }
 
@@ -1244,6 +1247,20 @@ void AI::_connect_debugger_signals() {
         dbg->connect("stopped", callable_mp(this, &AI::_on_game_session_stopped));
     }
 #endif
+}
+
+void AI::_wire_runtime_log() {
+    if (_runtime_log) {
+        _runtime_log->ensure_wired();
+    }
+}
+
+AIRuntimeErrorLog *AI::get_runtime_log() const {
+    return _runtime_log;
+}
+
+Dictionary AI::get_run_digest() const {
+    return _runtime_log ? _runtime_log->get_run_digest() : Dictionary();
 }
 
 void AI::_on_game_session_stopped() {
@@ -1559,6 +1576,10 @@ AI::AI() {
 	// Initialize journal writer
 	_journal_writer = memnew(AIJournalWriter);
 
+	// Runtime error log (Phase C): shares the journal writer, wired to the
+	// editor run/debugger signals via the deferred call in initialize_singleton.
+	_runtime_log = memnew(AIRuntimeErrorLog(_journal_writer, _get_journal_path("runtime_errors.jsonl")));
+
 	print_line("AI: Agentic orchestrator initialized");
 }
 
@@ -1584,6 +1605,12 @@ AI::~AI() {
         if (orchestrator->is_connected("run_complete", callable_mp(this, &AI::_on_agentic_complete))) {
             orchestrator->disconnect("run_complete", callable_mp(this, &AI::_on_agentic_complete));
         }
+    }
+
+    // Runtime log references the journal writer — delete it first.
+    if (_runtime_log) {
+        memdelete(_runtime_log);
+        _runtime_log = nullptr;
     }
 
     // Shut down journal writer (flushes pending writes before destroying thread)

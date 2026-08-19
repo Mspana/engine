@@ -137,13 +137,20 @@ history.**
   results. Delta push verified: debugger errors clear on game launch, dedupe by
   message+location with occurrence counts, and the `_errors_consumed_by_tool` flag
   prevents tool-result/injection double delivery.
-- **Phase C (runtime error log):** JSONL at a stable `user://` path. Entries:
+- **Phase C (runtime error log) — BUILT (Aug 2026):** JSONL at a stable `user://` path. Entries:
   timestamp, severity, message, script/line; run start/end markers; crashes recorded
   with exact output and exit status (a crash must never look like a quiet run). Kept
   separate from the raw stdout log. Run-tool results carry a digest (unique error
   count, warning count, crashed?, log path); the agent pulls the file when the digest
   is not enough. Duplicate-spam collapsing (per-frame errors): back-burner — the
   structured file is greppable/filterable by the agent as ordinary log work.
+  *Built:* `user://ai_journal/runtime_errors.jsonl` via the shared journal writer;
+  per-error entries from the debugger's existing capture (new
+  `runtime_error_reported` signal); run markers from `EditorRunBar` signals; crash
+  detection by sampling the child's exit code in `stop_playing()` before the kill
+  erases it; `run_digest` in `run_and_screenshot`/`stop_game` results in both loops;
+  pull route is `run_editor_script` + `FileAccess`. See
+  [runtime_error_log](../architecture/runtime_error_log.md).
 
 Silent wrongness (script succeeds, result is wrong) is not catchable by error
 plumbing. It is covered by the read API (verify in-script or with a follow-up
@@ -167,7 +174,7 @@ pattern in testing.
 1. Dedicated branch.
 2. Build `run_editor_script` + Phase A result contract.
 3. Phase B static-error check (mostly exists) + the swallowed-errors fix.
-4. Phase C runtime error log.
+4. Phase C runtime error log. **Done** ([runtime_error_log](../architecture/runtime_error_log.md)).
 5. **Acceptance benchmark:** the paladin level task — imported tileset → TileSet
    built → background painted → verified visually, well under 10 minutes. We hold a
    recorded failure of exactly this task to compare against.

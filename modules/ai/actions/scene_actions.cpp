@@ -5,6 +5,7 @@
 #include "action_common.h"
 
 #include "../ai.h" // For AI::get_singleton() (read-before-edit gating)
+#include "../runtime_error_log.h"
 
 #include "editor/editor_interface.h"
 #include "editor/editor_command_palette.h"
@@ -706,6 +707,22 @@ Dictionary exec_stop_game(const Dictionary &args) {
 		print_line("AI: Executed stop_game.");
 	} else {
 		ai_log_verbose("Execute 'stop_game': Game was not running, no-op.");
+	}
+
+	// Phase C digest: stop_playing() finalized the run_end marker synchronously,
+	// so this reflects the run that just ended. When the game was not running,
+	// this is the LAST run's digest — which is how a crash that already ended
+	// the game still reaches the model (was_playing=false, crashed=true).
+	AI *ai = AI::get_singleton();
+	if (ai) {
+		Dictionary digest = ai->get_run_digest();
+		if (!digest.is_empty()) {
+			result_data["run_digest"] = digest;
+			if ((int)digest.get("error_count", 0) > 0) {
+				// The digest delivered the errors; skip the next-turn ambient re-push.
+				ai->set_errors_consumed_by_tool(true);
+			}
+		}
 	}
 
 	return ai_create_success_result(result_data);

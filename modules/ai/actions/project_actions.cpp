@@ -5,6 +5,7 @@
 #include "action_common.h"
 
 #include "../ai.h" // For AI::get_singleton() and file helper methods
+#include "../runtime_error_log.h"
 
 #include "core/config/project_settings.h"
 #include "core/variant/variant.h"
@@ -631,6 +632,17 @@ Dictionary exec_run_project(const Dictionary &args) {
 		Dictionary result_data;
 		result_data["mode"] = mode;
 
+		// Phase C: mark the upcoming run as agent-initiated so the runtime
+		// error log's run_start marker records it, and make sure the log is
+		// wired before the launch emits play_pressed.
+		AI *ai = AI::get_singleton();
+		AIRuntimeErrorLog *runtime_log = ai ? ai->get_runtime_log() : nullptr;
+		if (runtime_log) {
+			runtime_log->ensure_wired();
+			runtime_log->note_run_requested(scene_path, mode);
+			result_data["runtime_log"] = AIRuntimeErrorLog::get_log_path_user();
+		}
+
 		if (!scene_path.is_empty()) {
 			if (!scene_path.begins_with("res://")) {
 				return ai_create_error_result(AIErrorCodes::INVALID_PATH,
@@ -647,6 +659,14 @@ Dictionary exec_run_project(const Dictionary &args) {
 			}
 			run_bar->play_custom_scene(scene_path);
 			result_data["scene_path"] = scene_path;
+			// play_custom_scene emitted play_pressed synchronously, so the log
+			// has already opened this run — report its id.
+			if (runtime_log) {
+				Dictionary digest = runtime_log->get_run_digest();
+				if ((bool)digest.get("running", false)) {
+					result_data["run_id"] = digest["run_id"];
+				}
+			}
 			print_line(vformat("AI: Executed run_project (play mode, custom scene '%s').", scene_path));
 			return ai_create_success_result(result_data);
 		}
@@ -659,6 +679,12 @@ Dictionary exec_run_project(const Dictionary &args) {
 		}
 		command_palette->execute_command("editor/run_project");
 
+		if (runtime_log) {
+			Dictionary digest = runtime_log->get_run_digest();
+			if ((bool)digest.get("running", false)) {
+				result_data["run_id"] = digest["run_id"];
+			}
+		}
 		print_line("AI: Executed run_project (play mode).");
 		return ai_create_success_result(result_data);
 	} else {

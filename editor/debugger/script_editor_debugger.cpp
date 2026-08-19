@@ -727,6 +727,22 @@ void ScriptEditorDebugger::_msg_error(uint64_t p_thread_id, const Array &p_data)
 	rec.error = oe;
 	rec.timestamp_ms = (uint64_t)(Time::get_singleton()->get_unix_time_from_system() * 1000.0);
 	_error_records.push_back(rec);
+
+	// Per-error notification for the AI runtime error log. Field mapping matches
+	// get_structured_errors() so both views of an error agree.
+	Dictionary reported;
+	reported["severity"] = oe.warning ? "warning" : "error";
+	reported["message"] = oe.error_descr.is_empty() ? oe.error : oe.error_descr;
+	if (source_is_project_file) {
+		reported["script"] = oe.source_file;
+		reported["line"] = oe.source_line;
+	}
+	if (!oe.source_func.is_empty() && source_is_project_file) {
+		reported["function"] = oe.source_func;
+	} else if (oe.callstack.size() > 0) {
+		reported["function"] = oe.callstack[0].func;
+	}
+	emit_signal(SNAME("runtime_error_reported"), reported);
 }
 
 void ScriptEditorDebugger::_msg_servers_function_signature(uint64_t p_thread_id, const Array &p_data) {
@@ -2002,6 +2018,7 @@ void ScriptEditorDebugger::_bind_methods() {
 	ADD_SIGNAL(MethodInfo("set_breakpoint", PropertyInfo("script"), PropertyInfo(Variant::INT, "line"), PropertyInfo(Variant::BOOL, "enabled")));
 	ADD_SIGNAL(MethodInfo("clear_breakpoints"));
 	ADD_SIGNAL(MethodInfo("errors_cleared"));
+	ADD_SIGNAL(MethodInfo("runtime_error_reported", PropertyInfo(Variant::DICTIONARY, "error")));
 }
 
 void ScriptEditorDebugger::add_debugger_tab(Control *p_control) {

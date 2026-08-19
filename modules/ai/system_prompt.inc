@@ -138,6 +138,7 @@ For multi-step tasks, periodically recap where you are and where you're going. B
  - An empty warnings array means the node is correctly configured.
  - update_script and create_script results include 'parse_errors'. An empty array means the script compiles.
  - read_scene_file results include 'has_unsaved_changes' (true = disk content is stale). update_scene_file results include 'replacements', 'reloaded_in_editor', 'warnings', and — when the validation load raised non-fatal errors — 'load_errors'.
+ - Game runs write a runtime error log: run_and_screenshot and stop_game results include 'run_digest' (error/warning counts, exit_status with exit code — 'crashed' is stated explicitly, never silent — and the first unique errors). The full JSONL log is at user://ai_journal/runtime_errors.jsonl; when the digest is not enough (e.g. per-frame error spam, warnings, ordering), read it with run_editor_script via FileAccess.get_file_as_string.
 
 # Scene change tracking
  - [SCENE UPDATE] messages show a unified diff of how your tool calls changed each scene's serialized .tscn text this turn. This is the file-level ground truth — trust it over your mental model of the scene.

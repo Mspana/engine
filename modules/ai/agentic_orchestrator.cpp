@@ -1319,24 +1319,18 @@ void AgenticOrchestrator::_on_async_rns_complete(const Dictionary &p_exec_result
 	// from a normal run (elapsed ~= wait_seconds*1000) from a capture hang.
 	uint64_t elapsed_to_screenshot_ms = Time::get_singleton()->get_ticks_msec() - _async_rns_action_start_ms;
 
-	// Capture errors and game output (errors clear on next launch, not on stop).
-	Array game_errors;
-	String game_output;
-	EditorDebuggerNode *edn = EditorDebuggerNode::get_singleton();
-	if (edn) {
-		ScriptEditorDebugger *dbg = edn->get_default_debugger();
-		if (dbg) {
-			game_errors = dbg->get_structured_errors(20, 8);
-		}
-	}
-	EditorLog *editor_log = EditorNode::get_log();
-	if (editor_log) {
-		game_output = editor_log->get_recent_messages_text(200);
-	}
-	if (game_errors.size() > 0) {
-		AI *ai_flag = AI::get_singleton();
-		if (ai_flag) {
-			ai_flag->set_errors_consumed_by_tool(true);
+	// Phase C: push the run digest (error/warning counts, crashed + exit code,
+	// first unique errors, log path) instead of bulk error/output dumps — the
+	// agent pulls user://ai_journal/runtime_errors.jsonl when it needs detail.
+	// Guarded on _async_rns_game_running_ms so a launch that never started the
+	// game does not attach a stale previous-run digest.
+	Dictionary run_digest;
+	AI *ai_for_digest = AI::get_singleton();
+	if (ai_for_digest && _async_rns_game_running_ms > 0) {
+		run_digest = ai_for_digest->get_run_digest();
+		if ((int)run_digest.get("error_count", 0) > 0) {
+			// The digest delivered the errors; skip the next-turn ambient re-push.
+			ai_for_digest->set_errors_consumed_by_tool(true);
 		}
 	}
 
@@ -1355,23 +1349,17 @@ void AgenticOrchestrator::_on_async_rns_complete(const Dictionary &p_exec_result
 		} else if (!main_scene.is_empty()) {
 			rd["main_scene"] = main_scene;
 		}
-		if (game_errors.size() > 0) {
-			rd["game_crashed"] = true;
-			rd["errors"] = game_errors;
-		}
-		if (!game_output.is_empty()) {
-			rd["game_output"] = game_output;
+		if (!run_digest.is_empty()) {
+			rd["run_digest"] = run_digest;
 		}
 		rd["elapsed_to_screenshot_ms"] = (int64_t)elapsed_to_screenshot_ms;
 		enriched["result"] = rd;
 	} else {
-		// Even on tool error (timeout), include game errors — they explain why it timed out.
+		// Even on tool error (timeout), include the digest — a crash mid-wait
+		// is exactly what explains the timeout.
 		Dictionary ed = ((Dictionary)enriched.get("error", Dictionary())).duplicate();
-		if (game_errors.size() > 0) {
-			ed["game_errors"] = game_errors;
-		}
-		if (!game_output.is_empty()) {
-			ed["game_output"] = game_output;
+		if (!run_digest.is_empty()) {
+			ed["run_digest"] = run_digest;
 		}
 		ed["elapsed_to_screenshot_ms"] = (int64_t)elapsed_to_screenshot_ms;
 		enriched["error"] = ed;

@@ -403,6 +403,16 @@ void EditorRunBar::stop_playing() {
 		return;
 	}
 
+	// Sample the child's state before stop() kills it — OS::kill() erases the
+	// exit-code bookkeeping (see the field declarations for why this matters).
+	last_run_child_exited = false;
+	last_run_child_exit_code = 0;
+	OS::ProcessID child_pid = editor_run.get_current_process();
+	if (child_pid != 0 && !OS::get_singleton()->is_process_running(child_pid)) {
+		last_run_child_exited = true;
+		last_run_child_exit_code = OS::get_singleton()->get_process_exit_code(child_pid);
+	}
+
 	current_mode = RunMode::STOPPED;
 	editor_run.stop();
 	EditorDebuggerNode::get_singleton()->stop();

@@ -79,6 +79,13 @@ class EditorRunBar : public MarginContainer {
 	String run_custom_filename;
 	String run_current_filename;
 
+	// Sampled at the top of stop_playing(), BEFORE EditorRun::stop() kills the
+	// child — OS::kill() erases the exit-code bookkeeping, so that is the only
+	// point where "the child already exited on its own" (crash or self-quit,
+	// exit code valid) can be told apart from "the editor killed it".
+	bool last_run_child_exited = false;
+	int last_run_child_exit_code = 0;
+
 	void _reset_play_buttons();
 	void _update_play_buttons();
 
@@ -113,6 +120,11 @@ public:
 	void stop_playing();
 	bool is_playing() const;
 	String get_playing_scene() const;
+
+	// State of the child process as observed by the last stop_playing() call.
+	// Valid from the stop_pressed signal onward, until the next stop.
+	bool get_last_run_child_exited() const { return last_run_child_exited; }
+	int get_last_run_child_exit_code() const { return last_run_child_exit_code; }
 
 	Error start_native_device(int p_device_id);
 

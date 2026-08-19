@@ -13,6 +13,8 @@
 #include "retrieval.h"                  // For RetrievalIndex
 #include "agentic_orchestrator.h"       // For agentic tool use
 
+class AIRuntimeErrorLog;
+
 class AI : public Object {
 	GDCLASS(AI, Object); // Godot class macro
 
@@ -63,6 +65,10 @@ private:
 
 	// Journal
 	AIJournalWriter *_journal_writer = nullptr;
+
+	// Runtime error log for game runs (Phase C). Owned; shares _journal_writer.
+	AIRuntimeErrorLog *_runtime_log = nullptr;
+	void _wire_runtime_log();
 	Array _run_action_buffer;   // Cleared at run start, accumulates _tool_result_data dicts
 	uint64_t _run_start_ms = 0; // Ticks at run_started
 	String _current_run_id;     // Timestamp-based ID, set at run_started
@@ -159,6 +165,11 @@ public:
 
 	// Check if a scene file was read via read_scene_file in the current conversation
 	bool was_scene_file_read(const String &file_path) const;
+
+	// Runtime error log access (Phase C). get_run_digest() returns the digest of
+	// the current or most recently ended game run (empty Dictionary if none).
+	AIRuntimeErrorLog *get_runtime_log() const;
+	Dictionary get_run_digest() const;
 
 	// Raw API logging for dashboard
 	void log_raw_api(const String &p_direction, int p_turn, const Dictionary &p_payload,

@@ -394,7 +394,7 @@ const String mutation_scene_path_desc = "Scene to modify, e.g. 'res://main.tscn'
 	props["mode"] = _make_prop("string", "Run mode: 'play' (default) or 'headless_smoke'");
 	props["scene_path"] = _make_prop("string", "Scene to run (optional, uses main scene if omitted)");
 	Array req;
-	tools.push_back(_make_tool("run_project", "Run/play the project", props, req));
+	tools.push_back(_make_tool("run_project", "Run/play the project. The game keeps running until stop_game (or the user stops it). The result carries run_id and runtime_log — the run's errors stream into that JSONL log (user://ai_journal/runtime_errors.jsonl) as they happen, with run_start/run_end markers. Call stop_game to end the run and get the run_digest (error/warning counts, crashed + exit code, first errors). To read the log itself, use run_editor_script with FileAccess.get_file_as_string(\"user://ai_journal/runtime_errors.jsonl\").", props, req));
 }
 {
 	Dictionary props;
@@ -408,7 +408,7 @@ const String mutation_scene_path_desc = "Scene to modify, e.g. 'res://main.tscn'
 	times_prop["description"] = "Optional list of capture times in seconds, measured from the moment the game starts running, e.g. [1.0, 3.0, 5.0]. Times are sorted and deduped. Total wait is bounded by the largest entry. When set, multiple screenshots are returned as result.screenshots = [{at_seconds, screenshot_b64}, ...] instead of the single-shot result.screenshot_b64.";
 	props["screenshot_times_seconds"] = times_prop;
 	Array req;
-	tools.push_back(_make_tool("run_and_screenshot", "Run the game briefly, capture one or more screenshots at specific times, then stop. The screenshots are returned as images you can see — use them to visually verify layout, colors, animation progression, and positioning over time. Inform the user if there is an issue with viewing the images. Prefer capture_2d_viewport / capture_3d_viewport for static visual checks. Note that those work best when the majority of the rendering is not dependent on runtime scripts.", props, req));
+	tools.push_back(_make_tool("run_and_screenshot", "Run the game briefly, capture one or more screenshots at specific times, then stop. The screenshots are returned as images you can see — use them to visually verify layout, colors, animation progression, and positioning over time. Inform the user if there is an issue with viewing the images. The result includes run_digest: unique/total error counts, warning count, whether the game crashed (exit_status with exit code — a crash never looks like a quiet run), the first unique errors verbatim, and log_path, the JSONL runtime error log (user://ai_journal/runtime_errors.jsonl). When the digest is not enough, read that log with run_editor_script via FileAccess.get_file_as_string. Prefer capture_2d_viewport / capture_3d_viewport for static visual checks. Note that those work best when the majority of the rendering is not dependent on runtime scripts.", props, req));
 }
 {
 	Dictionary props;
@@ -457,7 +457,7 @@ const String mutation_scene_path_desc = "Scene to modify, e.g. 'res://main.tscn'
 {
 	Dictionary props;
 	Array req;
-	tools.push_back(_make_tool("stop_game", "Stop the currently running game. No-op if the game is not running. Returns was_playing bool.", props, req));
+	tools.push_back(_make_tool("stop_game", "Stop the currently running game. No-op if the game is not running. Returns was_playing bool plus run_digest for the run that just ended (or the most recent run): error/warning counts, exit_status with exit code, first unique errors, and the runtime error log path. A game that already crashed on its own reports was_playing=false but run_digest.crashed=true with the exit code — check the digest, not just was_playing.", props, req));
 }
 
 // ==========================================================================
